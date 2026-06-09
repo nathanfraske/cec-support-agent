@@ -9,13 +9,22 @@
 //! in any private corpus schema.
 
 mod candidate;
+mod config_class;
 mod diagnostic;
+mod execution;
+mod extract;
 mod fault;
+mod fluency;
+mod hash;
 mod plan;
 
 pub use candidate::{Candidate, CandidateSource};
+pub use config_class::ConfigClass;
 pub use diagnostic::{DiagnosticEvent, EventKind, Severity};
+pub use execution::{ExecutionResult, StepResult};
+pub use extract::extract_symptoms;
 pub use fault::{FaultSignature, Symptom};
+pub use fluency::Fluency;
 pub use plan::{Plan, PlanStep, Risk};
 
 #[cfg(test)]
@@ -59,5 +68,57 @@ mod tests {
         assert_eq!(a.fingerprint, b.fingerprint);
         let c = FaultSignature::from_symptoms(vec![Symptom("disk_full".into())]);
         assert_ne!(a.fingerprint, c.fingerprint);
+    }
+
+    #[test]
+    fn config_class_unifies_bom_and_derived_hash() {
+        let cec = ConfigClass::from_bom("BOM-2026.06-r3");
+        assert_eq!(cec.key(), "BOM-2026.06-r3");
+
+        // Same inventory, any order and casing, yields the same class.
+        let a = ConfigClass::from_inventory(["os:windows 11 23h2", "GPU:rtx-4070"]);
+        let b = ConfigClass::from_inventory(["gpu:rtx-4070", " OS:Windows 11 23H2 "]);
+        assert_eq!(a, b);
+        let c = ConfigClass::from_inventory(["os:windows 10"]);
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn recurring_symptoms_diff_post_against_original() {
+        let original = FaultSignature::from_symptoms(vec![
+            Symptom("crash".into()),
+            Symptom("event_41".into()),
+        ]);
+        let still_broken = FaultSignature::from_symptoms(vec![Symptom("event_41".into())]);
+        assert_eq!(
+            original.recurring_in(&still_broken),
+            vec![Symptom("event_41".into())]
+        );
+
+        let healthy = FaultSignature::from_symptoms(vec![]);
+        assert!(original.recurring_in(&healthy).is_empty());
+    }
+
+    #[test]
+    fn execution_result_tracks_step_success() {
+        let mut result = ExecutionResult::new("p1");
+        assert_eq!(result.plan_id, "p1");
+        assert!(!result.completed);
+        assert!(result.all_ok(), "no steps is vacuously all-ok");
+
+        result.steps.push(StepResult {
+            step: 1,
+            action: "read".into(),
+            ok: true,
+            summary: "ok".into(),
+        });
+        assert!(result.all_ok());
+        result.steps.push(StepResult {
+            step: 2,
+            action: "registry_set".into(),
+            ok: false,
+            summary: "consent denied".into(),
+        });
+        assert!(!result.all_ok());
     }
 }

@@ -12,6 +12,8 @@ repository = "https://github.com/nathanfraske/cec-support-agent"
 # Internal crates (path deps so the workspace builds with no registry entry).
 common = { path = "crates/common" }
 inference = { path = "crates/inference" }
+intake = { path = "crates/intake" }
+provenance = { path = "crates/provenance" }
 agent-core = { path = "crates/agent-core" }
 tools-windows = { path = "crates/tools-windows" }
 panel = { path = "crates/panel" }
@@ -27,6 +29,9 @@ anyhow = "1"
 thiserror = "2"
 tracing = "0.1"
 async-trait = "0.1"
+hmac = "0.12"
+sha2 = "0.10"
+getrandom = "0.2"
 
 [profile.release]
 # Static, lean release binaries for the cross-target matrix.

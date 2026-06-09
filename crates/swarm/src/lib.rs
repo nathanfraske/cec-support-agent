@@ -40,6 +40,13 @@ pub trait Generator: Send + Sync {
     async fn generate(&self, events: &[DiagnosticEvent]) -> Result<Vec<Candidate>, SwarmError>;
 }
 
+#[async_trait]
+impl<T: Generator + ?Sized> Generator for Box<T> {
+    async fn generate(&self, events: &[DiagnosticEvent]) -> Result<Vec<Candidate>, SwarmError> {
+        (**self).generate(events).await
+    }
+}
+
 /// The verdict from validating a candidate inside a sandbox VM with no user
 /// data.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -85,20 +92,39 @@ impl Swarm {
     }
 
     /// Fan `events` out to every generator and gather all candidate plans.
+    ///
+    /// Degrades gracefully: a generator that fails (e.g. an unreachable
+    /// inference endpoint) is recorded in [`Gathered::failures`] and the
+    /// gather continues with the rest, so one dead node never empties the
+    /// slate. Zero viable plans is a judge-panel escalation, not a gather
+    /// error; only an empty generator set is an error here.
     pub async fn gather<G: Generator>(
         &self,
         generators: &[G],
         events: &[DiagnosticEvent],
-    ) -> Result<Vec<Candidate>, SwarmError> {
+    ) -> Result<Gathered, SwarmError> {
         if generators.is_empty() {
             return Err(SwarmError::NoGenerators);
         }
-        let mut candidates = Vec::new();
+        let mut gathered = Gathered::default();
         for generator in generators {
-            candidates.extend(generator.generate(events).await?);
+            match generator.generate(events).await {
+                Ok(candidates) => gathered.candidates.extend(candidates),
+                Err(error) => gathered.failures.push(error),
+            }
         }
-        Ok(candidates)
+        Ok(gathered)
     }
+}
+
+/// The result of a swarm gather: every candidate the surviving generators
+/// produced, plus the failures from the ones that did not.
+#[derive(Debug, Default)]
+pub struct Gathered {
+    /// All candidate plans, in generator order.
+    pub candidates: Vec<Candidate>,
+    /// One error per failed generator.
+    pub failures: Vec<SwarmError>,
 }
 
 #[cfg(test)]
@@ -122,12 +148,25 @@ mod tests {
         }
     }
 
+    struct AlwaysRejects;
+
+    #[async_trait]
+    impl Generator for AlwaysRejects {
+        async fn generate(
+            &self,
+            _events: &[DiagnosticEvent],
+        ) -> Result<Vec<Candidate>, SwarmError> {
+            Err(SwarmError::Rejected("down".to_string()))
+        }
+    }
+
     #[tokio::test]
     async fn gather_collects_from_each_generator() {
         let swarm = Swarm::new();
         let generators = [OneShot, OneShot];
-        let candidates = swarm.gather(&generators, &[]).await.expect("gather");
-        assert_eq!(candidates.len(), 2);
+        let gathered = swarm.gather(&generators, &[]).await.expect("gather");
+        assert_eq!(gathered.candidates.len(), 2);
+        assert!(gathered.failures.is_empty());
     }
 
     #[tokio::test]
@@ -136,5 +175,14 @@ mod tests {
         let empty: [OneShot; 0] = [];
         let result = swarm.gather(&empty, &[]).await;
         assert!(matches!(result, Err(SwarmError::NoGenerators)));
+    }
+
+    #[tokio::test]
+    async fn gather_degrades_past_a_failed_generator() {
+        let swarm = Swarm::new();
+        let generators: Vec<Box<dyn Generator>> = vec![Box::new(AlwaysRejects), Box::new(OneShot)];
+        let gathered = swarm.gather(&generators, &[]).await.expect("gather");
+        assert_eq!(gathered.candidates.len(), 1, "the survivor still produces");
+        assert_eq!(gathered.failures.len(), 1, "the failure is recorded");
     }
 }

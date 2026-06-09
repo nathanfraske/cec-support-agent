@@ -10,6 +10,7 @@ description = "Agent runtime: the Tool trait, a consent-gated dispatcher, and a 
 [dependencies]
 common = { workspace = true }
 inference = { workspace = true }
+provenance = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

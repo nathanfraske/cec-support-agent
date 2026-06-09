@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use common::FaultSignature;
+use common::{ConfigClass, FaultSignature};
 use thiserror::Error;
 
 use crate::gate::{ensure_signed_off, GateError};
@@ -14,19 +14,64 @@ pub enum CorpusError {
     /// Transport-level failure talking to a remote corpus.
     #[error("corpus transport error: {0}")]
     Transport(String),
+    /// Local storage failure (file-backed corpus).
+    #[error("corpus storage error: {0}")]
+    Storage(String),
+}
+
+/// Derive the fix mappings for a signature at a config class from a set of
+/// corpus rows. Only resolved rows back a mapping (failures stay in the rows
+/// as hard negatives); rows confirming the same plan for the same signature
+/// aggregate into one mapping with a confirmation count.
+fn fix_mappings(
+    rows: &[Contribution],
+    signature: &FaultSignature,
+    config_class: &ConfigClass,
+) -> Vec<FixMapping> {
+    let mut mappings: Vec<FixMapping> = Vec::new();
+    for row in rows {
+        if row.outcome.signature.fingerprint != signature.fingerprint
+            || row.config_class != *config_class
+            || !row.outcome.label.is_resolved()
+        {
+            continue;
+        }
+        if let Some(existing) = mappings
+            .iter_mut()
+            .find(|m| m.plan.id == row.outcome.plan.id)
+        {
+            existing.confirmations += 1;
+        } else {
+            mappings.push(FixMapping {
+                signature: row.outcome.signature.clone(),
+                plan: row.outcome.plan.clone(),
+                confirmations: 1,
+            });
+        }
+    }
+    mappings
 }
 
 /// A corpus backend: look up fix mappings and submit confirmed outcomes.
+///
+/// A ticket is matched only against like configs, so every query carries the
+/// config class alongside the fault signature.
 ///
 /// Implementors MUST enforce the sign-off gate in [`CorpusStore::submit`] by
 /// calling [`ensure_signed_off`] before persisting or transmitting anything.
 #[async_trait]
 pub trait CorpusStore: Send + Sync {
-    /// Look up known fix mappings for a fault signature. Empty at cold start.
-    async fn query(&self, signature: &FaultSignature) -> Result<Vec<FixMapping>, CorpusError>;
+    /// Look up known fix mappings for a fault signature at a config class.
+    /// Empty at cold start.
+    async fn query(
+        &self,
+        signature: &FaultSignature,
+        config_class: &ConfigClass,
+    ) -> Result<Vec<FixMapping>, CorpusError>;
 
-    /// Submit a confirmed outcome. Rejects unconfirmed contributions via the
-    /// sign-off gate.
+    /// Submit a labeled outcome. Rejects unconfirmed contributions via the
+    /// sign-off gate. Every label is accepted — a failure enters the corpus as
+    /// a hard negative — but only resolved outcomes back future fix mappings.
     async fn submit(&self, contribution: &Contribution) -> Result<(), CorpusError>;
 }
 
@@ -34,7 +79,7 @@ pub trait CorpusStore: Send + Sync {
 /// starts empty and only ever holds contributions that cleared the gate.
 #[derive(Default)]
 pub struct LocalCorpus {
-    mappings: std::sync::Mutex<Vec<FixMapping>>,
+    rows: std::sync::Mutex<Vec<Contribution>>,
 }
 
 impl LocalCorpus {
@@ -43,12 +88,13 @@ impl LocalCorpus {
         Self::default()
     }
 
-    /// Number of accepted mappings held in memory.
+    /// Number of accepted rows held in memory (all labels, including hard
+    /// negatives).
     pub fn len(&self) -> usize {
-        self.mappings.lock().expect("corpus mutex poisoned").len()
+        self.rows.lock().expect("corpus mutex poisoned").len()
     }
 
-    /// Whether the corpus holds no mappings (true at cold start).
+    /// Whether the corpus holds no rows (true at cold start).
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -56,25 +102,97 @@ impl LocalCorpus {
 
 #[async_trait]
 impl CorpusStore for LocalCorpus {
-    async fn query(&self, signature: &FaultSignature) -> Result<Vec<FixMapping>, CorpusError> {
-        let guard = self.mappings.lock().expect("corpus mutex poisoned");
-        let hits = guard
-            .iter()
-            .filter(|m| m.signature.fingerprint == signature.fingerprint)
-            .cloned()
-            .collect();
-        Ok(hits)
+    async fn query(
+        &self,
+        signature: &FaultSignature,
+        config_class: &ConfigClass,
+    ) -> Result<Vec<FixMapping>, CorpusError> {
+        let guard = self.rows.lock().expect("corpus mutex poisoned");
+        Ok(fix_mappings(&guard, signature, config_class))
     }
 
     async fn submit(&self, contribution: &Contribution) -> Result<(), CorpusError> {
         // Gate enforced before any state change.
         ensure_signed_off(contribution)?;
-        let mut guard = self.mappings.lock().expect("corpus mutex poisoned");
-        guard.push(FixMapping {
-            signature: contribution.outcome.signature.clone(),
-            plan: contribution.outcome.plan.clone(),
-            confirmations: 1,
-        });
+        let mut guard = self.rows.lock().expect("corpus mutex poisoned");
+        guard.push(contribution.clone());
+        Ok(())
+    }
+}
+
+/// File-backed corpus for self-hosting: one JSON row per line at a local
+/// path, loaded at open and appended on submit. This is what makes the
+/// flywheel turn across runs with no service at all — the next run facing a
+/// known signature starts from this run's outcome. Ships no data; the file
+/// begins empty and only ever holds contributions that cleared the gate.
+pub struct FileCorpus {
+    path: std::path::PathBuf,
+    rows: std::sync::Mutex<Vec<Contribution>>,
+}
+
+impl FileCorpus {
+    /// Open (or start) a corpus file. A missing file is an empty corpus; an
+    /// unparseable one is an error rather than silent data loss.
+    pub fn open(path: impl Into<std::path::PathBuf>) -> Result<Self, CorpusError> {
+        let path = path.into();
+        let rows = match std::fs::read_to_string(&path) {
+            Ok(text) => text
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .map(serde_json::from_str)
+                .collect::<Result<Vec<Contribution>, _>>()
+                .map_err(|e| CorpusError::Storage(format!("parse {}: {e}", path.display())))?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(e) => {
+                return Err(CorpusError::Storage(format!(
+                    "read {}: {e}",
+                    path.display()
+                )))
+            }
+        };
+        Ok(Self {
+            path,
+            rows: std::sync::Mutex::new(rows),
+        })
+    }
+
+    /// Number of rows held (all labels, including hard negatives).
+    pub fn len(&self) -> usize {
+        self.rows.lock().expect("corpus mutex poisoned").len()
+    }
+
+    /// Whether the corpus holds no rows.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+#[async_trait]
+impl CorpusStore for FileCorpus {
+    async fn query(
+        &self,
+        signature: &FaultSignature,
+        config_class: &ConfigClass,
+    ) -> Result<Vec<FixMapping>, CorpusError> {
+        let guard = self.rows.lock().expect("corpus mutex poisoned");
+        Ok(fix_mappings(&guard, signature, config_class))
+    }
+
+    async fn submit(&self, contribution: &Contribution) -> Result<(), CorpusError> {
+        // Gate enforced before any state change — nothing unconfirmed is
+        // written to disk or held in memory.
+        ensure_signed_off(contribution)?;
+        let line =
+            serde_json::to_string(contribution).map_err(|e| CorpusError::Storage(e.to_string()))?;
+        use std::io::Write as _;
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)
+            .map_err(|e| CorpusError::Storage(format!("open {}: {e}", self.path.display())))?;
+        writeln!(file, "{line}").map_err(|e| CorpusError::Storage(e.to_string()))?;
+        let mut guard = self.rows.lock().expect("corpus mutex poisoned");
+        guard.push(contribution.clone());
         Ok(())
     }
 }
@@ -98,8 +216,17 @@ impl HttpCorpus {
 
 #[async_trait]
 impl CorpusStore for HttpCorpus {
-    async fn query(&self, signature: &FaultSignature) -> Result<Vec<FixMapping>, CorpusError> {
-        let url = format!("{}/v1/mappings/{}", self.base_url, signature.fingerprint);
+    async fn query(
+        &self,
+        signature: &FaultSignature,
+        config_class: &ConfigClass,
+    ) -> Result<Vec<FixMapping>, CorpusError> {
+        let url = format!(
+            "{}/v1/mappings/{}/{}",
+            self.base_url,
+            config_class.key(),
+            signature.fingerprint
+        );
         let response = self
             .http
             .get(&url)
@@ -143,18 +270,23 @@ impl CorpusStore for HttpCorpus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::{Outcome, SignOff};
+    use crate::schema::{Outcome, OutcomeLabel, SignOff};
     use common::{FaultSignature, Plan, Symptom};
 
-    fn contribution(sign_off: SignOff) -> Contribution {
+    fn config_class() -> ConfigClass {
+        ConfigClass::from_inventory(["os:windows 11", "gpu:rtx-4070"])
+    }
+
+    fn contribution(label: OutcomeLabel, sign_off: SignOff) -> Contribution {
         let signature = FaultSignature::from_symptoms(vec![Symptom("boot_loop".into())]);
         let plan = Plan::new("p1", "restart service");
         Contribution::new(
             Outcome {
                 signature,
                 plan,
-                resolved: true,
+                label,
             },
+            config_class(),
             sign_off,
         )
     }
@@ -163,7 +295,10 @@ mod tests {
     async fn submit_refuses_unconfirmed_and_keeps_store_empty() {
         let corpus = LocalCorpus::new();
         let error = corpus
-            .submit(&contribution(SignOff::Unconfirmed))
+            .submit(&contribution(
+                OutcomeLabel::ResolvedConfirmed,
+                SignOff::Unconfirmed,
+            ))
             .await
             .expect_err("gate must reject");
         assert!(matches!(error, CorpusError::Gate(_)));
@@ -173,11 +308,11 @@ mod tests {
     #[tokio::test]
     async fn submit_accepts_confirmed_then_queryable() {
         let corpus = LocalCorpus::new();
-        let confirmed = contribution(SignOff::HumanConfirmed);
+        let confirmed = contribution(OutcomeLabel::ResolvedConfirmed, SignOff::HumanConfirmed);
         corpus.submit(&confirmed).await.expect("confirmed accepted");
         assert_eq!(corpus.len(), 1);
         let hits = corpus
-            .query(&confirmed.outcome.signature)
+            .query(&confirmed.outcome.signature, &config_class())
             .await
             .expect("query");
         assert_eq!(hits.len(), 1);
@@ -187,9 +322,116 @@ mod tests {
     async fn verifier_confirmation_also_clears_the_gate() {
         let corpus = LocalCorpus::new();
         corpus
-            .submit(&contribution(SignOff::VerifierConfirmed))
+            .submit(&contribution(
+                OutcomeLabel::ResolvedProvisional,
+                SignOff::VerifierConfirmed,
+            ))
             .await
             .expect("verifier-confirmed accepted");
         assert_eq!(corpus.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn hard_negatives_are_stored_but_not_retrieved_as_fixes() {
+        let corpus = LocalCorpus::new();
+        let negative = contribution(
+            OutcomeLabel::EscalatedHumanUnresolved,
+            SignOff::HumanConfirmed,
+        );
+        corpus.submit(&negative).await.expect("labeled and signed");
+        assert_eq!(corpus.len(), 1, "the failure is kept as a hard negative");
+        let hits = corpus
+            .query(&negative.outcome.signature, &config_class())
+            .await
+            .expect("query");
+        assert!(hits.is_empty(), "a failure must not be offered as a fix");
+    }
+
+    /// A unique temp path per test; removed on drop.
+    struct TempPath(std::path::PathBuf);
+
+    impl TempPath {
+        fn new(tag: &str) -> Self {
+            Self(std::env::temp_dir().join(format!(
+                "cec-corpus-test-{}-{tag}.jsonl",
+                std::process::id()
+            )))
+        }
+    }
+
+    impl Drop for TempPath {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    #[tokio::test]
+    async fn file_corpus_persists_across_reopen() {
+        let path = TempPath::new("roundtrip");
+        {
+            let corpus = FileCorpus::open(&path.0).expect("open empty");
+            assert!(corpus.is_empty());
+            corpus
+                .submit(&contribution(
+                    OutcomeLabel::ResolvedConfirmed,
+                    SignOff::HumanConfirmed,
+                ))
+                .await
+                .expect("accepted");
+        }
+        // A new process would see the row: reopen and query.
+        let reopened = FileCorpus::open(&path.0).expect("reopen");
+        assert_eq!(reopened.len(), 1);
+        let row = contribution(OutcomeLabel::ResolvedConfirmed, SignOff::HumanConfirmed);
+        let hits = reopened
+            .query(&row.outcome.signature, &config_class())
+            .await
+            .expect("query");
+        assert_eq!(hits.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn file_corpus_gate_rejects_before_anything_touches_disk() {
+        let path = TempPath::new("gate");
+        let corpus = FileCorpus::open(&path.0).expect("open");
+        let error = corpus
+            .submit(&contribution(
+                OutcomeLabel::ResolvedConfirmed,
+                SignOff::Unconfirmed,
+            ))
+            .await
+            .expect_err("gate must reject");
+        assert!(matches!(error, CorpusError::Gate(_)));
+        assert!(
+            !path.0.exists(),
+            "an unconfirmed contribution must never reach disk"
+        );
+    }
+
+    #[tokio::test]
+    async fn confirmations_aggregate_per_plan() {
+        let corpus = LocalCorpus::new();
+        let row = contribution(OutcomeLabel::ResolvedConfirmed, SignOff::HumanConfirmed);
+        corpus.submit(&row).await.expect("first");
+        corpus.submit(&row).await.expect("second");
+        let hits = corpus
+            .query(&row.outcome.signature, &config_class())
+            .await
+            .expect("query");
+        assert_eq!(hits.len(), 1, "same plan aggregates into one mapping");
+        assert_eq!(hits[0].confirmations, 2);
+    }
+
+    #[tokio::test]
+    async fn retrieval_is_scoped_to_the_config_class() {
+        let corpus = LocalCorpus::new();
+        let row = contribution(OutcomeLabel::ResolvedConfirmed, SignOff::HumanConfirmed);
+        corpus.submit(&row).await.expect("accepted");
+        let other_class = ConfigClass::from_inventory(["os:windows 10"]);
+        let hits = corpus
+            .query(&row.outcome.signature, &other_class)
+            .await
+            .expect("query");
+        assert!(hits.is_empty(), "a ticket matches only like configs");
     }
 }

@@ -13,16 +13,23 @@
 //! [`Risk`], so the `agent-core` dispatcher gates them behind explicit consent,
 //! and they capture a restore point before they mutate anything.
 
+mod advisory;
+
 use agent_core::{Tool, ToolError, ToolOutcome};
 use async_trait::async_trait;
 use common::Risk;
+
+pub use advisory::{firmware_advisory, BoardIdentity, SupportAdvisory};
 
 /// All Windows tools, ready to register with an `agent_core::Dispatcher`.
 pub fn windows_tools() -> Vec<Box<dyn Tool>> {
     vec![
         Box::new(CimQuery),
         Box::new(EventLogQuery),
+        Box::new(CreateRestorePoint),
         Box::new(RegistrySet),
+        Box::new(BoardInfo),
+        Box::new(DownloadFile),
     ]
 }
 
@@ -33,9 +40,17 @@ fn run_powershell(script: &str) -> Result<String, ToolError> {
         .output()
         .map_err(|e| ToolError::Execution(format!("failed to launch powershell: {e}")))?;
     if !output.status.success() {
-        return Err(ToolError::Execution(
-            String::from_utf8_lossy(&output.stderr).trim().to_string(),
-        ));
+        // Keep only the first meaningful line: PowerShell's full error
+        // rendering (position markers, CategoryInfo, stack noise) means
+        // nothing to the person reading the run output.
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let line = stderr
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .unwrap_or("command failed with no error text")
+            .to_string();
+        return Err(ToolError::Execution(line));
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
@@ -210,6 +225,207 @@ impl Tool for RegistrySet {
     }
 }
 
+/// Create a System Restore point before any change (`Checkpoint-Computer`),
+/// then positively verify that a checkpoint was actually created — not merely
+/// requested. Reversible: it establishes a rollback target rather than
+/// mutating live state, so a plan can take it before a riskier step.
+///
+/// Two failure modes make the verification load-bearing: System Restore may
+/// be disabled entirely, and Windows silently skips creation within 24 hours
+/// of the last point unless the `SystemRestorePointCreationFrequency`
+/// registry override is 0. In both cases `Checkpoint-Computer` returns
+/// without a new checkpoint, so "restore point created" as an unverified
+/// assumption is silently false often enough to be a design defect. This tool
+/// reports success only after reading the newest restore point back and
+/// matching it to this request.
+///
+/// Coverage boundary (state it in any consent rendering): a restore point
+/// covers system files, the registry, and drivers; it does not cover BIOS,
+/// firmware, EC state, or user files.
+pub struct CreateRestorePoint;
+
+#[async_trait]
+impl Tool for CreateRestorePoint {
+    fn name(&self) -> &str {
+        "create_restore_point"
+    }
+    fn description(&self) -> &str {
+        "Create a System Restore point via Checkpoint-Computer and verify it was \
+         actually created (covers system files/registry/drivers; not firmware or \
+         user files)."
+    }
+    fn risk(&self) -> Risk {
+        Risk::Reversible
+    }
+    async fn invoke(&self, args: serde_json::Value) -> Result<ToolOutcome, ToolError> {
+        #[cfg(windows)]
+        {
+            let description = args
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or("cec-support-agent checkpoint");
+            // Pass the description as a single-quoted literal so it cannot break
+            // out of the argument; doubling any embedded quote escapes it.
+            let safe = description.replace('\'', "''");
+            // Request the checkpoint, then verify it exists: the newest restore
+            // point must carry this run's description. Checkpoint-Computer
+            // throws if System Restore is disabled; the read-back catches the
+            // silent 24-hour skip.
+            let script = format!(
+                "$ErrorActionPreference = 'Stop'\n\
+                 Checkpoint-Computer -Description '{safe}' -RestorePointType MODIFY_SETTINGS\n\
+                 $rp = Get-ComputerRestorePoint | Sort-Object SequenceNumber | Select-Object -Last 1\n\
+                 if ($null -eq $rp -or $rp.Description -ne '{safe}') {{\n\
+                     throw 'restore point was requested but not created (Windows skips creation within 24 hours of the last point unless SystemRestorePointCreationFrequency is 0)'\n\
+                 }}\n\
+                 \"sequence=$($rp.SequenceNumber)\""
+            );
+            let raw = run_powershell(&script)?;
+            Ok(ToolOutcome::success(format!(
+                "created and verified restore point: {description} ({})",
+                raw.trim()
+            )))
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = args;
+            Ok(unsupported("create_restore_point"))
+        }
+    }
+}
+
+/// Read-only motherboard and firmware identity. Selects configuration fields
+/// only — manufacturer, product, versions — and never serial numbers, asset
+/// tags, or service tags, so the payload is safe to show, log, and reason
+/// over. Feeds [`BoardIdentity`] and [`firmware_advisory`].
+pub struct BoardInfo;
+
+#[async_trait]
+impl Tool for BoardInfo {
+    fn name(&self) -> &str {
+        "board_info"
+    }
+    fn description(&self) -> &str {
+        "Read-only motherboard, BIOS, and system model identity via CIM \
+         (configuration fields only; no serial numbers)."
+    }
+    fn risk(&self) -> Risk {
+        Risk::ReadOnly
+    }
+    async fn invoke(&self, args: serde_json::Value) -> Result<ToolOutcome, ToolError> {
+        #[cfg(windows)]
+        {
+            let _ = args;
+            // Selects are explicit allowlists: identity-bearing fields
+            // (SerialNumber, tags) are never queried in the first place.
+            let script = "$board = Get-CimInstance Win32_BaseBoard | \
+                              Select-Object Manufacturer, Product, Version\n\
+                          $bios = Get-CimInstance Win32_BIOS | \
+                              Select-Object SMBIOSBIOSVersion, \
+                              @{n='ReleaseDate';e={'{0:yyyy-MM-dd}' -f $_.ReleaseDate}}\n\
+                          $system = Get-CimInstance Win32_ComputerSystem | \
+                              Select-Object Manufacturer, Model\n\
+                          [pscustomobject]@{ board = $board; bios = $bios; system = $system } | \
+                              ConvertTo-Json -Depth 3";
+            let raw = run_powershell(script)?;
+            Ok(
+                ToolOutcome::success("read board, BIOS, and system identity")
+                    .with_data(json_or_text(raw)),
+            )
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = args;
+            Ok(unsupported("board_info"))
+        }
+    }
+}
+
+/// Download a file over HTTPS into `Downloads\cec-support` and report its
+/// SHA-256 and size. Reversible: the remedy is deleting the file. The tool
+/// fetches and verifies only — installing or flashing what was downloaded is
+/// a separate, consent-gated (or advisory-only) concern.
+pub struct DownloadFile;
+
+/// Accept only an `https://` URL made of unsurprising characters, so an
+/// interpolated value cannot break out of the PowerShell argument or smuggle
+/// a plaintext download.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn validated_url(url: &str) -> Result<&str, ToolError> {
+    let ok_char = |c: char| c.is_ascii_alphanumeric() || ":/.?=&%#+_-~".contains(c);
+    if url.starts_with("https://") && url.len() > "https://".len() && url.chars().all(ok_char) {
+        Ok(url)
+    } else {
+        Err(ToolError::Execution(format!(
+            "refusing URL (must be https:// and plain characters): {url:?}"
+        )))
+    }
+}
+
+/// Accept only a bare file name — no path separators, no leading dots — so
+/// the download cannot escape the dedicated folder.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn validated_file_name(name: &str) -> Result<&str, ToolError> {
+    let ok_char = |c: char| c.is_ascii_alphanumeric() || "._-".contains(c);
+    if !name.is_empty() && !name.starts_with('.') && name.chars().all(ok_char) {
+        Ok(name)
+    } else {
+        Err(ToolError::Execution(format!(
+            "refusing file name (bare name only): {name:?}"
+        )))
+    }
+}
+
+#[async_trait]
+impl Tool for DownloadFile {
+    fn name(&self) -> &str {
+        "download_file"
+    }
+    fn description(&self) -> &str {
+        "Download a file over HTTPS into Downloads\\cec-support and report its \
+         SHA-256 (reversible: delete the file; never installs anything)."
+    }
+    fn risk(&self) -> Risk {
+        Risk::Reversible
+    }
+    async fn invoke(&self, args: serde_json::Value) -> Result<ToolOutcome, ToolError> {
+        #[cfg(windows)]
+        {
+            let url = args
+                .get("url")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| ToolError::Execution("missing 'url'".to_string()))?;
+            let url = validated_url(url)?;
+            let name = args
+                .get("file_name")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| ToolError::Execution("missing 'file_name'".to_string()))?;
+            let name = validated_file_name(name)?;
+
+            let script = format!(
+                "$ErrorActionPreference = 'Stop'\n\
+                 $dir = Join-Path $env:USERPROFILE 'Downloads\\cec-support'\n\
+                 New-Item -ItemType Directory -Force -Path $dir | Out-Null\n\
+                 $dest = Join-Path $dir '{name}'\n\
+                 Invoke-WebRequest -Uri '{url}' -OutFile $dest -MaximumRedirection 5\n\
+                 $hash = (Get-FileHash -Algorithm SHA256 -Path $dest).Hash\n\
+                 $bytes = (Get-Item $dest).Length\n\
+                 \"path=$dest sha256=$hash bytes=$bytes\""
+            );
+            let raw = run_powershell(&script)?;
+            Ok(ToolOutcome::success(format!(
+                "downloaded {name}: {}",
+                raw.trim()
+            )))
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = args;
+            Ok(unsupported("download_file"))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -217,15 +433,43 @@ mod tests {
     #[test]
     fn builder_exposes_all_tools() {
         let tools = windows_tools();
-        assert_eq!(tools.len(), 3);
+        assert_eq!(tools.len(), 6);
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
         assert!(names.contains(&"cim_query"));
+        assert!(names.contains(&"event_log_query"));
+        assert!(names.contains(&"create_restore_point"));
         assert!(names.contains(&"registry_set"));
+        assert!(names.contains(&"board_info"));
+        assert!(names.contains(&"download_file"));
     }
 
     #[test]
-    fn state_changing_tool_is_not_read_only() {
+    fn download_url_validation_is_https_only_and_injection_safe() {
+        assert!(validated_url("https://vendor.example/bios/PRIME-X570-PRO-4021.zip").is_ok());
+        assert!(validated_url("http://vendor.example/file.zip").is_err());
+        assert!(validated_url("https://").is_err());
+        assert!(validated_url("https://x' ; Remove-Item -Recurse / '").is_err());
+    }
+
+    #[test]
+    fn download_file_name_must_be_a_bare_name() {
+        assert!(validated_file_name("bios-4021.zip").is_ok());
+        assert!(validated_file_name("..\\..\\evil.exe").is_err());
+        assert!(validated_file_name("a/b.zip").is_err());
+        assert!(validated_file_name(".hidden").is_err());
+        assert!(validated_file_name("").is_err());
+    }
+
+    #[test]
+    fn board_info_is_read_only_and_download_is_reversible() {
+        assert_eq!(BoardInfo.risk(), Risk::ReadOnly);
+        assert_eq!(DownloadFile.risk(), Risk::Reversible);
+    }
+
+    #[test]
+    fn state_changing_tools_are_not_read_only() {
         assert_eq!(RegistrySet.risk(), Risk::Reversible);
+        assert_eq!(CreateRestorePoint.risk(), Risk::Reversible);
         assert_eq!(CimQuery.risk(), Risk::ReadOnly);
     }
 
