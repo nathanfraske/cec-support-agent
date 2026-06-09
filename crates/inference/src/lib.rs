@@ -13,7 +13,7 @@ mod client;
 mod error;
 mod types;
 
-pub use client::{Completer, Endpoint, OpenAiClient};
+pub use client::{Completer, Endpoint, OpenAiClient, DEFAULT_TIMEOUT};
 pub use error::InferenceError;
 pub use types::{ChatCompletionRequest, ChatCompletionResponse, ChatMessage, Choice, Role, Usage};
 
@@ -37,5 +37,13 @@ mod tests {
     fn endpoint_trims_trailing_slash() {
         let ep = Endpoint::new("http://localhost:8080/v1/");
         assert_eq!(ep.base_url, "http://localhost:8080/v1");
+    }
+
+    #[test]
+    fn endpoint_has_a_timeout_and_it_is_overridable() {
+        let ep = Endpoint::new("http://localhost:8080/v1");
+        assert_eq!(ep.timeout, DEFAULT_TIMEOUT);
+        let quick = ep.with_timeout(std::time::Duration::from_secs(10));
+        assert_eq!(quick.timeout, std::time::Duration::from_secs(10));
     }
 }

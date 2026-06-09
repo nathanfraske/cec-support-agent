@@ -1,7 +1,14 @@
+use std::time::Duration;
+
 use async_trait::async_trait;
 
 use crate::error::InferenceError;
 use crate::types::{ChatCompletionRequest, ChatCompletionResponse};
+
+/// Default whole-request timeout. Generous enough for a large local model to
+/// produce a plan; callers with tighter latency needs (e.g. phrasing one
+/// interview question) should set their own via [`Endpoint::with_timeout`].
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Connection settings for an OpenAI-compatible endpoint.
 ///
@@ -13,6 +20,10 @@ pub struct Endpoint {
     pub base_url: String,
     /// Optional bearer token. Local servers usually need none.
     pub api_key: Option<String>,
+    /// Whole-request timeout. A completion that exceeds it fails with a
+    /// transport error instead of stalling the pipeline — every model call is
+    /// on a degradable path, and degradation requires the call to *return*.
+    pub timeout: Duration,
 }
 
 impl Endpoint {
@@ -21,12 +32,19 @@ impl Endpoint {
         Self {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             api_key: None,
+            timeout: DEFAULT_TIMEOUT,
         }
     }
 
     /// Attach a bearer token for hosted endpoints that require one.
     pub fn with_api_key(mut self, key: impl Into<String>) -> Self {
         self.api_key = Some(key.into());
+        self
+    }
+
+    /// Override the whole-request timeout.
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
         self
     }
 }
@@ -56,12 +74,13 @@ pub struct OpenAiClient {
 }
 
 impl OpenAiClient {
-    /// Build a client for `endpoint`.
+    /// Build a client for `endpoint`, honoring its timeout.
     pub fn new(endpoint: Endpoint) -> Self {
-        Self {
-            endpoint,
-            http: reqwest::Client::new(),
-        }
+        let http = reqwest::Client::builder()
+            .timeout(endpoint.timeout)
+            .build()
+            .expect("reqwest client construction");
+        Self { endpoint, http }
     }
 
     /// The endpoint this client targets.

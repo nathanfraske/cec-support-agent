@@ -1,17 +1,16 @@
 [package]
-name = "tools-windows"
+name = "intake"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Windows diagnostic and remediation tools (CIM, event log/WER, registry-with-backup). Compiles as a stub on non-Windows hosts."
+description = "Intake judge: maps a support request to a structured case via the standard helpdesk interview (CompTIA step 1), asking only the follow-up questions the initial description leaves open."
 
 [dependencies]
 common = { workspace = true }
-agent-core = { workspace = true }
+inference = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
 async-trait = { workspace = true }
 
 [dev-dependencies]

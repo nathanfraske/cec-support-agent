@@ -24,29 +24,23 @@ pub struct FaultSignature {
 impl FaultSignature {
     /// Build a signature from symptoms, computing a stable fingerprint.
     pub fn from_symptoms(symptoms: Vec<Symptom>) -> Self {
-        let fingerprint = Self::fingerprint_of(&symptoms);
+        let keys: Vec<&str> = symptoms.iter().map(|s| s.0.as_str()).collect();
+        let fingerprint = crate::hash::fingerprint_of(&keys);
         Self {
             fingerprint,
             symptoms,
         }
     }
 
-    /// Compute a stable, order-independent fingerprint of the symptoms. This is
-    /// a non-cryptographic FNV-1a content hash; it carries no identity data and
-    /// pulls in no dependencies.
-    fn fingerprint_of(symptoms: &[Symptom]) -> String {
-        let mut keys: Vec<&str> = symptoms.iter().map(|s| s.0.as_str()).collect();
-        keys.sort_unstable();
-        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-        for key in keys {
-            for byte in key.as_bytes() {
-                hash ^= u64::from(*byte);
-                hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-            }
-            // Separator so ["ab","c"] and ["a","bc"] do not collide.
-            hash ^= 0xff;
-            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-        }
-        format!("{hash:016x}")
+    /// Whether any of this signature's symptoms recur in `post`. Verification
+    /// diffs a re-collected signature against the original failure signature
+    /// with this: the claim "fixed" is only valid against the same instrument
+    /// that established "broken".
+    pub fn recurring_in(&self, post: &FaultSignature) -> Vec<Symptom> {
+        self.symptoms
+            .iter()
+            .filter(|symptom| post.symptoms.contains(symptom))
+            .cloned()
+            .collect()
     }
 }

@@ -26,6 +26,33 @@ impl Dispatcher {
         self.tools.keys().map(String::as_str).collect()
     }
 
+    /// Whether a tool with this name is registered. The registered set is the
+    /// agent's operation vocabulary: a plan step whose action is not in it is
+    /// advisory-only and cannot be executed.
+    pub fn contains(&self, name: &str) -> bool {
+        self.tools.contains_key(name)
+    }
+
+    /// A stable, model-readable catalog of registered tools — one
+    /// `- name (risk: …): description` line each, sorted so the prompt the
+    /// agent loop builds is deterministic.
+    pub fn catalog(&self) -> String {
+        let mut lines: Vec<String> = self
+            .tools
+            .values()
+            .map(|tool| {
+                format!(
+                    "- {} (risk: {:?}): {}",
+                    tool.name(),
+                    tool.risk(),
+                    tool.description()
+                )
+            })
+            .collect();
+        lines.sort();
+        lines.join("\n")
+    }
+
     /// Dispatch a tool by name. Refuses to run when `consent` does not permit
     /// the tool's declared risk — the consent gate is enforced here, not at the
     /// call site.
