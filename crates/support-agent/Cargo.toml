@@ -1,0 +1,23 @@
+[package]
+name = "support-agent"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Headless CLI for the cec-support-agent engine: assembles the diagnostic, candidate, judge, and sign-off-gated pipeline."
+
+[[bin]]
+name = "cec-support-agent"
+path = "src/main.rs"
+
+[dependencies]
+common = { workspace = true }
+inference = { workspace = true }
+agent-core = { workspace = true }
+tools-windows = { workspace = true }
+panel = { workspace = true }
+swarm = { workspace = true }
+corpus-client = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }

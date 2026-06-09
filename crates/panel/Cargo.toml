@@ -1,0 +1,12 @@
+[package]
+name = "panel"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Judge panel: score candidate plans across axes, pick best-of-N, and decide the escalation level."
+
+[dependencies]
+common = { workspace = true }
+serde = { workspace = true }

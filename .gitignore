@@ -1,0 +1,15 @@
+/target
+**/*.rs.bk
+*.pdb
+.env
+.env.*
+*.key
+*.pem
+# Never commit corpus data or model weights
+/corpus/
+/weights/
+*.gguf
+*.safetensors
+*.bin
+*.sqlite
+*.duckdb

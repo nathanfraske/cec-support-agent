@@ -1,0 +1,18 @@
+[package]
+name = "corpus-client"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Corpus API client, schema, and cold-start store. Enforces the verifier/human sign-off gate in code. Ships no corpus data."
+
+[dependencies]
+common = { workspace = true }
+serde = { workspace = true }
+reqwest = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

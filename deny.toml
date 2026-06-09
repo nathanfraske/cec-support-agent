@@ -1,0 +1,20 @@
+[advisories]
+yanked = "deny"
+
+[licenses]
+allow = [
+    "AGPL-3.0-only",       # this workspace's own crates (engine-protection lever)
+    "Apache-2.0",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",        # ICU4X crates (zerovec, tinystr, icu_*), unicode-ident
+    "CDLA-Permissive-2.0", # webpki-roots
+    "Zlib",
+]
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "warn"

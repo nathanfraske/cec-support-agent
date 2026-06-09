@@ -1,0 +1,15 @@
+[package]
+name = "inference"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "OpenAI-compatible inference over HTTP. No build-time dependency on a specific model, provider, or GPU runtime."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+reqwest = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
