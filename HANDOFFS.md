@@ -1,0 +1,63 @@
+# HANDOFFS
+
+The cross-agent baton. An agent picking up this repo should be able to read **only this file** and know
+exactly where things stand, what to do next, and what was learned — without hunting. Times are **UTC**.
+
+Keep three things current, in the same turn as the work:
+1. **Current state** — where things stand right now (branch, what's done, what's in flight).
+2. **Pick up here** — the exact next step(s), concrete enough to start immediately (file, command, decision).
+3. **Lessons learned** — durable, append-only. Anything you discovered the hard way (a gotcha, a non-obvious
+   constraint, a tool quirk, a dead end and why) so the next agent does not relearn it. Never delete a lesson.
+
+Below "Pick up here", keep a reverse-chronological **handoff log** of dated entries so the trail is auditable.
+
+---
+
+## Current state
+
+**As of 2026-06-14 ~19:51 UTC.** Active work: standing up agent-ops infrastructure (tracking hooks, WSL
+durability, evidence-integrity checklist) in this repo.
+
+- **What this repo is.** `cec-support-agent` — the open Rust engine (Cargo workspace, 10 crates + the
+  `support-agent` CLI). Pipeline: intake interview → collect diagnostics → candidate plans (swarm
+  hypothesis fan-out) → judge panel (route/score/escalate) → provenance-signed plan → consent-gated
+  execution → verification (diff re-collected signature) → sign-off-gated, de-identified corpus write-back.
+  The **corpus is private and lives elsewhere**; only the corpus *client* + schema are here.
+- **Important.** The GitHub repo literally named `CEC_AutoDiagnoser` is EMPTY. The real work is the
+  `cec-support-agent` repo, cloned into the local `/home/nathan/CEC_AutoDiagnoser` working dir. Remote:
+  `https://github.com/nathanfraske/cec-support-agent.git`, default branch `main`.
+- **Done this session:** three tracking hooks + seed files —
+  `.claude/hooks/{followups,todos,handoffs}-context.sh`, and `FOLLOWUPS.md` / `TODOS.md` / `HANDOFFS.md`
+  at the repo root. All three hooks syntax-check and emit valid SessionStart JSON.
+- **In flight:** a recon fan-out workflow (`autodiagnoser-recon`) is mapping the pipeline, the CEC-Platform
+  evidence-integrity policy + research checklist, the inverted-ground-truth-corpus approach, the
+  WSL-ephemeral state policy, and the current local-agent infrastructure. Its output feeds the design panel.
+
+## Pick up here
+
+If resuming: check the recon workflow result (`/workflows` or the task notification for `autodiagnoser-recon`),
+then proceed to (1) WSL-ephemeral parity hooks (`session-start.sh` + `session-end.sh` durability — in-tree
+`.claude/memory` mirror + off-tree `ops/agent-handoff` branch push, adapted to this repo), (2) wire every
+hook into `.claude/settings.json`, (3) author the evidence-integrity & research checklist doc adapted to the
+inverted-ground-truth-corpus approach (run a design panel first), (4) document the current local-agent infra.
+See `TODOS.md` for the live checklist.
+
+## Lessons learned (append-only)
+
+- [2026-06-14 19:46 UTC] The local `CEC_AutoDiagnoser` working dir was an empty, non-git folder; the GitHub
+  repo of that exact name is also empty. The actual engine is the **`cec-support-agent`** repo. If a CEC
+  working dir looks empty, the code is in a differently-named GitHub repo — check `gh repo list` before
+  assuming greenfield.
+- [2026-06-14 19:50 UTC] This repo's pre-commit guard + `.gitignore` only block corpus/weights *data*
+  formats (`corpus/`, `weights/`, `*.gguf|safetensors|bin|sqlite|duckdb`). Markdown, shell, and JSON under
+  `.claude/` are not blocked — but `core.hooksPath` is NOT set here yet, so the guard is dormant until
+  `git config core.hooksPath scripts/githooks` is run.
+- [2026-06-14 19:50 UTC] CEC-Platform's FOLLOWUPS.md uses date-only and *deletes* resolved items; the owner
+  wants the STRICTER variant here — date+time and append-only tombstones. TODOS.md mirrors CEC-Platform's
+  TODO.md (already tombstoned). Don't copy CEC-Platform's followups policy verbatim.
+
+## Handoff log (reverse-chronological)
+
+- **2026-06-14 19:51 UTC** — Cloned `cec-support-agent` into the working dir; authored the three tracking
+  hooks + seed files; launched the recon fan-out. Next: WSL parity hooks, settings.json, evidence-integrity
+  checklist (design panel), local-agent infra doc.
