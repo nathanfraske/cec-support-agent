@@ -579,15 +579,24 @@ async fn run(args: Args) -> anyhow::Result<()> {
                     execution.steps.len()
                 );
 
-                // Verify the outcome: re-run the collection and diff against
-                // the original failure signature. The claim "fixed" is only
-                // valid against the same instrument that established
-                // "broken". (The bootstrap collector re-derives the
-                // signature from the request text, so it cannot observe a
-                // fix yet; a real collector re-runs the targeted collection.)
+                // Verify the outcome: re-collect from the live machine and diff
+                // against the original failure signature. The claim "fixed" is
+                // only valid against the same instrument that established
+                // "broken", so the post-state must be a REAL re-collection, not
+                // a re-read of the request text. `recollect_post_signature`
+                // returns None for the bootstrap (no live tools) — and a None
+                // post yields `Verdict::Unverified`, so a run that never
+                // observed the machine afterwards escalates instead of being
+                // recorded as resolved (NR-1).
                 let class = verification_class_for(&route, case.reproducibility);
-                let post = signature_of(&collect_diagnostics(&args.describe));
-                let verdict = verify_outcome(&signature, &post, class);
+                let post = recollect_post_signature();
+                if post.is_none() {
+                    println!(
+                        "  verification: no live re-collection available — the outcome cannot be \
+                         confirmed and will escalate for human verification (NR-1)"
+                    );
+                }
+                let verdict = verify_outcome(&signature, post.as_ref(), class);
                 println!("  verification ({class:?}): {verdict:?}");
                 if let Verdict::Fail { recurring } = &verdict {
                     println!(
@@ -767,9 +776,26 @@ fn collect_diagnostics(describe: &str) -> Vec<DiagnosticEvent> {
     )]
 }
 
+/// Re-collect the post-execution signature from the LIVE machine, for the
+/// verification diff. A genuine re-collection re-runs the diagnostic tools
+/// (event log, WER/WHEA, CIM) against the host and builds a fresh signature with
+/// the same instrument that established the fault. The bootstrap has no live
+/// collector, so this returns `None` — and a `None` post is treated as
+/// [`Verdict::Unverified`], not a pass: re-reading the request text is not an
+/// observation of the post-fix state, so a run that never re-observed the
+/// machine escalates instead of being recorded as resolved (NR-1). A Windows
+/// build wires the real re-collection (via `tools-windows`) here.
+fn recollect_post_signature() -> Option<FaultSignature> {
+    None
+}
+
 /// Build the fault signature from the structured symptoms of every event.
 /// Free text never reaches the signature: extraction keeps only vocabulary
-/// terms, hex codes, prefixed ids, and module names.
+/// terms, hex codes, prefixed ids, and module names. This is the builder a live
+/// re-collection (`recollect_post_signature` on a Windows build) uses to turn
+/// re-collected events into the post-fix signature; it is exercised by the
+/// tests today.
+#[allow(dead_code)] // wired in by the real (Windows) re-collection; used by tests
 fn signature_of(events: &[DiagnosticEvent]) -> FaultSignature {
     let mut symptoms: Vec<common::Symptom> = events
         .iter()
@@ -841,7 +867,12 @@ fn label_for(route: &Route, execution: &ExecutionResult, verdict: &Verdict) -> O
     match verdict {
         Verdict::Pass => OutcomeLabel::ResolvedConfirmed,
         Verdict::ProvisionalPass => OutcomeLabel::ResolvedProvisional,
-        Verdict::Fail { .. } | Verdict::OffMachine => OutcomeLabel::EscalatedHumanUnresolved,
+        // Fail (the fix did not hold), OffMachine (hardware belongs to the
+        // bench), and Unverified (no live re-collection observed the outcome)
+        // all escalate to a human rather than claim a resolution.
+        Verdict::Fail { .. } | Verdict::OffMachine | Verdict::Unverified => {
+            OutcomeLabel::EscalatedHumanUnresolved
+        }
     }
 }
 

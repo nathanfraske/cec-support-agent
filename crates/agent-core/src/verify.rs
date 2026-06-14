@@ -26,6 +26,11 @@ pub enum Verdict {
     /// Hardware class: the verdict belongs to the bench or the RMA, not to a
     /// machine-side diff.
     OffMachine,
+    /// No independent re-collection was available to diff against the original,
+    /// so the outcome could not be verified either way. It escalates for human
+    /// review and can never back a resolved label — this is what a run gets when
+    /// the post-fix state was never actually observed (the bootstrap echo).
+    Unverified,
 }
 
 impl Verdict {
@@ -41,6 +46,7 @@ impl Verdict {
             Verdict::ProvisionalPass => (R::ProvisionalPass, Vec::new()),
             Verdict::Fail { recurring } => (R::Fail, recurring.clone()),
             Verdict::OffMachine => (R::OffMachine, Vec::new()),
+            Verdict::Unverified => (R::Unverified, Vec::new()),
         };
         common::Verification {
             result,
@@ -53,17 +59,26 @@ impl Verdict {
 /// Verify an outcome by diffing the re-collected signature against the
 /// original failure signature.
 ///
-/// The claim "fixed" is only valid against the same instrument that
-/// established "broken": `post` must come from re-running the same targeted
-/// collection that produced `original`.
+/// The claim "fixed" is only valid against the same instrument that established
+/// "broken": `post` must come from re-running the same targeted collection that
+/// produced `original`. `post` is therefore an `Option`: `None` means **no
+/// independent re-collection was available** (e.g. the bootstrap collector only
+/// re-reads the request text, which is not an observation of the post-fix
+/// state) — that yields [`Verdict::Unverified`], never a pass, so a run that
+/// never actually observed the machine afterwards cannot be recorded as
+/// resolved. A hardware-class outcome is always `OffMachine` (the verdict
+/// belongs to the bench), with or without a re-collection.
 pub fn verify_outcome(
     original: &FaultSignature,
-    post: &FaultSignature,
+    post: Option<&FaultSignature>,
     class: VerificationClass,
 ) -> Verdict {
     if class == VerificationClass::Hardware {
         return Verdict::OffMachine;
     }
+    let Some(post) = post else {
+        return Verdict::Unverified;
+    };
     let recurring = original.recurring_in(post);
     if !recurring.is_empty() {
         return Verdict::Fail { recurring };
@@ -88,7 +103,7 @@ mod tests {
         let original = signature(&["crash", "event_41"]);
         let post = signature(&[]);
         assert_eq!(
-            verify_outcome(&original, &post, VerificationClass::Deterministic),
+            verify_outcome(&original, Some(&post), VerificationClass::Deterministic),
             Verdict::Pass
         );
     }
@@ -98,7 +113,7 @@ mod tests {
         let original = signature(&["freeze"]);
         let post = signature(&[]);
         assert_eq!(
-            verify_outcome(&original, &post, VerificationClass::Intermittent),
+            verify_outcome(&original, Some(&post), VerificationClass::Intermittent),
             Verdict::ProvisionalPass
         );
     }
@@ -107,7 +122,7 @@ mod tests {
     fn recurrence_fails_and_names_the_recurring_symptoms() {
         let original = signature(&["crash", "event_41"]);
         let post = signature(&["event_41", "reboot"]);
-        match verify_outcome(&original, &post, VerificationClass::Deterministic) {
+        match verify_outcome(&original, Some(&post), VerificationClass::Deterministic) {
             Verdict::Fail { recurring } => {
                 assert_eq!(recurring, vec![Symptom("event_41".into())]);
             }
@@ -120,7 +135,27 @@ mod tests {
         let original = signature(&["whea"]);
         let post = signature(&[]);
         assert_eq!(
-            verify_outcome(&original, &post, VerificationClass::Hardware),
+            verify_outcome(&original, Some(&post), VerificationClass::Hardware),
+            Verdict::OffMachine
+        );
+    }
+
+    #[test]
+    fn no_recollection_is_unverified_not_a_pass() {
+        // The bootstrap case: nothing was observed after execution, so the
+        // outcome cannot be confirmed — it must escalate, never resolve.
+        let original = signature(&["crash"]);
+        assert_eq!(
+            verify_outcome(&original, None, VerificationClass::Deterministic),
+            Verdict::Unverified
+        );
+        assert_eq!(
+            verify_outcome(&original, None, VerificationClass::Intermittent),
+            Verdict::Unverified
+        );
+        // Hardware is still off-machine regardless.
+        assert_eq!(
+            verify_outcome(&original, None, VerificationClass::Hardware),
             Verdict::OffMachine
         );
     }

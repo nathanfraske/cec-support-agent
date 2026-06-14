@@ -41,6 +41,11 @@ pub enum VerificationResult {
     /// Hardware class: the verdict belongs to the bench or RMA, not a
     /// machine-side diff.
     OffMachine,
+    /// No independent re-collection was available, so the outcome could not be
+    /// verified either way (e.g. the bootstrap collector only re-reads the
+    /// request text — not an observation of the post-fix state). An unverified
+    /// outcome can never back a resolved label; it escalates for human review.
+    Unverified,
 }
 
 impl VerificationResult {
