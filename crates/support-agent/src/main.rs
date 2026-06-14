@@ -811,10 +811,26 @@ fn signature_of(events: &[DiagnosticEvent]) -> FaultSignature {
 /// bootstrap uses the host's coarse identity so corpus rows are still scoped
 /// to like configs.
 fn host_config_class() -> ConfigClass {
-    ConfigClass::from_inventory([
+    ConfigClass::from_inventory(host_inventory())
+}
+
+/// The inventory facts that scope a corpus row to "like configs". A real CEC
+/// build keys on the BOM revision; a general host derives the class from its
+/// hardware and driver inventory. Today this is the cross-platform coarse set
+/// (OS, arch, OS family) — deterministic and identity-free. A Windows build
+/// SHOULD enrich it here with CIM **configuration** fields (board vendor/model,
+/// BIOS version/date, chipset, GPU model, driver versions) — never serial
+/// numbers or service tags — so retrieval is scoped to genuinely-like hardware
+/// rather than to every machine sharing an OS/arch. That enrichment needs a
+/// Windows host to build and verify and is tracked in FOLLOWUPS; the config
+/// class is already bound into a row's sign-off attestation, so whatever it is
+/// derived from is tamper-evident.
+fn host_inventory() -> Vec<String> {
+    vec![
         format!("os:{}", std::env::consts::OS),
         format!("arch:{}", std::env::consts::ARCH),
-    ])
+        format!("family:{}", std::env::consts::FAMILY),
+    ]
 }
 
 /// A fresh, opaque id for this run, so the corpus can tell independent
