@@ -27,7 +27,7 @@ pub use extract::extract_symptoms;
 pub use fault::{FaultSignature, Symptom};
 pub use fluency::Fluency;
 pub use plan::{Plan, PlanStep, Risk};
-pub use verification::{Verification, VerificationResult};
+pub use verification::{Verification, VerificationClass, VerificationResult};
 
 #[cfg(test)]
 mod tests {

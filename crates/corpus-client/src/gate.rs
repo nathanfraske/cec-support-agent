@@ -187,6 +187,7 @@ mod tests {
             Risk::Reversible,
             Some(Verification {
                 result: VerificationResult::Fail,
+                class: None,
                 recurring: vec![Symptom("event_41".into())],
             }),
         );

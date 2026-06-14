@@ -1,21 +1,10 @@
 use common::{FaultSignature, Symptom};
 use serde::{Deserialize, Serialize};
 
-/// How an outcome for this fault class can be verified.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum VerificationClass {
-    /// The fault reproduces deterministically: re-run the collection and the
-    /// verdict is pass or fail, now.
-    Deterministic,
-    /// The fault is intermittent: absence of evidence over minutes is not a
-    /// fix, so a clean re-collection earns only a provisional pass under a
-    /// monitoring horizon with auto-reopen.
-    Intermittent,
-    /// The fault is hardware-evidenced: verification is the bench or RMA
-    /// outcome, not a machine-side check.
-    Hardware,
-}
+// The verification class vocabulary now lives in `common` (it is recorded on a
+// corpus row), re-exported here so existing `agent_core::verify::VerificationClass`
+// / `agent_core::VerificationClass` paths keep working.
+pub use common::VerificationClass;
 
 /// The verification verdict for an executed plan.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,29 +30,22 @@ pub enum Verdict {
 
 impl Verdict {
     /// The de-identified verification record this verdict contributes to a
-    /// corpus row, so a resolved outcome can be audited against — and gated on
-    /// — the evidence that justified it. The recurring symptoms (a `Fail`'s
-    /// post-state diff) are vocabulary terms, so this carries evidence, never
-    /// identity.
-    pub fn to_verification(&self) -> common::Verification {
+    /// corpus row, under the class it was judged in, so a resolved outcome can
+    /// be audited against — and gated on — the evidence that justified it. The
+    /// recurring symptoms (a `Fail`'s post-state diff) are vocabulary terms, so
+    /// this carries evidence, never identity.
+    pub fn to_verification(&self, class: VerificationClass) -> common::Verification {
         use common::VerificationResult as R;
-        match self {
-            Verdict::Pass => common::Verification {
-                result: R::Pass,
-                recurring: Vec::new(),
-            },
-            Verdict::ProvisionalPass => common::Verification {
-                result: R::ProvisionalPass,
-                recurring: Vec::new(),
-            },
-            Verdict::Fail { recurring } => common::Verification {
-                result: R::Fail,
-                recurring: recurring.clone(),
-            },
-            Verdict::OffMachine => common::Verification {
-                result: R::OffMachine,
-                recurring: Vec::new(),
-            },
+        let (result, recurring) = match self {
+            Verdict::Pass => (R::Pass, Vec::new()),
+            Verdict::ProvisionalPass => (R::ProvisionalPass, Vec::new()),
+            Verdict::Fail { recurring } => (R::Fail, recurring.clone()),
+            Verdict::OffMachine => (R::OffMachine, Vec::new()),
+        };
+        common::Verification {
+            result,
+            class: Some(class),
+            recurring,
         }
     }
 }

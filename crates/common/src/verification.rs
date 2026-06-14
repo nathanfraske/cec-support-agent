@@ -2,6 +2,23 @@ use serde::{Deserialize, Serialize};
 
 use crate::Symptom;
 
+/// How an outcome for a fault class can be verified. Decided before execution
+/// from the route and the reproducibility the user reported; recorded on the
+/// corpus row so a resolved outcome can be audited against the instrument that
+/// judged it (an intermittent fault is paroled, not confirmed).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VerificationClass {
+    /// Deterministic: re-run the collection and the verdict is pass/fail, now.
+    Deterministic,
+    /// Intermittent: a clean re-collection earns only a provisional pass under a
+    /// monitoring horizon with auto-reopen.
+    Intermittent,
+    /// Hardware-evidenced: verification is the bench/RMA outcome, not a
+    /// machine-side check.
+    Hardware,
+}
+
 /// The verifier's verdict for an executed plan, as a de-identified record.
 ///
 /// This mirrors the result of `agent-core`'s `verify_outcome` (a diff of the
@@ -42,6 +59,10 @@ impl VerificationResult {
 pub struct Verification {
     /// The verdict kind.
     pub result: VerificationResult,
+    /// The class the outcome was judged under (so a `ResolvedProvisional` is
+    /// visibly an intermittent parole, not a deterministic confirmation).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub class: Option<VerificationClass>,
     /// Original symptoms still present after execution — the post-state diff.
     /// Empty unless `result` is `Fail`. Symptoms are vocabulary terms, so this
     /// carries evidence, never identity.
@@ -50,18 +71,20 @@ pub struct Verification {
 }
 
 impl Verification {
-    /// A passing verdict with no recurring symptoms.
+    /// A passing verdict with no recurring symptoms and no recorded class.
     pub fn pass() -> Self {
         Self {
             result: VerificationResult::Pass,
+            class: None,
             recurring: Vec::new(),
         }
     }
 
-    /// A provisional-pass verdict with no recurring symptoms.
+    /// A provisional-pass verdict with no recurring symptoms and no class.
     pub fn provisional() -> Self {
         Self {
             result: VerificationResult::ProvisionalPass,
+            class: None,
             recurring: Vec::new(),
         }
     }

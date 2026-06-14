@@ -110,6 +110,28 @@ pub struct SignOffAttestation {
     pub signature: String,
 }
 
+/// Run-provenance of a corpus row: which run produced it and how the plan was
+/// generated. Lets confirmations be counted only from INDEPENDENT runs — a
+/// re-submitted row (same `run_id`) or a row whose plan was corpus-primed from
+/// the very mapping it would confirm cannot inflate that mapping's confidence —
+/// and lets a confirmation's origin (de-novo vs corpus-primed) be audited. It
+/// carries no identity: a `run_id` is an opaque token, plan ids are vocabulary.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RowProvenance {
+    /// Opaque id of the run that produced this outcome. Distinct runs are
+    /// independent confirmations; the same id is a single observation.
+    pub run_id: String,
+    /// Whether the plan came from a corpus precedent (retrieval-first) rather
+    /// than de-novo generation.
+    #[serde(default)]
+    pub retrieval_first: bool,
+    /// Plan ids of the corpus precedents that primed this run (empty for a
+    /// de-novo/control run). A plan primed from itself is not independent
+    /// support for itself.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub primed_from: Vec<String>,
+}
+
 /// A de-identified outcome proposed for inclusion in the corpus: the
 /// (signature, plan, outcome) triple plus its context.
 ///
@@ -131,6 +153,11 @@ pub struct Contribution {
     /// authority public key, this must be present and valid for a confirmed row.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attestation: Option<SignOffAttestation>,
+    /// Run-provenance: which run produced this row and how its plan was
+    /// generated. `None` on legacy rows; when present, confirmation counting
+    /// uses it to admit only independent confirmations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<RowProvenance>,
 }
 
 impl Contribution {
@@ -145,7 +172,15 @@ impl Contribution {
             config_class,
             sign_off,
             attestation: None,
+            provenance: None,
         }
+    }
+
+    /// Record how this row was produced (run id, retrieval-first, primed-from)
+    /// so confirmation counting can admit only independent confirmations.
+    pub fn with_provenance(mut self, provenance: RowProvenance) -> Self {
+        self.provenance = Some(provenance);
+        self
     }
 
     /// Attach a sign-off authority's attestation over this contribution's
@@ -164,15 +199,18 @@ impl Contribution {
 }
 
 /// The canonical bytes a sign-off attestation covers: the contribution's
-/// `(signature, plan, label, sign_off, config_class)` tuple in a stable,
-/// serde-independent encoding. The attestation field itself is excluded (it
-/// signs everything else). Built from the de-identified plan that is stored, so
-/// the gate re-derives exactly what the authority signed. Tampering with any
+/// `(signature, plan, label, sign_off, config_class)` tuple AND its
+/// run-provenance, in a stable, serde-independent encoding. The attestation
+/// field itself is excluded (it signs everything else). Built from the
+/// de-identified plan that is stored, so the gate re-derives exactly what the
+/// authority signed. Binding the provenance pin (the `run_id` especially) means
+/// one valid attestation cannot be replayed onto clones with fabricated run ids
+/// to inflate a mapping's independent-confirmation count. Tampering with any
 /// covered field changes these bytes and breaks verification.
 pub(crate) fn attestation_message(c: &Contribution) -> Vec<u8> {
     use std::fmt::Write as _;
     let o = &c.outcome;
-    let mut s = String::from("cec-signoff-attestation-v1\n");
+    let mut s = String::from("cec-signoff-attestation-v2\n");
     let _ = writeln!(s, "fp:{}", o.signature.fingerprint);
     let mut symptoms: Vec<&str> = o.signature.symptoms.iter().map(|x| x.0.as_str()).collect();
     symptoms.sort_unstable();
@@ -184,6 +222,22 @@ pub(crate) fn attestation_message(c: &Contribution) -> Vec<u8> {
     let _ = writeln!(s, "label:{}", label_tag(&o.label));
     let _ = writeln!(s, "signoff:{:?}", c.sign_off);
     let _ = writeln!(s, "class:{}", c.config_class.key());
+    match &c.provenance {
+        None => {
+            let _ = writeln!(s, "prov:none");
+        }
+        Some(p) => {
+            let mut primed: Vec<&str> = p.primed_from.iter().map(|x| x.as_str()).collect();
+            primed.sort_unstable();
+            let _ = writeln!(
+                s,
+                "prov:run={};rf={};primed={}",
+                p.run_id,
+                p.retrieval_first,
+                primed.join(",")
+            );
+        }
+    }
     s.into_bytes()
 }
 

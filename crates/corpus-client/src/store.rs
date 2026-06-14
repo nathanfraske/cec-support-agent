@@ -34,37 +34,79 @@ pub enum CorpusError {
     Storage(String),
 }
 
+/// The independence key a resolved row contributes to a plan's confirmation
+/// count, or `None` if it is not an independent confirmation of that plan.
+///
+/// EI-03/A5: a confirmation counts only if it came from an independent run.
+/// A row whose plan was corpus-primed *from the very mapping it would confirm*
+/// is circular and contributes nothing. Otherwise rows are deduplicated by
+/// `run_id`, so re-submitting the same run cannot inflate confidence. A legacy
+/// row with no provenance is counted once per row (the prior behavior), since
+/// its independence cannot be established.
+fn confirmation_key(row: &Contribution, plan_id: &str, index: usize) -> Option<String> {
+    match &row.provenance {
+        Some(p) if p.retrieval_first && p.primed_from.iter().any(|id| id == plan_id) => None,
+        Some(p) => Some(format!("run:{}", p.run_id)),
+        None => Some(format!("row:{index}")),
+    }
+}
+
 /// Derive the fix mappings for a signature at a config class from a set of
-/// corpus rows. Only resolved rows back a mapping (failures stay in the rows
-/// as hard negatives); rows confirming the same plan for the same signature
-/// aggregate into one mapping with a confirmation count.
+/// corpus rows. Only resolved rows back a mapping (failures stay in the rows as
+/// hard negatives); rows confirming the same plan aggregate into one mapping
+/// whose confirmation count is the number of INDEPENDENT confirmations
+/// ([`confirmation_key`]). A plan with no independent confirmation is not
+/// offered.
 fn fix_mappings(
     rows: &[Contribution],
     signature: &FaultSignature,
     config_class: &ConfigClass,
 ) -> Vec<FixMapping> {
-    let mut mappings: Vec<FixMapping> = Vec::new();
-    for row in rows {
+    use std::collections::HashSet;
+
+    struct Acc {
+        signature: FaultSignature,
+        plan: common::Plan,
+        contributors: HashSet<String>,
+    }
+
+    let mut order: Vec<String> = Vec::new();
+    let mut accs: std::collections::HashMap<String, Acc> = std::collections::HashMap::new();
+
+    for (index, row) in rows.iter().enumerate() {
         if row.outcome.signature.fingerprint != signature.fingerprint
             || row.config_class != *config_class
             || !row.outcome.label.is_resolved()
         {
             continue;
         }
-        if let Some(existing) = mappings
-            .iter_mut()
-            .find(|m| m.plan.id == row.outcome.plan.id)
-        {
-            existing.confirmations += 1;
-        } else {
-            mappings.push(FixMapping {
+        let plan_id = row.outcome.plan.id.clone();
+        let acc = accs.entry(plan_id.clone()).or_insert_with(|| {
+            order.push(plan_id.clone());
+            Acc {
                 signature: row.outcome.signature.clone(),
                 plan: row.outcome.plan.clone(),
-                confirmations: 1,
-            });
+                contributors: HashSet::new(),
+            }
+        });
+        if let Some(key) = confirmation_key(row, &plan_id, index) {
+            acc.contributors.insert(key);
         }
     }
-    mappings
+
+    order
+        .iter()
+        .filter_map(|plan_id| {
+            let acc = &accs[plan_id];
+            let confirmations = acc.contributors.len() as u32;
+            // A plan with only circular (self-primed) support is not offered.
+            (confirmations > 0).then(|| FixMapping {
+                signature: acc.signature.clone(),
+                plan: acc.plan.clone(),
+                confirmations,
+            })
+        })
+        .collect()
 }
 
 /// A corpus backend: look up fix mappings and submit confirmed outcomes.
@@ -312,7 +354,7 @@ impl CorpusStore for HttpCorpus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::{Outcome, OutcomeLabel, SignOff};
+    use crate::schema::{Outcome, OutcomeLabel, RowProvenance, SignOff};
     use common::{FaultSignature, Plan, Symptom, Verification};
 
     fn config_class() -> ConfigClass {
@@ -464,6 +506,7 @@ mod tests {
 
     #[tokio::test]
     async fn confirmations_aggregate_per_plan() {
+        // Legacy rows (no provenance): each submission counts once, as before.
         let corpus = LocalCorpus::new();
         let row = contribution(OutcomeLabel::ResolvedConfirmed, SignOff::HumanConfirmed);
         corpus.submit(&row).await.expect("first");
@@ -474,6 +517,95 @@ mod tests {
             .expect("query");
         assert_eq!(hits.len(), 1, "same plan aggregates into one mapping");
         assert_eq!(hits[0].confirmations, 2);
+    }
+
+    fn provenance(run_id: &str, retrieval_first: bool, primed_from: &[&str]) -> RowProvenance {
+        RowProvenance {
+            run_id: run_id.into(),
+            retrieval_first,
+            primed_from: primed_from.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    #[tokio::test]
+    async fn the_same_run_is_one_confirmation_not_many() {
+        // EI-03/A5: re-submitting the same run id must not inflate confidence.
+        let corpus = LocalCorpus::new();
+        let base = contribution(OutcomeLabel::ResolvedConfirmed, SignOff::HumanConfirmed);
+        let r1 = base
+            .clone()
+            .with_provenance(provenance("run-A", false, &[]));
+        let r2 = base
+            .clone()
+            .with_provenance(provenance("run-A", false, &[]));
+        corpus.submit(&r1).await.expect("first");
+        corpus.submit(&r2).await.expect("second (same run)");
+        let hits = corpus
+            .query(&base.outcome.signature, &config_class())
+            .await
+            .expect("query");
+        assert_eq!(hits[0].confirmations, 1, "one run = one confirmation");
+    }
+
+    #[tokio::test]
+    async fn distinct_independent_runs_each_confirm() {
+        let corpus = LocalCorpus::new();
+        let base = contribution(OutcomeLabel::ResolvedConfirmed, SignOff::HumanConfirmed);
+        corpus
+            .submit(
+                &base
+                    .clone()
+                    .with_provenance(provenance("run-A", false, &[])),
+            )
+            .await
+            .expect("A");
+        corpus
+            .submit(
+                &base
+                    .clone()
+                    .with_provenance(provenance("run-B", false, &[])),
+            )
+            .await
+            .expect("B");
+        let hits = corpus
+            .query(&base.outcome.signature, &config_class())
+            .await
+            .expect("query");
+        assert_eq!(hits[0].confirmations, 2, "two independent runs = two");
+    }
+
+    #[tokio::test]
+    async fn a_self_primed_confirmation_does_not_count() {
+        // A row whose plan was corpus-primed from this very mapping ("p1") is
+        // circular and must not back its own confidence.
+        let corpus = LocalCorpus::new();
+        let base = contribution(OutcomeLabel::ResolvedConfirmed, SignOff::HumanConfirmed);
+        // One genuine de-novo confirmation seeds the mapping...
+        corpus
+            .submit(
+                &base
+                    .clone()
+                    .with_provenance(provenance("run-A", false, &[])),
+            )
+            .await
+            .expect("de-novo");
+        // ...a later run primed FROM p1 adds no independent support.
+        corpus
+            .submit(
+                &base
+                    .clone()
+                    .with_provenance(provenance("run-B", true, &["p1"])),
+            )
+            .await
+            .expect("self-primed");
+        let hits = corpus
+            .query(&base.outcome.signature, &config_class())
+            .await
+            .expect("query");
+        assert_eq!(
+            hits[0].confirmations, 1,
+            "self-primed confirmation is circular and excluded"
+        );
     }
 
     // --- Sign-off attestation (MH-1): the engine cannot forge a confirmed row
@@ -531,6 +663,26 @@ mod tests {
         .attested_by(&authority);
         row.sign_off = SignOff::HumanConfirmed;
         let error = corpus.submit(&row).await.expect_err("tampered tuple");
+        assert!(matches!(
+            error,
+            CorpusError::Gate(GateError::AttestationInvalid)
+        ));
+    }
+
+    #[tokio::test]
+    async fn an_attestation_cannot_be_replayed_onto_a_fabricated_run_id() {
+        // The attestation binds the provenance pin, so one valid attestation
+        // cannot be cloned onto rows with fresh run ids to inflate confirmations.
+        let authority = provenance::SignOffAuthority::generate();
+        let corpus = LocalCorpus::new().with_authority(authority.public_key());
+        let genuine = contribution(OutcomeLabel::ResolvedConfirmed, SignOff::HumanConfirmed)
+            .with_provenance(provenance("run-A", false, &[]))
+            .attested_by(&authority);
+        corpus.submit(&genuine).await.expect("genuine run-A");
+        // Reuse the same attestation but claim a different run.
+        let mut replayed = genuine.clone();
+        replayed.provenance = Some(provenance("run-B", false, &[]));
+        let error = corpus.submit(&replayed).await.expect_err("replay");
         assert!(matches!(
             error,
             CorpusError::Gate(GateError::AttestationInvalid)

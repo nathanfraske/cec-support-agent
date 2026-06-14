@@ -27,7 +27,8 @@ use common::{
     ExecutionResult, FaultSignature, Plan, PlanStep, Risk, Severity,
 };
 use corpus_client::{
-    Contribution, CorpusStore, FileCorpus, LocalCorpus, Outcome, OutcomeLabel, SignOff,
+    Contribution, CorpusStore, FileCorpus, LocalCorpus, Outcome, OutcomeLabel, RowProvenance,
+    SignOff,
 };
 use inference::{ChatCompletionRequest, ChatMessage, Completer, Endpoint, OpenAiClient};
 use intake::{
@@ -423,6 +424,15 @@ async fn run(args: Args) -> anyhow::Result<()> {
             );
         }
         Some(sign_off) => {
+            // Run-provenance for every row this run records: a fresh run id, the
+            // retrieval-first lane, and which precedents primed the slate — so the
+            // corpus counts only independent confirmations (EI-03/A5).
+            let row_provenance = RowProvenance {
+                run_id: run_id(),
+                retrieval_first,
+                primed_from: known.iter().map(|m| m.plan.id.clone()).collect(),
+            };
+
             // The sign-off must meet the judge's required escalation: a
             // verifier cannot authorize a run the panel routed to a human.
             if escalation == Escalation::HumanConfirm && sign_off != SignOff::HumanConfirmed {
@@ -469,6 +479,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
                     &config_class,
                     sign_off,
                     None,
+                    Some(row_provenance.clone()),
                 )
                 .await;
                 return Ok(());
@@ -516,6 +527,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
                             &config_class,
                             sign_off,
                             None,
+                            Some(row_provenance.clone()),
                         )
                         .await;
                         final_label = Some(label);
@@ -583,7 +595,8 @@ async fn run(args: Args) -> anyhow::Result<()> {
                     label.clone(),
                     &config_class,
                     sign_off,
-                    Some(verdict.to_verification()),
+                    Some(verdict.to_verification(class)),
+                    Some(row_provenance.clone()),
                 )
                 .await;
 
@@ -696,6 +709,7 @@ fn explain_label(label: &OutcomeLabel) -> &'static str {
 /// `verification` is the verdict bound to the row so a resolved outcome is
 /// auditable against its evidence; `None` for outcomes that never executed
 /// (a withdrawn ticket, or no executable plan).
+#[allow(clippy::too_many_arguments)]
 async fn record_outcome(
     corpus: &dyn CorpusStore,
     signature: &FaultSignature,
@@ -704,8 +718,9 @@ async fn record_outcome(
     config_class: &ConfigClass,
     sign_off: SignOff,
     verification: Option<common::Verification>,
+    provenance: Option<RowProvenance>,
 ) {
-    let contribution = Contribution::new(
+    let mut contribution = Contribution::new(
         Outcome {
             signature: signature.clone(),
             plan: plan.clone(),
@@ -715,6 +730,9 @@ async fn record_outcome(
         config_class.clone(),
         sign_off,
     );
+    if let Some(provenance) = provenance {
+        contribution = contribution.with_provenance(provenance);
+    }
     match corpus.submit(&contribution).await {
         Ok(()) => println!("  corpus: outcome recorded (label={label:?}, sign-off={sign_off:?})"),
         Err(error) => println!("  corpus: submit refused: {error}"),
@@ -755,6 +773,15 @@ fn host_config_class() -> ConfigClass {
         format!("os:{}", std::env::consts::OS),
         format!("arch:{}", std::env::consts::ARCH),
     ])
+}
+
+/// A fresh, opaque id for this run, so the corpus can tell independent
+/// confirmations apart from a re-submission of the same run (EI-03/A5). It
+/// carries no identity — it is random bytes.
+fn run_id() -> String {
+    let mut bytes = [0u8; 16];
+    getrandom::getrandom(&mut bytes).expect("OS entropy source");
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// Whether this run is a routine ticket that may sample a lighter model tier:
@@ -1060,6 +1087,7 @@ mod tests {
             &config_class,
             SignOff::HumanConfirmed,
             Some(common::Verification::pass()),
+            None,
         )
         .await;
         // ...and run 2 facing the same signature retrieves it as precedent.

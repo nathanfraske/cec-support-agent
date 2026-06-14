@@ -43,6 +43,19 @@ Conventions:
 - [x] [added 2026-06-14 20:40 UTC · done 2026-06-14 20:41 UTC] Extend `SECURITY.md` invariant list to name the strengthened evidence-integrity gate
 - [x] [added 2026-06-14 20:45 UTC · done 2026-06-14 21:05 UTC] Increment 2 — **MH-1 keystone: ed25519 sign-off attestation** (owner chose asymmetric). `provenance::SignOffAuthority`/`SignOffPublicKey`/`SignOffSignature` (engine holds only the public key); `Contribution.attestation` + `attested_by()` + canonical `attestation_message()` over (signature, plan, label, sign_off, config_class); gate `ensure_attested()` + `GateError::AttestationMissing/Invalid`; stores gain `.with_authority(pubkey)` and enforce attestation when configured (cold start unchanged). +12 tests incl. the forgery test (self-asserted HumanConfirmed refused). 136 tests green; fmt + clippy clean; ed25519-dalek dep tree license-clean for cargo-deny; CLI smoke OK.
 
+### Full engine implementation sweep (owner: "continue down the list until full, then audit + fix, then present", 2026-06-14 20:49 UTC)
+
+- [x] [added 2026-06-14 20:50 UTC · done 2026-06-14 21:20 UTC] Increment 3 — MH-2 remainder (`VerificationClass` moved to common + bound on the row via `Verification.class`; `RowProvenance` {run_id, retrieval_first, primed_from} on the row, populated in main.rs) + EI-03/A5 (independent-confirmation guard keyed on run_id; self-primed rows excluded; provenance bound into the attestation so a run_id can't be forged to inflate counts). +5 tests (140 total); gates green.
+- [ ] [added 2026-06-14 20:50 UTC] Increment 4 — MH-4/MH-8/EI-06: `FileCorpus` per-row hash-chain tamper-evidence + re-verify on open + owner-only revocation; `Reopened` demotes a prior resolved mapping
+- [ ] [added 2026-06-14 20:50 UTC] Increment 5 — Canonicalization: deterministic canonical-JSON plan encoder for provenance signing (replace serde field-order reliance)
+- [ ] [added 2026-06-14 20:50 UTC] Increment 6 — MH-5: model-output validation (claimed-risk vs actual-action reconciliation; advisory de-id at generation) + inference-channel provenance note
+- [ ] [added 2026-06-14 20:50 UTC] Increment 7 — MH-3/NR-1: real post-fix re-collection structure + refuse the bootstrap-trivial `ResolvedConfirmed`
+- [ ] [added 2026-06-14 20:50 UTC] Increment 8 — MH-6/A7: honest `config_class` from real inventory (structured; Windows CIM where available)
+- [ ] [added 2026-06-14 20:50 UTC] Increment 9 — MH-1 operator wiring: keygen + `CEC_SIGNOFF_PUBKEY`/seed env, attest at sign-off
+- [ ] [added 2026-06-14 20:50 UTC] Increment 10 — Sandbox-validation evidence: structured `SandboxValidator` wiring
+- [ ] [added 2026-06-14 20:50 UTC] AUDIT: adversarial multi-agent review of the full diff → fix findings
+- [ ] [added 2026-06-14 20:50 UTC] Present for review (PR-ready summary)
+
 ## Done / obsolete (history)
 
 _(completed items stay above, in place, with their `· done` tombstone)_

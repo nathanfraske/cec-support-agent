@@ -28,7 +28,8 @@ mod store;
 
 pub use gate::{ensure_attested, ensure_evidence_integrity, ensure_signed_off, GateError};
 pub use schema::{
-    de_identify_plan, Contribution, FixMapping, Outcome, OutcomeLabel, SignOff, SignOffAttestation,
+    de_identify_plan, Contribution, FixMapping, Outcome, OutcomeLabel, RowProvenance, SignOff,
+    SignOffAttestation,
 };
 pub use store::{CorpusError, CorpusStore, FileCorpus, HttpCorpus, LocalCorpus};
 
