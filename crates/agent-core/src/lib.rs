@@ -18,7 +18,7 @@ mod verify;
 
 pub use agent::{Agent, AgentRun, AgentStep};
 pub use consent::Consent;
-pub use dispatch::Dispatcher;
+pub use dispatch::{Dispatcher, RiskCorrection};
 pub use execute::{execute_plan, execute_signed_plan};
 pub use tool::{Tool, ToolError, ToolOutcome};
 pub use verify::{verify_outcome, Verdict, VerificationClass};
@@ -105,6 +105,67 @@ mod tests {
                 usage: None,
             })
         }
+    }
+
+    #[test]
+    fn risk_reconciliation_raises_an_understated_step_and_leaves_advisory_steps() {
+        let mut dispatcher = Dispatcher::new();
+        dispatcher.register(Box::new(Destructive)); // "wipe" is Destructive
+        dispatcher.register(Box::new(Reader)); // "read" is ReadOnly
+
+        let mut plan = Plan::new("p", "model plan");
+        // A model mislabels the destructive tool as read-only...
+        plan.steps.push(PlanStep {
+            description: "just a peek".into(),
+            action: "wipe".into(),
+            risk: Risk::ReadOnly,
+        });
+        // ...an honest read-only step is correct...
+        plan.steps.push(PlanStep {
+            description: "look".into(),
+            action: "read".into(),
+            risk: Risk::ReadOnly,
+        });
+        // ...and an out-of-vocabulary "review" step is advisory, left untouched.
+        plan.steps.push(PlanStep {
+            description: "think about it".into(),
+            action: "review".into(),
+            risk: Risk::ReadOnly,
+        });
+
+        let (reconciled, corrections) = dispatcher.reconcile_risk(&plan);
+        assert_eq!(corrections.len(), 1);
+        assert_eq!(corrections[0].action, "wipe");
+        assert_eq!(corrections[0].claimed, Risk::ReadOnly);
+        assert_eq!(corrections[0].actual, Risk::Destructive);
+        assert_eq!(reconciled.steps[0].risk, Risk::Destructive, "raised");
+        assert_eq!(reconciled.steps[1].risk, Risk::ReadOnly, "honest step kept");
+        assert_eq!(
+            reconciled.steps[2].risk,
+            Risk::ReadOnly,
+            "advisory left as-is"
+        );
+        assert_eq!(
+            reconciled.risk(),
+            Risk::Destructive,
+            "plan risk now reflects it"
+        );
+    }
+
+    #[test]
+    fn risk_reconciliation_never_lowers_a_step() {
+        let mut dispatcher = Dispatcher::new();
+        dispatcher.register(Box::new(Reader)); // "read" is ReadOnly
+        let mut plan = Plan::new("p", "over-cautious");
+        // A step claims a HIGHER risk than the tool: reconciliation never lowers.
+        plan.steps.push(PlanStep {
+            description: "read carefully".into(),
+            action: "read".into(),
+            risk: Risk::Destructive,
+        });
+        let (reconciled, corrections) = dispatcher.reconcile_risk(&plan);
+        assert!(corrections.is_empty());
+        assert_eq!(reconciled.steps[0].risk, Risk::Destructive, "not lowered");
     }
 
     #[tokio::test]

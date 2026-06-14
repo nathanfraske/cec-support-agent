@@ -371,6 +371,22 @@ async fn run(args: Args) -> anyhow::Result<()> {
     }
     candidates.extend(gathered.candidates);
 
+    // 5b. Reconcile model-claimed risk against each registered tool's real risk.
+    //     A generator (or a corpus row) cannot mislabel a state-changing action
+    //     as ReadOnly to understate the rendered consent or slip past the
+    //     consent gate: an under-stated step is RAISED to the tool's true risk
+    //     before the plan is judged, consented to, or executed.
+    for candidate in &mut candidates {
+        let (reconciled, corrections) = dispatcher.reconcile_risk(&candidate.plan);
+        for correction in &corrections {
+            println!(
+                "  risk reconciled: '{}' claimed {:?} but is {:?} — raised before consent",
+                correction.action, correction.claimed, correction.actual
+            );
+        }
+        candidate.plan = reconciled;
+    }
+
     // 6. Sandbox validation. The CLI configures no VM backend, so every plan
     //    is unvalidated here — and unvalidated equals escalate: the judge
     //    requires human sign-off for any state-changing unvalidated plan.
