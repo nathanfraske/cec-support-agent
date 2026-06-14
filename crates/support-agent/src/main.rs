@@ -36,7 +36,7 @@ use intake::{
 };
 use panel::{best_of_n, required_escalation, route_for, Escalation, HeuristicJudge, Judge, Route};
 use provenance::SigningKey;
-use swarm::{Generator, Swarm, SwarmError};
+use swarm::{Generator, SandboxValidator, Swarm, SwarmError};
 use tools_windows::{firmware_advisory, windows_tools, BoardIdentity};
 
 /// Parsed command-line arguments for the `diagnose` flow.
@@ -434,17 +434,23 @@ async fn run(args: Args) -> anyhow::Result<()> {
         candidate.plan = reconciled;
     }
 
-    // 6. Sandbox validation. The CLI configures no VM backend, so every plan
-    //    is unvalidated here — and unvalidated equals escalate: the judge
-    //    requires human sign-off for any state-changing unvalidated plan.
-    let sandbox_validated = false;
-    println!("  sandbox: no validator configured; plans are unvalidated (unvalidated = escalate)");
-
-    // 7. Judge panel: score the slate, pick best-of-N, decide the escalation
-    //    from the route, the validation state, and the risk/score ladder.
+    // 6/7. Judge panel: score the slate and pick best-of-N. Then sandbox-validate
+    //      the WINNER and decide the escalation from the route, the REAL
+    //      validation state, and the risk/score ladder. The CLI configures no VM
+    //      backend, so the winner is unvalidated — and unvalidated equals
+    //      escalate: a state-changing plan still requires human sign-off. A
+    //      deployment that wires a disposable-VM `SandboxValidator` gets positive
+    //      validation evidence, and a clean apply can lower the bar.
     let judge = HeuristicJudge;
     let (index, best, score) =
         best_of_n(&judge, &candidates).expect("the heuristic candidate is always present");
+    let sandbox: Option<Box<dyn SandboxValidator>> = None; // deployment wires a disposable-VM backend
+    if sandbox.is_none() {
+        println!(
+            "  sandbox: no validator configured; the winner is unvalidated (unvalidated = escalate)"
+        );
+    }
+    let sandbox_validated = sandbox_validated_for(sandbox.as_deref(), best).await;
     let escalation = required_escalation(&route, sandbox_validated, best, &score);
 
     let consent_needed = match best.plan.risk() {
@@ -832,6 +838,37 @@ fn collect_diagnostics(describe: &str) -> Vec<DiagnosticEvent> {
     )]
 }
 
+/// Whether the chosen plan was POSITIVELY validated in a disposable sandbox.
+/// With no validator configured (the CLI default) this is `false` — and
+/// unvalidated equals escalate, so a state-changing plan still requires human
+/// sign-off. A deployment that wires a `SandboxValidator` (a disposable VM with
+/// no user data) gets a real per-plan report: a clean apply is positive
+/// evidence that lowers the escalation bar; a dirty apply or a validation error
+/// does not (it stays conservative — escalate).
+async fn sandbox_validated_for(sandbox: Option<&dyn SandboxValidator>, best: &Candidate) -> bool {
+    let Some(validator) = sandbox else {
+        return false;
+    };
+    match validator.validate(best).await {
+        Ok(report) => {
+            println!(
+                "  sandbox: {} — {}",
+                if report.applied_cleanly {
+                    "validated cleanly"
+                } else {
+                    "did NOT apply cleanly (stays unvalidated)"
+                },
+                report.notes
+            );
+            report.applied_cleanly
+        }
+        Err(error) => {
+            println!("  sandbox: validation failed ({error}); treating as unvalidated");
+            false
+        }
+    }
+}
+
 /// Re-collect the post-execution signature from the LIVE machine, for the
 /// verification diff. A genuine re-collection re-runs the diagnostic tools
 /// (event log, WER/WHEA, CIM) against the host and builds a fresh signature with
@@ -1153,6 +1190,41 @@ heuristic and an empty in-memory corpus. No CEC-hosted service is required.",
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct FakeSandbox {
+        clean: bool,
+    }
+
+    #[async_trait]
+    impl SandboxValidator for FakeSandbox {
+        async fn validate(
+            &self,
+            candidate: &Candidate,
+        ) -> Result<swarm::ValidationReport, SwarmError> {
+            Ok(swarm::ValidationReport {
+                candidate_id: candidate.plan.id.clone(),
+                applied_cleanly: self.clean,
+                notes: "fake sandbox".into(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn sandbox_validation_drives_the_validated_flag() {
+        let best = heuristic_candidate("x");
+        assert!(
+            !sandbox_validated_for(None, &best).await,
+            "no validator -> unvalidated (escalate)"
+        );
+        assert!(
+            sandbox_validated_for(Some(&FakeSandbox { clean: true }), &best).await,
+            "a clean sandbox apply is positive validation evidence"
+        );
+        assert!(
+            !sandbox_validated_for(Some(&FakeSandbox { clean: false }), &best).await,
+            "a dirty apply stays unvalidated"
+        );
+    }
 
     #[test]
     fn heuristic_plan_is_reversible_and_needs_consent() {
