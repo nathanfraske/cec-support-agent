@@ -468,6 +468,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
                     label,
                     &config_class,
                     sign_off,
+                    None,
                 )
                 .await;
                 return Ok(());
@@ -514,6 +515,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
                             label.clone(),
                             &config_class,
                             sign_off,
+                            None,
                         )
                         .await;
                         final_label = Some(label);
@@ -572,6 +574,8 @@ async fn run(args: Args) -> anyhow::Result<()> {
                 // a discard — because an unlabeled ticket is corpus poison.
                 let label = label_for(&route, &execution, &verdict);
                 println!("  outcome label: {label:?}");
+                // Bind the verifier's verdict to the row: a resolved label is
+                // gated on a matching passing verdict, and stays auditable.
                 record_outcome(
                     &*corpus,
                     &signature,
@@ -579,6 +583,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
                     label.clone(),
                     &config_class,
                     sign_off,
+                    Some(verdict.to_verification()),
                 )
                 .await;
 
@@ -684,9 +689,13 @@ fn explain_label(label: &OutcomeLabel) -> &'static str {
     }
 }
 
-/// Record one labeled outcome through the corpus sign-off gate.
-/// `Contribution::new` strips the plan to its action vocabulary; an
-/// unconfirmed outcome would be refused by the gate, in code.
+/// Record one labeled outcome through the corpus evidence-integrity gate.
+/// `Contribution::new` strips the plan to its action vocabulary; the gate
+/// refuses — in code — an unconfirmed outcome, a resolved label with no matching
+/// passing verdict, or a resolved destructive plan without human sign-off. The
+/// `verification` is the verdict bound to the row so a resolved outcome is
+/// auditable against its evidence; `None` for outcomes that never executed
+/// (a withdrawn ticket, or no executable plan).
 async fn record_outcome(
     corpus: &dyn CorpusStore,
     signature: &FaultSignature,
@@ -694,12 +703,14 @@ async fn record_outcome(
     label: OutcomeLabel,
     config_class: &ConfigClass,
     sign_off: SignOff,
+    verification: Option<common::Verification>,
 ) {
     let contribution = Contribution::new(
         Outcome {
             signature: signature.clone(),
             plan: plan.clone(),
             label: label.clone(),
+            verification,
         },
         config_class.clone(),
         sign_off,
@@ -1048,6 +1059,7 @@ mod tests {
             OutcomeLabel::ResolvedConfirmed,
             &config_class,
             SignOff::HumanConfirmed,
+            Some(common::Verification::pass()),
         )
         .await;
         // ...and run 2 facing the same signature retrieves it as precedent.

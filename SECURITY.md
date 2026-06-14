@@ -21,9 +21,15 @@ Security-relevant invariants this repo upholds, and which a report may concern:
 
 - **No corpus data or model weights** are present in the tree or history. A
   finding of leaked corpus data or weights is a security issue.
-- **Sign-off gate.** `corpus-client` must refuse to submit any outcome that is
-  not verifier- or human-confirmed. A way to bypass `ensure_signed_off` is a
-  security issue.
+- **Evidence-integrity gate.** `corpus-client` must refuse to admit any row that
+  fails the truth-admission gate (`ensure_evidence_integrity`, the gate formerly
+  named `ensure_signed_off`). It must be sign-off confirmed (verifier or human),
+  and a **resolved** outcome must carry a **matching passing verification verdict**
+  and — when its plan is destructive — **human** sign-off. A way to admit an
+  unconfirmed row, a resolved row with no/contradicting verdict, or a destructive
+  "fix" without human sign-off is a security issue. (Cryptographic attestation of
+  the sign-off itself, so a constructed `HumanConfirmed` enum cannot pass, is
+  tracked as the keystone follow-up; see `docs/evidence-integrity-and-research-checklist.md`.)
 - **Consent gate.** `agent-core` must not run a state-changing tool without
   consent appropriate to its risk. A bypass is a security issue.
 - **No mandatory outbound connection.** The engine must cold-start with no

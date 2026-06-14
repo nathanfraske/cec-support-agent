@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use common::{ConfigClass, FaultSignature};
 use thiserror::Error;
 
-use crate::gate::{ensure_signed_off, GateError};
+use crate::gate::{ensure_evidence_integrity, GateError};
 use crate::schema::{Contribution, FixMapping};
 
 /// Errors raised by a corpus backend.
@@ -113,7 +113,7 @@ impl CorpusStore for LocalCorpus {
 
     async fn submit(&self, contribution: &Contribution) -> Result<(), CorpusError> {
         // Gate enforced before any state change.
-        ensure_signed_off(contribution)?;
+        ensure_evidence_integrity(contribution)?;
         let mut guard = self.rows.lock().expect("corpus mutex poisoned");
         guard.push(contribution.clone());
         Ok(())
@@ -179,9 +179,9 @@ impl CorpusStore for FileCorpus {
     }
 
     async fn submit(&self, contribution: &Contribution) -> Result<(), CorpusError> {
-        // Gate enforced before any state change — nothing unconfirmed is
-        // written to disk or held in memory.
-        ensure_signed_off(contribution)?;
+        // Gate enforced before any state change — nothing that fails the
+        // evidence-integrity gate is written to disk or held in memory.
+        ensure_evidence_integrity(contribution)?;
         let line =
             serde_json::to_string(contribution).map_err(|e| CorpusError::Storage(e.to_string()))?;
         use std::io::Write as _;
@@ -246,9 +246,9 @@ impl CorpusStore for HttpCorpus {
     }
 
     async fn submit(&self, contribution: &Contribution) -> Result<(), CorpusError> {
-        // Gate enforced before the network call: an unconfirmed contribution
-        // never leaves the process.
-        ensure_signed_off(contribution)?;
+        // Gate enforced before the network call: a contribution that fails the
+        // evidence-integrity gate never leaves the process.
+        ensure_evidence_integrity(contribution)?;
         let url = format!("{}/v1/contributions", self.base_url);
         let response = self
             .http
@@ -271,20 +271,32 @@ impl CorpusStore for HttpCorpus {
 mod tests {
     use super::*;
     use crate::schema::{Outcome, OutcomeLabel, SignOff};
-    use common::{FaultSignature, Plan, Symptom};
+    use common::{FaultSignature, Plan, Symptom, Verification};
 
     fn config_class() -> ConfigClass {
         ConfigClass::from_inventory(["os:windows 11", "gpu:rtx-4070"])
     }
 
+    /// A resolved label is bound to a matching passing verdict (the gate now
+    /// requires one); any other label needs no verdict.
+    fn verification_for(label: &OutcomeLabel) -> Option<Verification> {
+        match label {
+            OutcomeLabel::ResolvedConfirmed => Some(Verification::pass()),
+            OutcomeLabel::ResolvedProvisional => Some(Verification::provisional()),
+            _ => None,
+        }
+    }
+
     fn contribution(label: OutcomeLabel, sign_off: SignOff) -> Contribution {
         let signature = FaultSignature::from_symptoms(vec![Symptom("boot_loop".into())]);
         let plan = Plan::new("p1", "restart service");
+        let verification = verification_for(&label);
         Contribution::new(
             Outcome {
                 signature,
                 plan,
                 label,
+                verification,
             },
             config_class(),
             sign_off,

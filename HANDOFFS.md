@@ -42,11 +42,19 @@ commit on branch `feat/agent-ops-evidence-integrity`.
 
 ## Pick up here
 
-Branch `feat/agent-ops-evidence-integrity` — work is committed (`69d659d`). **One open op:** push the branch
-to origin (and/or open a PR) so the docs + hooks are durable — right now they exist only on the ephemeral WSL
-volume; the Stop hook's `ops/agent-handoff` snapshot covers the tracking files + memory but NOT `docs/` or
-`.claude/hooks/`. Pushing was left to the owner (push only when asked). Nothing is
-blocked. The substantive follow-on work is **engine code**, all in `FOLLOWUPS.md`: build **MH-1 (EI-08
+Branch `feat/agent-ops-evidence-integrity`, pushed to origin (durable). **Increment 1 of the engine work is
+DONE** (committed): the evidence-integrity gate `ensure_evidence_integrity` is now structured + binds the
+verification verdict into the row + enforces destructive-resolved-fix⇒human IN corpus-client. Build/test loop
+works locally (the WSL Rust toolchain had to be installed — `. "$HOME/.cargo/env"` then
+`cargo build/test/clippy/fmt --workspace`; 125 tests green).
+
+**Next (Increment 2): MH-1, the keystone.** The gate still trusts a caller-set `SignOff` enum — an embedder
+can construct `Contribution{ sign_off: HumanConfirmed }` and pass. Implement owner-key **attestation** over
+`(signature, plan, label, sign_off, config_class)` (extend `provenance::SignedPlan` → `SignedContribution`),
+verified in the gate for `HumanConfirmed`. **This needs an owner decision first** (in `FOLLOWUPS.md`
+"[Custody]"): the key-custody / trust model — asymmetric (ed25519, engine holds only the public key) vs HMAC,
+and where the human-authority key lives. Surface that decision before coding MH-1.
+Other queued engine work is in `FOLLOWUPS.md`. The original full design: build **MH-1 (EI-08
 owner-key attestation over the contribution tuple)** FIRST — every other integrity gap degrades to a
 forgeable annotation without it (`crates/corpus-client/src/gate.rs:15` + `crates/provenance/src/lib.rs:63-80`).
 Then verdict-binding (MH-2), real post-fix re-collection (MH-3/NR-1), tamper-evidence + revocation (MH-4/8),
@@ -82,8 +90,22 @@ discipline (negative-results before claims; prereg before any lane field). See `
   config_class)`) lands. Build MH-1 before any other integrity gap — they all hang off it. Full design +
   the 11 gaps in `docs/evidence-integrity-and-research-checklist.md`.
 
+- [2026-06-14 20:40 UTC] **No Rust toolchain in WSL** — the engine is normally built on Windows (cargo.exe is
+  on the Windows PATH; CI builds in GH Actions). Installed rustup/stable 1.96 in WSL for a local loop:
+  `. "$HOME/.cargo/env"` then `cargo build/test/clippy/fmt --workspace`. `/target` is gitignored. Use
+  `dangerouslyDisableSandbox` for cargo (it needs the network for the registry on first build).
+- [2026-06-14 20:40 UTC] **Gate semantics (Increment 1):** `ensure_evidence_integrity` admits hard negatives
+  (non-resolved labels) freely (a failure is truth too) but a RESOLVED label needs a matching passing verdict
+  AND, if the plan is destructive, human sign-off. The verdict is bound via `Outcome.verification:
+  Option<common::Verification>` (None for never-executed outcomes). On non-Windows the bootstrap labels
+  EscalatedHumanUnresolved (tools unsupported) so the resolved-accept path can only be exercised live on
+  Windows — it's covered by unit tests in `crates/corpus-client/src/gate.rs`.
+
 ## Handoff log (reverse-chronological)
 
+- **2026-06-14 20:41 UTC** — Implemented Increment 1 of the engine work (structured evidence-integrity gate +
+  verdict binding + destructive-fix-needs-human in corpus-client; +6 tests; SECURITY.md updated). Installed
+  the WSL Rust toolchain. All gates green. Next: MH-1 attestation (needs the owner's key-custody decision).
 - **2026-06-14 20:12 UTC** — Ran the recon fan-out (5 agents) + a 4-lens design panel (7 agents) via the
   Workflow tool. Wrote the three docs, scaffolded `docs/research/`, populated `FOLLOWUPS.md` with 14 engine
   GAP items, added the `AGENTS.md` pointer. Verified all hooks/settings/files. Everything ready to commit on

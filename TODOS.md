@@ -34,7 +34,13 @@ Conventions:
 - [x] [added 2026-06-14 20:11 UTC · done 2026-06-14 20:11 UTC] Add agent-ops/durability/evidence-integrity pointer section to `AGENTS.md`
 - [x] [added 2026-06-14 19:48 UTC · done 2026-06-14 20:12 UTC] Final verification: all 5 hooks executable + syntax-clean + valid JSON, settings.json valid, all 14 required files present, infra doc well-formed
 - [x] [added 2026-06-14 20:12 UTC · done 2026-06-14 20:15 UTC] Update HANDOFFS.md final state; commit everything on branch `feat/agent-ops-evidence-integrity` (commit `69d659d`; set repo-local git identity nathanfraske@cec.direct — the same no-identity gotcha the WSL doc warns about)
-- [ ] [added 2026-06-14 20:15 UTC] **Push `feat/agent-ops-evidence-integrity` to origin** (and/or open a PR) — DURABILITY GAP: the commit is currently only on the ephemeral WSL volume; the Stop hook's `ops/agent-handoff` snapshot covers the tracking files + memory + handoff, but NOT `docs/` or `.claude/hooks/`. Awaiting owner go-ahead (push only when asked).
+- [x] [added 2026-06-14 20:15 UTC · done 2026-06-14 20:19 UTC] **Push `feat/agent-ops-evidence-integrity` to origin** — pushed `c508970` (owner approved); work now durable on the remote
+
+### Engine work — evidence-integrity gaps (owner: implement, 2026-06-14)
+
+- [x] [added 2026-06-14 20:19 UTC · done 2026-06-14 20:24 UTC] Read the corpus-client / provenance / panel / verify / main.rs code to ground the first increment design
+- [x] [added 2026-06-14 20:19 UTC · done 2026-06-14 20:40 UTC] Increment 1 — the structured evidence-integrity gate foundation: `ensure_evidence_integrity` with a structured `GateError` (Unconfirmed / ResolvedWithoutPass / LabelVerdictMismatch / DestructiveFixNeedsHuman); bound the verification verdict into the row (`common::Verification` on `Outcome`, `Verdict::to_verification()`); destructive-resolved-fix-needs-human enforced IN corpus-client (not just the CLI); resolved label must carry a matching passing verdict. +6 gate tests; 125 tests green; fmt + clippy -D warnings clean; live CLI smoke OK. Installed the WSL Rust toolchain (none was present) for the build/test loop.
+- [x] [added 2026-06-14 20:40 UTC · done 2026-06-14 20:41 UTC] Extend `SECURITY.md` invariant list to name the strengthened evidence-integrity gate
 
 ## Done / obsolete (history)
 

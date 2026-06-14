@@ -26,7 +26,7 @@ mod gate;
 mod schema;
 mod store;
 
-pub use gate::{ensure_signed_off, GateError};
+pub use gate::{ensure_evidence_integrity, ensure_signed_off, GateError};
 pub use schema::{de_identify_plan, Contribution, FixMapping, Outcome, OutcomeLabel, SignOff};
 pub use store::{CorpusError, CorpusStore, FileCorpus, HttpCorpus, LocalCorpus};
 
@@ -70,6 +70,7 @@ mod leakage_tests {
                 signature,
                 plan,
                 label: OutcomeLabel::ResolvedConfirmed,
+                verification: Some(common::Verification::pass()),
             },
             ConfigClass::from_inventory(["os:windows 11 23h2", "gpu:rtx-4070"]),
             SignOff::HumanConfirmed,

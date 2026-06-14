@@ -1,8 +1,14 @@
-use common::{ConfigClass, FaultSignature, Plan};
+use common::{ConfigClass, FaultSignature, Plan, Verification};
 use serde::{Deserialize, Serialize};
 
 /// Whether an outcome has cleared the sign-off gate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+///
+/// Ordered from weakest to strongest (`Unconfirmed` < `VerifierConfirmed` <
+/// `HumanConfirmed`), so the gate can require a *minimum* level for a given
+/// risk — a destructive fix needs at least `HumanConfirmed`.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum SignOff {
     /// Not yet confirmed. Contributions in this state are rejected on submit.
@@ -80,6 +86,13 @@ pub struct Outcome {
     pub plan: Plan,
     /// The label emitted at sign-off.
     pub label: OutcomeLabel,
+    /// The verifier's de-identified verdict for this outcome, bound to the row
+    /// so a resolved label can be audited against — and gated on — the evidence
+    /// that justified it. `None` for outcomes with no machine verification
+    /// (e.g. a withdrawn ticket, or a plan that never executed). The sign-off
+    /// gate requires a *matching passing* verdict for any resolved label.
+    #[serde(default)]
+    pub verification: Option<Verification>,
 }
 
 /// A de-identified outcome proposed for inclusion in the corpus: the

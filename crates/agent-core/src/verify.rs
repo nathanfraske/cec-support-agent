@@ -39,6 +39,35 @@ pub enum Verdict {
     OffMachine,
 }
 
+impl Verdict {
+    /// The de-identified verification record this verdict contributes to a
+    /// corpus row, so a resolved outcome can be audited against — and gated on
+    /// — the evidence that justified it. The recurring symptoms (a `Fail`'s
+    /// post-state diff) are vocabulary terms, so this carries evidence, never
+    /// identity.
+    pub fn to_verification(&self) -> common::Verification {
+        use common::VerificationResult as R;
+        match self {
+            Verdict::Pass => common::Verification {
+                result: R::Pass,
+                recurring: Vec::new(),
+            },
+            Verdict::ProvisionalPass => common::Verification {
+                result: R::ProvisionalPass,
+                recurring: Vec::new(),
+            },
+            Verdict::Fail { recurring } => common::Verification {
+                result: R::Fail,
+                recurring: recurring.clone(),
+            },
+            Verdict::OffMachine => common::Verification {
+                result: R::OffMachine,
+                recurring: Vec::new(),
+            },
+        }
+    }
+}
+
 /// Verify an outcome by diffing the re-collected signature against the
 /// original failure signature.
 ///
