@@ -43,6 +43,33 @@ annotations without it.
 - [ ] [added 2026-06-14 20:09 UTC] **[Research tree — fill]** Fill `docs/research/{claims,prereg-control-lane,instrumentation-inventory}.md` (scaffolded this session) following the commit-ordering discipline: `negative-results.md` must be committed before `claims.md`, and `prereg-control-lane.md` before any corpus row carries a `lane` field (else VOID) — where to resume: `docs/research/`
 - [ ] [added 2026-06-14 20:09 UTC] **[Custody activation]** Decide whether to run `git config core.hooksPath scripts/githooks` to activate the corpus/weights pre-commit exfil guard (dormant in fresh clones — `core.hooksPath` is unset), and extend `SECURITY.md`'s invariant list to name each new evidence-integrity gate so a bypass is a reportable security issue — why deferred: changes git behavior for every future commit; owner's call (safe to enable — fmt-check only touches Rust, gitleaks only staged)
 
+### Engine — residuals surfaced by the adversarial audit (`wf_5c1c16b9-613`, 14 confirmed)
+
+The audit's confirmed findings were fixed this session (commit on `feat/agent-ops-evidence-integrity`;
+see `.claude/audit/confirmed-findings.txt` and HANDOFFS). These are the deeper residuals the fixes leave open.
+
+- [ ] [added 2026-06-14 23:05 UTC] **[Chain integrity — key or anchor the head]** The `FileCorpus`
+  tamper-evidence chain is KEYLESS (`chain_hash` = sha256 over public inputs), so it proves internal
+  consistency but is fully recomputable by anyone with file-write access. The open-time attestation
+  re-check added this session (`FileCorpus::with_authority` re-admits every at-rest row) closes the
+  forged-row bypass ONLY when an authority is configured; a cold-start corpus (no authority) still relies
+  on the keyless chain alone. Defense-in-depth: HMAC the chain with a store-held secret, or anchor the
+  chain head with the sign-off authority's signature, so the chain is itself an integrity boundary. — where
+  to resume: `crates/corpus-client/src/schema.rs` (chain_hash) + `crates/corpus-client/src/store.rs`
+  (verify_chain / with_authority). Subsumes the **tail-truncation** residual (a hash chain cannot detect
+  removal of trailing rows without an external/length anchor) noted in `RowIntegrity`'s doc.
+- [ ] [added 2026-06-14 23:05 UTC] **[chain_hash canonical encoding]** `chain_hash` now carries a version
+  prefix (`cec-corpus-chain-v1`) but still hashes the `serde_json` image of the row — coupled to struct
+  field order, fine for same-code recompute but not cross-language. If the chain ever needs external
+  verification, switch it to the serde-independent canonical encoder used for the attestation/plan
+  signatures. — where to resume: `crates/corpus-client/src/schema.rs` (chain_hash).
+- [ ] [added 2026-06-14 23:05 UTC] **[Authority key rotation interacts with at-rest re-admission]** Now
+  that `with_authority` re-verifies every at-rest row, rotating the sign-off authority key makes a corpus
+  accreted under the OLD key un-openable under the NEW one. The single-key limitation is already filed
+  (MH-1 key rotation, above); note here that the at-rest re-admission makes a key-id → key-registry (verify
+  historical rows against the key that signed them) a prerequisite for rotation, not just a nicety. — where
+  to resume: `crates/provenance/src/lib.rs` (SignOffPublicKey set) + `crates/corpus-client/src/store.rs`.
+
 ### WSL-ephemeral / agent-ops optional hardening (from `docs/wsl-ephemeral-state-policy.md`)
 
 The durability contract is complete as-is; these are optional tightenings.

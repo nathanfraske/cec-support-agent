@@ -15,6 +15,25 @@ Below "Pick up here", keep a reverse-chronological **handoff log** of dated entr
 
 ## Current state
 
+**As of 2026-06-14 ~23:25 UTC.** The adversarial audit of the engine diff is DONE, its 14 findings are FIXED
+and verified, and the branch is **presented for review as PR #2**
+(https://github.com/nathanfraske/cec-support-agent/pull/2 — owner approved push+PR). Branch
+`feat/agent-ops-evidence-integrity` pushed at `11f0609`; 159 tests green, clippy/fmt clean. The feature work
+is complete; remaining items are all deferred in `FOLLOWUPS.md`. See the latest handoff-log entry for the fix
+set.
+
+- **Audit:** re-ran the `autodiagnoser-engine-audit` workflow (`wf_5c1c16b9-613`) — the previous agent's run
+  had not persisted results and no live task survived. 23 agents, ~1M tokens: 18 findings verified →
+  **14 confirmed, 0 uncertain, 4 refuted**. Full detail in `.claude/audit/confirmed-findings.txt`; the fix
+  diff in `.claude/audit/fix.diff`.
+- **Fixed (14 confirmed → 7 distinct defects), each independently re-verified CLOSED:** A (CRITICAL) at-rest
+  rows re-admitted on the keyless chain alone → `FileCorpus::with_authority` re-admits every loaded row,
+  fails closed; B (HIGH) attestation_message field-injection → length-prefix + count-frame, v2→v3; C (HIGH)
+  reopen demotion run-dedup; D (MED) bind config_class variant; E (MED) bind outcome.verification; F (LOW)
+  seed-without-pubkey derives the enforcing key; G (LOW) versioned chain_hash. +11 tests.
+
+--- previous (superseded) ---
+
 **As of 2026-06-14 ~20:12 UTC.** The agent-ops + evidence-integrity work is COMPLETE and verified; ready to
 commit on branch `feat/agent-ops-evidence-integrity`.
 
@@ -42,13 +61,14 @@ commit on branch `feat/agent-ops-evidence-integrity`.
 
 ## Pick up here
 
-Branch `feat/agent-ops-evidence-integrity`. **The full engine-implementation sweep (Increments 1–10) is DONE
-and committed** (149 tests, fmt/clippy clean throughout; ed25519-dalek license-clean). An adversarial audit
-workflow (`autodiagnoser-engine-audit`, 5 dimensions → per-finding verification) is running on the full
-engine diff; next is to FIX the confirmed findings, then reconcile `FOLLOWUPS.md`, then present for review
-(open a PR). Build loop: `. "$HOME/.cargo/env"` then `cargo build/test/clippy/fmt --workspace` (run cargo with
-`dangerouslyDisableSandbox`). The full per-increment status is in `TODOS.md` and
-`docs/evidence-integrity-and-research-checklist.md` §9.
+Branch `feat/agent-ops-evidence-integrity` is **presented for review as PR #2**
+(https://github.com/nathanfraske/cec-support-agent/pull/2). Nothing is blocking. Next steps are reactive:
+**(1)** address any PR review comments; **(2)** when the PR merges, the remaining work is all deferred in
+`FOLLOWUPS.md` — the 3 new audit residuals (key/anchor the keyless chain head; chain_hash canonical encoding;
+key-rotation × at-rest re-admission) plus the pre-existing engine GAP / Windows-CIM / real-VM-backend /
+research-tree items. Build loop: `. "$HOME/.cargo/env"` then `cargo build/test/clippy/fmt --workspace` (run
+cargo with `dangerouslyDisableSandbox`). Per-fix status is in `TODOS.md`; confirmed findings in
+`.claude/audit/confirmed-findings.txt`; the reusable audit is `.claude/wf-audit.js`.
 
 Increments delivered: (1) structured gate + bound verdict; (2) MH-1 ed25519 attestation; (3) MH-2 class +
 run-provenance + EI-03 independent confirmations; (4) MH-4/8/EI-06 hash-chain tamper-evidence + revocation +
@@ -125,8 +145,35 @@ See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementati
   serde-independent tuple string (`schema::attestation_message`), so it survives the known serde-field-order
   fragility. A store enforces attestation ONLY when `.with_authority()` is set (cold start has none → unchanged).
 
+- [2026-06-14 23:15 UTC] **Workflow results are NOT auto-persisted across a session boundary.** The previous
+  agent launched the `autodiagnoser-engine-audit` Workflow but its result never landed in a file and no live
+  task survived into this session — so "an audit is running" in a handoff is not resumable state. If you
+  launch a Workflow whose output the next agent needs, WRITE the returned `result` JSON to a file (e.g.
+  `.claude/audit/<name>-result.json`) in the same turn. Re-running the audit was cheap here (read-only, ~1M
+  tokens) but not free. The script (`.claude/wf-audit.js`) and the scoped diff (`.claude/audit/engine.diff`)
+  DO survive on disk, so a re-run is one `Workflow({scriptPath})` call.
+- [2026-06-14 23:15 UTC] **The tamper-evidence chain is KEYLESS — it is not an integrity boundary by itself.**
+  `chain_hash` is sha256 over public inputs, so anyone with file-write access recomputes it; `verify_chain`
+  proves internal consistency, NOT authenticity. The real at-rest boundary is the ed25519 attestation, and it
+  was only ever checked on `submit`, never on rows loaded at `open` — so a file-rewrite of forged "confirmed"
+  rows was served whole (the audit's CRITICAL C6). The fix: `FileCorpus::with_authority` re-admits every
+  at-rest row. CONSEQUENCE for the next agent: a corpus accreted at cold start (no authority) CANNOT be opened
+  under an authority later — every unattested row is refused. That is intended fail-closed, but it means
+  turning on enforcement requires a corpus built under that authority, and key ROTATION now needs a key-id →
+  key registry (filed in FOLLOWUPS) before a rotated key can open old rows.
+
 ## Handoff log (reverse-chronological)
 
+- **2026-06-14 23:15 UTC** — **Audit + fix pass.** Re-ran the adversarial audit workflow (the prior run's
+  results were lost): 14 confirmed findings → 7 distinct fixes, all in `crates/corpus-client` + `support-agent`:
+  **(A, CRITICAL)** open-time attestation re-admission (`FileCorpus::with_authority` → `Result`, re-runs the
+  full gate over every at-rest row; main.rs wires `?`); **(B, HIGH)** `attestation_message` v3 — length-prefix
+  every attacker-controlled value + count-frame every repeated section (kills the signed-byte collision);
+  **(C, HIGH)** reopen demotion run-deduped via a `HashSet` keyed by `confirmation_key`; **(D, MED)** bind the
+  `ConfigClass` variant; **(E, MED)** bind `outcome.verification`; **(F, LOW)** seed-without-pubkey derives the
+  enforcing key; **(G, LOW)** versioned `chain_hash`. +11 tests (159 total), clippy/fmt clean, CLI smoke OK.
+  Two independent adversarial reviewers re-verified all 7 CLOSED with no regression. FOLLOWUPS got the 3 deeper
+  residuals. **Committed locally; push + PR pending owner OK.** Next: present for review / open the PR.
 - **2026-06-14 21:05 UTC** — Implemented Increment 2 (MH-1 keystone): ed25519 sign-off attestation in
   provenance + corpus-client; stores `.with_authority`; +12 tests incl. the forgery test; ed25519-dalek
   license-clean. Updated the checklist doc (§9 changelog), research inventory, FOLLOWUPS. All gates green.
