@@ -299,13 +299,24 @@ async fn run(args: Args) -> anyhow::Result<()> {
     // own outcomes (single-operator mode). A set-but-invalid key is a hard error
     // — never silently run unprotected. `signoff_authority` is threaded into
     // record_outcome so each contribution is attested before submit.
-    let signoff_pubkey = parse_env_pubkey()?;
     let signoff_authority = parse_env_authority()?;
+    let mut signoff_pubkey = parse_env_pubkey()?;
+    // A seed set without an explicit pubkey would otherwise self-attest into a
+    // store that does not enforce — attesting but not protected, silently. Derive
+    // the enforcing key from the seed so single-operator mode actually enforces:
+    // never attest without enforcing.
+    let derived_enforcement = signoff_pubkey.is_none() && signoff_authority.is_some();
+    if derived_enforcement {
+        signoff_pubkey = signoff_authority.as_ref().map(|a| a.public_key());
+    }
     if let Some(pubkey) = &signoff_pubkey {
         println!(
             "  sign-off: attestation ENFORCED (authority {}…){}",
             &pubkey.id(),
-            if signoff_authority.is_some() {
+            if derived_enforcement {
+                "; enforcing key derived from CEC_SIGNOFF_SEED \
+                 (single-operator mode: this run self-attests and enforces)"
+            } else if signoff_authority.is_some() {
                 "; this run holds the seed and self-attests (single-operator mode)"
             } else {
                 "; this run must receive attestations (none produced here)"
@@ -321,7 +332,9 @@ async fn run(args: Args) -> anyhow::Result<()> {
         Some(path) => {
             let mut file = FileCorpus::open(path)?;
             if let Some(pubkey) = &signoff_pubkey {
-                file = file.with_authority(pubkey.clone());
+                // Re-admits every at-rest row under the authority; a corpus whose
+                // on-disk history is unattested (or forged) is refused here.
+                file = file.with_authority(pubkey.clone())?;
             }
             println!("  corpus: file-backed at {path} ({} row(s))", file.len());
             Box::new(file)
@@ -1173,12 +1186,17 @@ OPTIONS:
 ENVIRONMENT:
     CEC_SIGNOFF_PUBKEY   Sign-off authority public key (hex). When set, the corpus
                          ENFORCES that every confirmed row carries a valid ed25519
-                         attestation — a self-asserted sign-off is refused.
+                         attestation — a self-asserted sign-off is refused, and a
+                         file-backed corpus whose on-disk rows are unattested (or
+                         forged) is refused at open, not served.
     CEC_SIGNOFF_SEED     Sign-off authority secret seed (hex). When set, this run
                          holds the authority and attests its own outcomes
-                         (single-operator mode). In a split deployment, set only
-                         the pubkey on the engine and produce attestations
-                         elsewhere. A set-but-invalid value is a hard error.
+                         (single-operator mode). Set without CEC_SIGNOFF_PUBKEY,
+                         the enforcing pubkey is DERIVED from the seed so the run
+                         both self-attests and enforces — it never attests into an
+                         unprotected store. In a split deployment, set only the
+                         pubkey on the engine and produce attestations elsewhere.
+                         A set-but-invalid value is a hard error.
 
 Cold start: with no --endpoint (or with --offline), the agent runs the full
 diagnostic -> route -> candidate -> judge pipeline using the model-free

@@ -229,33 +229,79 @@ impl Contribution {
 /// covered field changes these bytes and breaks verification.
 pub(crate) fn attestation_message(c: &Contribution) -> Vec<u8> {
     use std::fmt::Write as _;
+
+    // Append a length-prefixed `tag[len]=value\n` line. Length-prefixing every
+    // attacker-controlled value is what makes the encoding UNAMBIGUOUS: a value
+    // can no longer carry the field separators or a newline to forge a different
+    // structure with the same signed bytes (a `plan.id` of "p\nstep:rm:Destructive"
+    // is byte-distinct from a genuine extra step). Field *names* and counts are
+    // fixed literals we emit, never free text, so they need no prefix. This
+    // mirrors the discipline in `provenance::canonical`.
+    fn lp(s: &mut String, tag: &str, value: &str) {
+        let _ = writeln!(s, "{tag}[{}]={value}", value.len());
+    }
+
     let o = &c.outcome;
-    let mut s = String::from("cec-signoff-attestation-v2\n");
-    let _ = writeln!(s, "fp:{}", o.signature.fingerprint);
+    let mut s = String::from("cec-signoff-attestation-v3\n");
+    // Fault signature: fingerprint + sorted symptoms, each length-prefixed.
+    lp(&mut s, "fp", &o.signature.fingerprint);
     let mut symptoms: Vec<&str> = o.signature.symptoms.iter().map(|x| x.0.as_str()).collect();
     symptoms.sort_unstable();
-    let _ = writeln!(s, "sym:{}", symptoms.join(","));
-    let _ = writeln!(s, "plan:{}", o.plan.id);
-    for step in &o.plan.steps {
-        let _ = writeln!(s, "step:{}:{:?}", step.action, step.risk);
+    let _ = writeln!(s, "syms:{}", symptoms.len());
+    for sym in &symptoms {
+        lp(&mut s, "sym", sym);
     }
-    let _ = writeln!(s, "label:{}", label_tag(&o.label));
+    // Plan: id + each step (action length-prefixed, risk by discriminant).
+    lp(&mut s, "plan", &o.plan.id);
+    let _ = writeln!(s, "steps:{}", o.plan.steps.len());
+    for step in &o.plan.steps {
+        lp(&mut s, "act", &step.action);
+        let _ = writeln!(s, "risk:{:?}", step.risk);
+    }
+    // Label (length-prefixed tag — covers the EscalatedHardware part_class).
+    lp(&mut s, "label", &label_tag(&o.label));
+    // Verification verdict — the evidence the gate keys a resolved label on, so
+    // the authority must sign the verdict it approved, not just the label. A
+    // swapped or fabricated verdict changes these bytes and breaks the signature.
+    match &o.verification {
+        None => {
+            let _ = writeln!(s, "ver:none");
+        }
+        Some(v) => {
+            let mut recurring: Vec<&str> = v.recurring.iter().map(|x| x.0.as_str()).collect();
+            recurring.sort_unstable();
+            let _ = writeln!(s, "ver:{:?};class={:?};rec:{}", v.result, v.class, recurring.len());
+            for r in &recurring {
+                lp(&mut s, "rec", r);
+            }
+        }
+    }
     let _ = writeln!(s, "signoff:{:?}", c.sign_off);
-    let _ = writeln!(s, "class:{}", c.config_class.key());
+    // Config class — bind the VARIANT discriminant, not just the shared inner key.
+    // `BomRevision("x")` and `DerivedHash("x")` both have key "x" but are distinct
+    // comparability classes for retrieval; without the tag, one valid attestation
+    // would verify for the other and replay a row across classes.
+    let class_tag = match &c.config_class {
+        ConfigClass::BomRevision(_) => "bom",
+        ConfigClass::DerivedHash(_) => "hash",
+    };
+    let _ = writeln!(s, "class:{class_tag}");
+    lp(&mut s, "classkey", c.config_class.key());
+    // Run-provenance: binds the run_id so one attestation cannot be replayed onto
+    // clones with fabricated run ids to inflate the independent-confirmation count.
     match &c.provenance {
         None => {
             let _ = writeln!(s, "prov:none");
         }
         Some(p) => {
+            lp(&mut s, "run", &p.run_id);
+            let _ = writeln!(s, "rf:{}", p.retrieval_first);
             let mut primed: Vec<&str> = p.primed_from.iter().map(|x| x.as_str()).collect();
             primed.sort_unstable();
-            let _ = writeln!(
-                s,
-                "prov:run={};rf={};primed={}",
-                p.run_id,
-                p.retrieval_first,
-                primed.join(",")
-            );
+            let _ = writeln!(s, "primed:{}", primed.len());
+            for id in &primed {
+                lp(&mut s, "primed", id);
+            }
         }
     }
     s.into_bytes()
@@ -272,6 +318,12 @@ pub(crate) fn chain_hash(prev: &str, row: &Contribution) -> String {
     bare.integrity = None;
     let payload = serde_json::to_vec(&bare).expect("contribution serializes");
     let mut hasher = Sha256::new();
+    // A versioned domain prefix so the chain encoding can evolve without silently
+    // colliding with a future scheme, consistent with the canonicalization tags
+    // used elsewhere. The payload is the same-code serde_json image of the row
+    // (recomputed only by this crate), so cross-language reproducibility is not a
+    // requirement here as it is for the attestation message.
+    hasher.update(b"cec-corpus-chain-v1\n");
     hasher.update(prev.as_bytes());
     hasher.update(b"\n");
     hasher.update(&payload);

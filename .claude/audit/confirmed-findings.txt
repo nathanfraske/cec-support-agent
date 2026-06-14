@@ -1,0 +1,340 @@
+
+====================================================================================================
+[C1] HIGH  —  attestation_message uses unescaped separators, enabling a same-signature collision between structurally different contributions (signed-byte ambiguity)
+====================================================================================================
+LOCATION: crates/corpus-client/src/schema.rs:230-262 (attestation_message); the verify side is crates/corpus-client/src/gate.rs:114 (ensure_attested -> authority.verify(&attestation_message(contribution), ...)). Contrast the injection-safe pattern at crates/provenance/src/lib.rs:104-111 (canonical length-prefixes description).
+
+REASONING:
+The finding is real and I reproduced a concrete collision. attestation_message (schema.rs:230-262) hand-builds the only bytes the ed25519 sign-off signature covers, using ':' ',' ';' '=' as structural separators and '\n' (via writeln!) as the record terminator, and interpolates every field UNESCAPED and UN-length-prefixed. All the interpolated fields are arbitrary, unvalidated Strings: o.signature.symptoms (Symptom(pub String), fault.rs:5), o.plan.id, step.action (line 240), config_class.key() (BomRevision(String), config_class.rs), p.run_id and primed_from (lines 252-258), and part_class via label_tag (lines 291-292). I grepped the entire submit/attest/verify path (schema.rs, store.rs, gate.rs) — there is NO validation that rejects separator/newline bytes in any of these fields before signing or verifying. This directly contradicts the doc comment's 'unambiguous' claim and contrasts with provenance::canonical (lib.rs:96-114), which deliberately length-prefixes free text for exactly this reason.
+
+Because the encoding is ambiguous, two structurally different contributions can serialize to identical signed bytes, so a single ed25519 signature legitimately produced for benign contribution A is a VALID attestation for malicious contribution B (gate.rs:114 recomputes attestation_message(B) from B's typed fields and verifies sig_A against it — verification succeeds, B is admitted as authority-signed truth).
+
+I built and ran an exact mirror of attestation_message and proved a byte-for-byte collision (output: 'COLLIDE (bytes equal): true'):
+  A (what an honest authority reviews and signs — a READ-ONLY, human-approved fix): plan.id = "p1\nstep:wipe_disk:Destructive", steps = [inspect/ReadOnly]. Plan::risk() = ReadOnly.
+  B (what is actually admitted): plan.id = "p1", steps = [wipe_disk/Destructive, inspect/ReadOnly]. Plan::risk() = Destructive.
+Both render to:
+  ...\nplan:p1\nstep:wipe_disk:Destructive\nstep:inspect:ReadOnly\nlabel:resolved_confirmed\nsignoff:HumanConfirmed\nclass:bom-1\nprov:none\n
+— identical bytes. So a human who approved a benign read-only plan unknowingly produces a signature that admits a DESTRUCTIVE plan into the corpus as a human-confirmed fix. ensure_evidence_integrity's destructive-needs-human check (gate.rs:81-85) does not help: both rows carry HumanConfirmed, and the destructive plan B passes the gate. This defeats the core 'asserting party != approving party' integrity property the whole ed25519 layer exists to provide (lib.rs:136-148).
+
+Note the injection is ADDITIVE (writeln! always appends B's real typed lines too), so the finding's toy example (plan.id = "p1\nstep:rm_rf:Destructive\nlabel:resolved_confirmed" colliding with a row that 'genuinely has that step/label') is imprecise about the exact byte layout — the injected lines must equal B's genuinely-emitted prefix lines, as in my A/B construction. The mechanism it describes (unescaped separators/newlines collapsing distinct structures to the same signed bytes) is nonetheless correct, and I produced a working instance. The run_id/primed_from anti-replay binding (lines 252-258) is similarly defeatable by the same class of crafting (e.g. migrating step/label/class structure across the boundary while holding run-provenance fields free to vary), so the documented 'one valid attestation cannot be replayed onto clones with fabricated run ids' is not actually guaranteed by the bytes.
+
+The chain_hash at schema.rs:269-283 uses serde_json (JSON-escaped, injection-safe) and JSONL persistence escapes \n to \\n, so a poisoned plan.id round-trips cleanly through the file — there is no incidental mitigation. Severity high is correct: it is a cryptographic-integrity bypass of the truth-admission gate, but it requires the attacker to obtain a real authority signature over a chosen (benign) A first, so it is not an unauthenticated forgery — high, not critical.
+
+FIX:
+Make attestation_message injection-proof by length-prefixing (or hashing) every interpolated value, mirroring the existing provenance::canonical pattern (lib.rs:104-111). For each variable field emit its byte length before its content, e.g.:
+  writeln!(s, "plan[{}]:{}", o.plan.id.len(), o.plan.id);
+  for step in &o.plan.steps { writeln!(s, "step:act[{}]={};risk={:?}", step.action.len(), step.action, step.risk); }
+  writeln!(s, "class[{}]:{}", c.config_class.key().len(), c.config_class.key());
+and length-prefix each symptom element (length-prefix per element, not a comma-join) and run_id / each primed_from id and part_class. Length-prefixing the variable-count and free-string fields removes the ambiguity that lets bytes migrate across record boundaries. Bump the domain tag to v3 since the encoding changes. As defense-in-depth, also reject any of these fields containing '\n' before signing/verifying. Add a regression test asserting attestation_message differs for the A/B pair above (a one-ReadOnly-step plan with a newline-poisoned id vs a two-step destructive plan with a clean id).
+
+====================================================================================================
+[C2] MEDIUM  —  config_class type confusion: BomRevision(x) and DerivedHash(x) attest identically, letting a valid attestation be replayed across comparability classes
+====================================================================================================
+LOCATION: crates/corpus-client/src/schema.rs:244 (the `class:` line in `attestation_message`), rooted in crates/common/src/config_class.rs:45-50 (`ConfigClass::key` returns the inner string for BOTH variants). Comparison divergence at crates/corpus-client/src/store.rs:84 (`row.config_class != *config_class`).
+
+REASONING:
+Traced the full path in the current source. `attestation_message` (schema.rs:230-262) builds the signed bytes manually and binds config_class only via `c.config_class.key()` at line 244. `ConfigClass::key()` (config_class.rs:45-50) returns the inner `String` for both `BomRevision(s)` and `DerivedHash(s)`, so `BomRevision("abc")` and `DerivedHash("abc")` produce byte-identical attestation messages. `ensure_attested` (gate.rs:104-119) re-derives those exact bytes and calls `authority.verify(...)`, so a signature minted for one variant verifies unchanged for the other. Meanwhile `fix_mappings` (store.rs:82-87) compares with `row.config_class != *config_class`, where `ConfigClass` derives `PartialEq` over the whole variant (config_class.rs:10), so the two are treated as DISTINCT comparability classes for retrieval.
+
+Exploit path holds: take a legitimately-attested `DerivedHash("abc")` contribution, flip the variant to `BomRevision("abc")` (both variants are public; the same key string is reused), keep the `signature`. `admit` (store.rs:14-23) runs only `ensure_evidence_integrity` + `ensure_attested` — the attestation still verifies because the message is unchanged — so the row is admitted and served under a comparability class the authority never approved it for. I checked whether the hash chain rescues this: it does NOT. `chain_hash` (schema.rs:269-283) does serialize the full row including config_class, but the chain is recomputed fresh on every `submit` (store.rs:333-352) and re-verified relative to itself on `open` (verify_chain, store.rs:136-158); an attacker who writes the row simply re-chains it, and the chain still verifies. The attestation is the ONLY authority-bound integrity over config_class, and it is exactly the broken surface. So the attested context (which comparability class the authority signed for) is not actually bound — a real integrity bypass of the attestation boundary.
+
+Severity medium is correct. It is a genuine attestation-replay/integrity-boundary defect, but practical exploitability is constrained: the attacker needs control of contribution submission AND a key string that is meaningful in both variants (most realistically constructing `BomRevision(<64-hex>)` matching a real derived hash, or `DerivedHash(<bom-string>)`), and the mis-routing is between two classes that share the same key string. Not refutable — the code does not handle it; not low — it defeats a deliberately-built cryptographic admission boundary.
+
+FIX:
+Bind the variant discriminant in the canonical message. In `attestation_message` (schema.rs:244) replace `writeln!(s, "class:{}", c.config_class.key())` with a tag that encodes the variant, e.g. add a helper on `ConfigClass`:
+
+    pub fn tagged_key(&self) -> String {
+        match self {
+            ConfigClass::BomRevision(r) => format!("bom:{r}"),
+            ConfigClass::DerivedHash(h) => format!("derived:{h}"),
+        }
+    }
+
+and emit `writeln!(s, "class:{}", c.config_class.tagged_key())`. Because the message constant is already `cec-signoff-attestation-v2`, either bump it to `-v3` or treat this as part of the v2 rollout; old signatures over the bare key will no longer verify (intended — they were ambiguous). The `HttpCorpus::query` URL at store.rs:393 and the BomRevision/DerivedHash collision there is a separate routing concern and is out of scope for this attestation fix.
+
+====================================================================================================
+[C3] MEDIUM  —  Attestation does not bind outcome.verification, the very evidence the gate keys 'resolved' on
+====================================================================================================
+LOCATION: crates/corpus-client/src/schema.rs:230-262 (attestation_message — omits outcome.verification) vs crates/corpus-client/src/gate.rs:65-78 (ensure_evidence_integrity, resolved->matching-pass check on outcome.verification.result)
+
+REASONING:
+Verified against the real source (line numbers in the finding were off — gate.rs is 266 lines, the resolved/pass check is at gate.rs:65-78, not 514-527 — but the substance holds exactly).
+
+attestation_message (schema.rs:230-262) builds the signed bytes from: signature.fingerprint, sorted symptoms, plan.id + each step (action+risk), label_tag, sign_off, config_class.key(), and provenance (run_id/retrieval_first/sorted primed_from). It does NOT include outcome.verification (result, class, or recurring). provenance::SignOffAuthority::attest / SignOffPublicKey::verify (lib.rs:189, 222) operate purely on those bytes; there is no separate binding of the verdict anywhere.
+
+The gate, however, keys the entire 'resolved' admission on outcome.verification.result: ensure_evidence_integrity (gate.rs:65-78) requires ResolvedConfirmed => Some(Pass) and ResolvedProvisional => Some(ProvisionalPass). So the cryptographic anchor proves the authority saw the label but says nothing about the verdict that justifies it.
+
+Concrete failure path: An authority signs a row R with label=ResolvedConfirmed while outcome.verification is None (or Fail). The signature is valid over the v2 message. A submitter/embedder who holds that attestation sets outcome.verification = Some(Verification::pass()) and leaves attestation untouched. At submit, admit() runs ensure_evidence_integrity (label ResolvedConfirmed + Pass match -> OK, gate.rs:71) and ensure_attested (recomputes attestation_message, which is unchanged because verification is excluded -> verify() returns true, gate.rs:114). Both gates pass; the authority never attested the Pass.
+
+Adversarial check of mitigations — none save it: (1) FileCorpus's hash chain (chain_hash, schema.rs:269-283) does cover the full serialized contribution including outcome.verification, but it is computed by the store at WRITE time, AFTER admission (store.rs:333-340), over whatever verdict the submitter already supplied. It detects post-write hand edits, not a pre-submit fabricated verdict, so it does not protect this field at admission. (2) LocalCorpus and HttpCorpus have no chain at all. (3) The existing replay/tamper tests (store.rs:736-772) only cover sign_off and provenance, which ARE in the message — none cover verification, so the gap is untested.
+
+The doc comments overstate the binding: schema.rs:225 claims 'the gate re-derives exactly what the authority signed' and schema.rs:89-93 claims the verdict is 'bound to the row so a resolved label can be ... gated on the evidence', yet the signed tuple omits that very verdict. The label and the verdict are cryptographically decoupled.
+
+Severity: agree with the reported medium. This is the system's strongest integrity claim and it fails to cover the most security-critical evidence (the passing verdict), so it is a genuine integrity gap, not a style nit. It is not higher than medium because exploitation requires the attacker to already hold a valid authority attestation over a row the authority labeled Resolved* — an authority signing ResolvedConfirmed is already vouching for resolution — so the practical decoupling is between 'resolved label' and 'specific passing Verification record' rather than a full unsigned-row bypass.
+
+FIX:
+Bind the verification verdict into the signed bytes in attestation_message (schema.rs), and bump the domain tag so old signatures don't validate under the new schema. After the label/class/prov writes, add a stable encoding of outcome.verification, e.g.:
+
+    let _ = writeln!(s, "label:{}", label_tag(&o.label));
+    match &o.verification {
+        None => { let _ = writeln!(s, "ver:none"); }
+        Some(v) => {
+            let mut rec: Vec<&str> = v.recurring.iter().map(|x| x.0.as_str()).collect();
+            rec.sort_unstable();
+            let _ = writeln!(s, "ver:{:?};class={:?};rec={}", v.result, v.class, rec.join(","));
+        }
+    }
+
+and change the header from "cec-signoff-attestation-v2\n" to "...-v3\n". (Verification's fields are result: VerificationResult, class: Option<VerificationClass>, recurring: Vec<Symptom> — common/src/verification.rs:64-76 — so all three are available.) The legit flow already calls .attested_by() after constructing the Outcome with its verification set, so no caller change is needed. Add a regression test mirroring tampering_with_the_tuple_after_attestation_is_refused: attest a row, then mutate outcome.verification and assert GateError::AttestationInvalid.
+
+====================================================================================================
+[C4] HIGH  —  FileCorpus::open re-admits rows on only an unkeyed hash chain — attestation is never re-checked at open, so a file editor can serve forged "confirmed fixes"
+====================================================================================================
+LOCATION: crates/corpus-client/src/store.rs:265-290 (FileCorpus::open) and :136-158 (verify_chain); the gate/admit boundary is invoked only at :239, :330, :417 (the submit paths). chain_hash is unkeyed sha256 over public inputs at crates/corpus-client/src/schema.rs:269-283. Real wiring: crates/support-agent/src/main.rs:322-337 (open → with_authority → query).
+
+REASONING:
+Traced the concrete failure path in the current source and could not refute it.
+
+1) Admission boundary is write-only. admit() (store.rs:14-23) calls ensure_evidence_integrity + ensure_attested. It is invoked ONLY from the three submit() impls (store.rs:239 LocalCorpus, :330 FileCorpus, :417 HttpCorpus). FileCorpus::open (store.rs:265-290) runs solely verify_chain(&rows) at :282 and never calls admit()/ensure_attested(). query()/fix_mappings (store.rs:318-325, :64-129) perform zero attestation verification — they filter by signature/config_class and aggregate confirmations. So rows arriving via the file are served with no attestation check.
+
+2) The chain is tamper-evident, not tamper-resistant. chain_hash (schema.rs:269-283) is plain sha256 over (prev || "\n" || serde_json(row-with-integrity-cleared)). Every input is public; there is no secret and no authority signature over the head. verify_chain (store.rs:136-158) only recomputes that same public function. An attacker with write access to the .jsonl edits/inserts any row (e.g. flips an EscalatedHumanUnresolved row into ResolvedConfirmed carrying Verification::pass(), or injects a fabricated row), then recomputes prev/hash forward over every later row. open() then accepts the file and query() serves the forged plan.
+
+3) The defeat holds even with an authority configured. open() hardcodes authority: None (store.rs:286); main.rs:322-325 calls FileCorpus::open(path) FIRST, then .with_authority(pubkey) AFTER rows are already loaded and accepted, then queries at :337. So --signoff-pubkey gates only future submits; at-rest rows that drive retrieval (and ranking by mapping.confirmations at main.rs:352-360) are never attestation-checked. This directly defeats the documented invariant "the engine cannot mint a confirmed row" for the at-rest store, which RowIntegrity's doc (schema.rs:98-104) and FOLLOWUPS acknowledge only tail-truncation as the residual — the full re-chaining and open-time attestation gap are undocumented.
+
+The two test "refutations" do not cover this: file_corpus_refuses_a_hand_edited_row (store.rs:787-808) only edits "boot_loop"→"tampered_symptom" WITHOUT recomputing the chain, so it exercises the naive-editor case, not a re-chained edit; and the attestation tests (697-772) all go through submit(), never through open().
+
+Precondition: write access to the local corpus file. That is a real precondition, but it is exactly the threat the ed25519 attestation design exists to neutralize, and the at-rest store fully bypasses it. High is appropriate; not critical because it requires local file write rather than being remotely exploitable.
+
+FIX:
+On open(), after verify_chain succeeds, run the admission gate over every loaded row before accepting the file — at minimum ensure_attested when an authority will be configured. Because open() currently runs before with_authority(), restructure so the authority is known at load time: e.g. add FileCorpus::open_with_authority(path, Option<SignOffPublicKey>) (or have with_authority re-validate the already-loaded rows and fail the build), and in that path call `for row in &rows { admit(row, &authority)?; }`. attestation_message (schema.rs:230-262) excludes the integrity field, so re-verifying a loaded, chain-linked row validates correctly. To make the chain itself an integrity boundary rather than mere tamper-evidence, additionally key it (HMAC with a store secret) or anchor the chain head with the sign-off authority's signature, since an unkeyed sha256 chain provides no protection once an editor recomputes it. Update main.rs:322-325 to pass the pubkey into open so disk rows face the same boundary as submitted rows, and correct the RowIntegrity/FOLLOWUPS docs to list the open-time attestation gap and full re-chaining as residuals.
+
+====================================================================================================
+[C5] HIGH  —  FileCorpus loads and serves persisted rows without ever checking the sign-off attestation, so an authority configured via with_authority never protects on-disk history
+====================================================================================================
+LOCATION: crates/corpus-client/src/store.rs:282-297 (open() sets authority: None and runs only verify_chain; with_authority() mutates the field post-load and re-validates nothing), :318-325 (query() never re-runs the gate), and the gate's only attestation entry point admit()/ensure_attested at :14-23 / :239,:330,:417 is reachable solely from submit() — never from open or query.
+
+REASONING:
+Traced the full failure path in current source. ensure_attested (gate.rs:104-119) is called ONLY from admit() (store.rs:14-23), which is called ONLY from the three submit() implementations (store.rs:239, 330, 417). It is never invoked on open()/load or on query(). FileCorpus::open() (store.rs:265-290) reads every row, runs verify_chain() (store.rs:282), and hard-codes authority: None (store.rs:286). with_authority() (store.rs:294-297) is a post-load builder that only sets self.authority; it re-validates nothing. query() (store.rs:318-325) calls fix_mappings directly with no gate. So `.open(path).with_authority(pk)` enforces attestation only on FUTURE submits; every row already on disk is served on the strength of the chain alone.
+
+The chain is not a substitute defense. chain_hash (schema.rs:945-959) is a plain, unkeyed sha256 over (prev || canonical-row-without-integrity); verify_chain (store.rs:136-158) only checks that each row's stored prev/hash recompute. Anyone with write access to the JSONL file can therefore forge a fully chain-valid ResolvedConfirmed + SignOff::HumanConfirmed row with attestation: None and recompute the integrity links by hand, because no secret is involved. On the next authority-enabled run, open() succeeds (chain verifies), with_authority(pk) sets the key, the forged row is never run through ensure_attested, and query() serves it as a fix. This nullifies precisely the cryptographic half of the truth-admission boundary that the ed25519 attestation was built to provide ("the engine cannot mint a passing attestation"), for exactly the durable cross-run flywheel data that is most worth protecting. The with_authority doc at store.rs:292-294/198-200 explicitly promises "Require EVERY confirmed row to carry a valid sign-off attestation" — that invariant is false for all loaded rows.
+
+I tried to refute it: (a) Does the chain stop the forgery? No — it is unkeyed and recomputable, so it stops only accidental/uncoordinated edits, not a deliberate write. (b) Is this merely intended cold-start migration? No — cold-start tolerance is a separate, legitimately-tested behavior (without_an_authority_an_unattested_confirmed_row_is_accepted), but here an authority IS configured at the time of query and the gate's own contract says such rows must be attested. (c) Is there a validating open path I missed? No — grep confirms open() is the only constructor and no open_with_authority exists. The reviewer rated this medium; I raise to high because it defeats the core integrity control for the persisted corpus and requires only file-write access (the exact threat the attestation defends against), with no chain barrier.
+
+FIX:
+Make the authority known before rows are validated and re-run ensure_attested over loaded rows. Add a validating constructor, e.g. `FileCorpus::open_with_authority(path, authority)` (or accept `Option<SignOffPublicKey>` in open()): after read+parse and verify_chain, if an authority is present, run `admit(row, &Some(authority))` (or at least `ensure_attested`) on every confirmed/resolved loaded row and return CorpusError::Storage/Gate (or quarantine the row out of fix_mappings) for any that lack a valid attestation. Critically, set self.authority BEFORE the loaded rows are considered usable, instead of the current `authority: None` + post-load with_authority mutation. Keep the cold-start path (no authority) unchanged. Optionally deprecate the post-open with_authority builder for FileCorpus so callers cannot reintroduce the gap.
+
+====================================================================================================
+[C6] CRITICAL  —  On-open admission gate is the keyless hash chain alone — attestation and evidence-integrity are never re-checked on rows loaded from disk, so a whole-file rewrite of forged confirmed fixes is served even with an authority configured
+====================================================================================================
+LOCATION: crates/corpus-client/src/store.rs:265-290 (FileCorpus::open — only verify_chain, never admit/ensure_attested); store.rs:136-158 (verify_chain); schema.rs:269-283 (keyless chain_hash); production wiring crates/support-agent/src/main.rs:322-337 (with_authority applied after open; query immediately follows)
+
+REASONING:
+Traced the full failure path in the real source and could not refute it.
+
+1. FileCorpus::open (store.rs:267-282) parses every row and validates them ONLY via verify_chain(&rows) at store.rs:282. It never calls admit, ensure_evidence_integrity, or ensure_attested. A crate-wide grep confirms admit() is invoked at exactly three sites — store.rs:239/330/417, all the submit path — and nowhere on the load path.
+
+2. verify_chain (store.rs:136-158) checks only the sha256 hash chain. chain_hash (schema.rs:269-283) is keyless: sha256(prev || canonical(row-without-integrity)), with prev seeded from "" (store.rs:146). It is therefore fully recomputable by anyone with write access to the corpus file. verify_chain returns Ok for any internally-consistent genesis-rooted chain, regardless of whether the rows carry an attestation.
+
+3. The attestation field is Option with skip_serializing_if = Option::is_none (schema.rs:169-170), so a forged row simply omits it from JSON. An attacker fabricates ResolvedConfirmed/HumanConfirmed rows with verification set to a matching Pass (so the rows would pass ensure_evidence_integrity too, though that is never run) and attestation absent, then recomputes the chain. open() succeeds.
+
+4. with_authority (store.rs:294-297) is applied in main.rs:323-325 AFTER FileCorpus::open(path)? at main.rs:322, and only gates future submit calls. It provides zero protection for the pre-existing on-disk rows.
+
+5. main.rs:337 calls corpus.query immediately after open; query -> fix_mappings (store.rs:64-129) serves those forged resolved rows as retrievable CorpusPrimed fixes (main.rs:352-365), which are then preferred retrieval-first and can drive execution.
+
+This defeats the entire MH-1 guarantee. The submit-path tests (authority_store_rejects_an_unattested_confirmed_row, store.rs:697) prove forgery is blocked on submit, but the rows that actually back today's retrieval enter via open and are admitted on the keyless chain alone. The RowIntegrity doc (schema.rs:98-104) calls out only tail truncation as the residual; whole-file re-genesis is the strictly more dangerous generalization the doc understates. Severity critical stands: it is a complete integrity/authenticity bypass of the signed-evidence boundary with a configured authority.
+
+FIX:
+See the fix field above.
+
+====================================================================================================
+[C7] HIGH  —  Reopened demotion is not run-deduplicated (asymmetric with confirmation counting) — a single reopen run replayed N times double-subtracts and silently buries a multiply-confirmed fix
+====================================================================================================
+LOCATION: crates/corpus-client/src/store.rs:107-108 (acc.reopened += 1) and the net at :121 (contributors.len().saturating_sub(acc.reopened)), asymmetric with confirmation dedup at :48-54/:104-105
+
+REASONING:
+Traced the concrete failure path in the real source.
+
+Confirmation side (deduplicated): fix_mappings() at store.rs:104-105 inserts confirmation_key(...) into a HashSet. confirmation_key (store.rs:48-54) returns "run:{run_id}" for provenance rows, so two rows sharing a run_id collapse to one set entry. Test the_same_run_is_one_confirmation_not_many (store.rs:612-630) confirms: two submissions of run-A => confirmations == 1.
+
+Reopen side (NOT deduplicated): the else branch at store.rs:107-108 runs `acc.reopened += 1` once per matching Reopened row, with no run_id awareness and never calling confirmation_key. The net at store.rs:121 is `confirmations = contributors.len() as u32 - acc.reopened` (saturating). So K duplicate reopen rows under one run_id subtract K, while K duplicate confirmations under one run_id add 0.
+
+Exploit (matching the engine's own test a_reopened_outcome_demotes_the_fix at store.rs:850): run-A confirm + run-C confirm => contributors len 2; one run-B reopen => reopened 1 => net 1 (offered). But submitting the SAME run-B reopen TWICE => reopened 2 => net 0 => the mapping is dropped (confirmations>0 false at :122), despite two genuinely independent confirmations. A single reopen observation is thus amplified to cancel two independent confirmations; an appender needs only to duplicate one Reopened line N times to bury any plan out of retrieval.
+
+Nothing refutes this:
+- Gate (gate.rs:58-89) has zero run_id/dedup awareness; a Reopened label is non-resolved, so it skips the verdict/destructive checks and is admitted on a confirmed sign-off alone.
+- With an authority configured, attestation_message (schema.rs:230-262) binds run_id, but two replays of the SAME reopen run produce byte-identical messages, so the same legitimate attestation verifies for both copies (ensure_attested, gate.rs:104-119). One legitimately-attested reopen run, replayed, suffices.
+- verify_chain (store.rs:136-158) / submit (store.rs:327-354) just append; identical-content rows form valid sequential chain links (each hash folds in the differing prev), so duplicates pass integrity.
+
+Second sub-claim also holds: because the reopen branch never calls confirmation_key, the circularity rule (store.rs:50, retrieval_first && primed_from contains plan_id) is never applied to reopens. A reopen whose own run is self-primed/circular still increments acc.reopened and nets against a genuine confirmation, even though by the engine's own independence logic a circular row carries no independent signal — so it should not be allowed to cancel one.
+
+This is an integrity/availability defect on the core retrieval signal at the same append trust boundary the tamper-evidence/attestation work defends: it silently suppresses true, multiply-confirmed precedents. High is correct (it does not admit false truth, but it lets a single observation override the independence accounting that the rest of the change is built to enforce).
+
+FIX:
+Make demotion symmetric with confirmation counting — dedup reopens by the same independence key and subtract the count of DISTINCT reopen runs.
+
+Replace the u32 `reopened` counter with a HashSet, and key reopens the same way confirmations are keyed:
+
+  struct Acc {
+      signature: FaultSignature,
+      plan: common::Plan,
+      contributors: HashSet<String>,
+      reopens: HashSet<String>,   // was: reopened: u32
+  }
+
+In the loop (store.rs:103-109):
+
+  if resolved {
+      if let Some(key) = confirmation_key(row, &plan_id, index) {
+          acc.contributors.insert(key);
+      }
+  } else {
+      // dedup reopens by the same independence key as confirmations
+      acc.reopens.insert(match &row.provenance {
+          Some(p) => format!("run:{}", p.run_id),
+          None => format!("row:{index}"),
+      });
+  }
+
+And the net (store.rs:121):
+
+  let confirmations = (acc.contributors.len() as u32)
+      .saturating_sub(acc.reopens.len() as u32);
+
+This makes a replayed/duplicated reopen run count once, mirroring confirmations. Optionally (stronger, matching the suggested fix's intent) also require a reopen run to be distinct from every contributor run before it can cancel — i.e. only count reopen run ids not present as confirmation runs — and skip self-primed/circular reopen runs, so a circular reopen cannot net against an independent confirmation. The minimal fix above already closes the amplification/replay bug; add a regression test that submits one reopen run twice and asserts the twice-confirmed mapping is still offered with confirmations == 1.
+
+====================================================================================================
+[C8] LOW  —  chain_hash uses non-canonical serde_json encoding with no version prefix, inconsistent with the codebase's serde-independent canonicalization discipline
+====================================================================================================
+LOCATION: crates/corpus-client/src/schema.rs:269-283 (chain_hash, specifically line 273: serde_json::to_vec(&bare)); failure surfaces in crates/corpus-client/src/store.rs:149-153 (verify_chain)
+
+REASONING:
+Verified against the real source. The diff's line numbers (945) are stale; the actual chain_hash lives at schema.rs:269-283 and does use serde_json::to_vec(&bare) over the bare Contribution (integrity cleared). Every concrete claim in the finding holds:
+
+1. Inconsistency is real. attestation_message (schema.rs:230-262) and provenance::canonical (provenance/src/lib.rs:96) both deliberately build serde-INDEPENDENT byte strings with explicit domain/version prefixes ("cec-signoff-attestation-v2", "cec-plan-canonical-v1"). chain_hash alone leans on serde_json's byte layout and carries no version/domain prefix.
+
+2. The finding correctly concedes it is NOT a live non-determinism bug today, and I confirmed that adversarially: grepping common/src and schema.rs shows Contribution and all nested types (Outcome, FaultSignature, Symptom(String), Plan, PlanStep, Verification, ConfigClass, OutcomeLabel, SignOff, SignOffAttestation, RowProvenance) contain only Vecs/Options/enums/Strings/ints — no HashMap/HashSet/BTreeMap, no f32/f64, no serde_json::Value, no #[serde(flatten)]. serde_json emits struct fields in declaration order, so to_vec is deterministic for the present types. So no current correctness/security failure.
+
+3. The stated latent failure path is real and traceable: any future map-typed field, a #[serde] rename/reorder, or a serde_json formatting change alters the hashed bytes for already-persisted rows. On reopen, verify_chain (store.rs:136-158) recomputes chain_hash for each row (line 149) and errors at line 150-153 (integ.hash != expected) -> CorpusError::Storage. Every existing corpus file would then fail to load, and because the payload has no embedded version tag there is no way to detect old-format rows and migrate them; the break is silent-until-load and unconditional.
+
+I tried to refute by finding a reason the fragility is illusory (e.g. that the field set is frozen, or that a version field exists). It is not frozen by any type-level guard, and there is no version tag. The framing prev || "\n" || payload is itself safe (prev is fixed-length hex or empty, separator present, no length-extension ambiguity), so there is no additional bug to add.
+
+Net: a confirmed latent robustness/consistency defect, not a present-tense correctness or integrity bypass. The reviewer's own severity (low) is correct — it is a fragility/maintainability hazard that breaks migration safety, not an exploitable or currently-firing bug. Not a style nit because it concerns hashed/persisted bytes and the file-reopen invariant.
+
+FIX:
+Replace serde_json::to_vec in chain_hash with a serde-independent canonical encoder mirroring attestation_message, prefixed with a version tag. Concretely, build the payload from explicit field writes (e.g. start the String with "cec-corpus-chain-v1\n", then reuse the same field-by-field encoding attestation_message uses for the outcome/plan/label/sign_off/config_class/provenance, plus the attestation's authority_id and signature hex, sorting any to-be-added unordered collections). Hash sha256(prev || "\n" || version-prefixed-canonical-bytes). This makes the chain stable across serde and struct evolution and lets future format changes bump the version tag so old files can be detected and migrated rather than silently failing verify_chain on reopen.
+
+====================================================================================================
+[C9] LOW  —  CEC_SIGNOFF_SEED set without CEC_SIGNOFF_PUBKEY silently disables attestation enforcement with no warning
+====================================================================================================
+LOCATION: crates/support-agent/src/main.rs:302-336 (the pubkey-only gating of both the ENFORCED banner at 304-314 and the with_authority wiring at 323-325 / 331-333); the enforcement skip is in crates/corpus-client/src/store.rs:18-20 (admit only calls ensure_attested when authority.is_some())
+
+REASONING:
+Traced the full data flow in the real source and confirmed it.
+
+1. parse_env_pubkey() (main.rs:932-941) reads CEC_SIGNOFF_PUBKEY; parse_env_authority() (main.rs:946-953) reads CEC_SIGNOFF_SEED. They are fully independent — neither references the other, so seed-only / pubkey-only states are both reachable.
+
+2. The store is given .with_authority(...) ONLY inside `if let Some(pubkey) = &signoff_pubkey` (main.rs:323-325 for FileCorpus, 331-333 for LocalCorpus). So the store's `authority` field stays None when only the seed is set.
+
+3. admit() in store.rs:16-22 runs ensure_evidence_integrity always but only runs ensure_attested when `authority.is_some()` (store.rs:18-20). With store authority None, ensure_attested is never invoked for any backend (LocalCorpus submit:239, MemCorpus:330, FileCorpus:417 all call admit(contribution, &self.authority)).
+
+4. signoff_authority = Some still causes record_outcome to attach a real attestation via contribution.attested_by(authority) at main.rs:820-821. So rows are written self-attested but NOT enforcement-verified on write.
+
+5. The only sign-off diagnostic banner (main.rs:304-314) is gated on `if let Some(pubkey) = &signoff_pubkey`. With pubkey unset, nothing about sign-off is printed at all — not even the seed-only state. So the run is silently unprotected.
+
+This directly contradicts the module comment at main.rs:299-300 ("A set-but-invalid key is a hard error — never silently run unprotected"): a set-but-incomplete config (seed only) is exactly a silent unprotected run with no diagnostic.
+
+The reviewer's reasoning, failure path, and severity are all accurate. I attempted to refute on severity: in seed-only mode the rows still carry valid attestations (signed by the seed authority), so this is not a forge/integrity bypass — a later run that sets the pubkey would still verify them against the chain. The harm is confined to operator misconfiguration silently turning the write-time gate off with zero feedback, which matches the reported 'low' severity. Confirmed, severity low.
+
+FIX:
+After parsing both env vars in main.rs (after line 303), handle the seed-only case explicitly instead of leaving it silent. Minimal version — turn the pubkey-only banner into a match that also covers the seed-only misconfiguration, e.g.:
+
+match (&signoff_pubkey, &signoff_authority) {
+    (Some(pubkey), auth) => println!(
+        "  sign-off: attestation ENFORCED (authority {}…){}",
+        &pubkey.id(),
+        if auth.is_some() { "; this run holds the seed and self-attests (single-operator mode)" }
+        else { "; this run must receive attestations (none produced here)" },
+    ),
+    (None, Some(_)) => return Err(anyhow::anyhow!(
+        "CEC_SIGNOFF_SEED is set but CEC_SIGNOFF_PUBKEY is not: this run would self-attest \
+         rows that are never verified (enforcement OFF). Set CEC_SIGNOFF_PUBKEY (it can be \
+         derived from the seed) so the 'never silently unprotected' invariant holds."
+    )),
+    (None, None) => {} // cold start, no authority configured — intended
+}
+
+Hardening it to a hard error (rather than a warning) is preferable given the stated invariant; the pubkey can be derived from the seed, so the operator can always satisfy it. If derivation is added to SignOffAuthority (e.g. a public_key() accessor), the seed-only branch could instead auto-populate signoff_pubkey and still enforce.
+
+====================================================================================================
+[C10] MEDIUM  —  HttpCorpus admission + attestation wiring has zero tests
+====================================================================================================
+LOCATION: crates/corpus-client/src/store.rs — HttpCorpus at lines 359-434 (new() 365-373, with_authority() 377-380, submit()->admit() 414-417); test module store.rs:436-900 constructs only LocalCorpus/FileCorpus
+
+REASONING:
+The factual claims hold up under adversarial check. grep across all crates shows `HttpCorpus` appears only in its struct/impl definitions and the lib.rs re-export (store.rs:359/365/384, lib.rs:34); it is constructed in zero tests and there is no tests/ integration dir for the crate. The test module (store.rs:436-900) references only `LocalCorpus::new()` and `FileCorpus::open()`. So the invariant "a contribution that fails the admission gate never leaves the process" is indeed unverified for the network store, and the failure_path is real: if a refactor dropped the `admit(contribution, &self.authority)?` call at store.rs:417 or left `with_authority` (store.rs:377) wiring the field but unread, no existing test would fail.
+
+However, this is a silent-regression/test-adequacy gap, not a live bug — I could not refute the code itself. The current `HttpCorpus::submit` (store.rs:414-417) DOES call the same shared `admit()` free function (store.rs:14-23) that LocalCorpus and FileCorpus call, with the identical authority field, before the POST. That free function — and the underlying `ensure_evidence_integrity`/`ensure_attested` — is exercised by the LocalCorpus authority tests (store.rs:696-772) and the gate.rs unit tests. So the security-critical gate logic is tested; only HttpCorpus's ~3 lines of glue (URL-trim in new(), field set in with_authority(), the pre-POST admit() ordering) are uncovered.
+
+Two facts argue the severity down from high to medium: (1) the dangerous logic is a single shared helper that IS tested, so the regression surface is narrow (the glue, not the gate); (2) HttpCorpus is not instantiated anywhere in the shipping binary — support-agent/src/main.rs:320-336 only ever builds FileCorpus or LocalCorpus and only calls with_authority on those (main.rs:324,332). HttpCorpus is a library-public API with no current production caller. The "off-box transmission is where it matters most" framing is rhetorically true but the present blast radius is a future embedder, not today's CLI. That is a genuine, worth-fixing coverage gap, but medium, not high.
+
+FIX:
+Add HttpCorpus tests mirroring authority_store_rejects_an_unattested_confirmed_row / _accepts_a_genuinely_attested_row. Point base_url at an unroutable/reserved address (e.g. http://127.0.0.1:1) so the gate must run before any socket call: (a) an unattested ResolvedConfirmed/HumanConfirmed row under .with_authority(...) must return Err(CorpusError::Gate(GateError::AttestationMissing)) — a Gate error, NOT CorpusError::Transport — proving admit() ran before the POST; (b) optionally stand up a tiny stub server (tokio TcpListener or httpmock) to assert a genuinely .attested_by(...) row reaches POST /v1/contributions. The (a) variant needs no server and directly pins the "fails the gate => never leaves the process" invariant by distinguishing Gate vs Transport error variants.
+
+====================================================================================================
+[C11] LOW  —  Gate's Unverified/OffMachine-not-resolved boundary is untested; only None and Fail exercised at the gate
+====================================================================================================
+LOCATION: crates/corpus-client/src/gate.rs:77 (the `_ => Err(GateError::ResolvedWithoutPass)` catch-all arm); test resolved_confirmed_needs_a_pass_verdict at gate.rs:171-198
+
+REASONING:
+The factual claims are accurate against the current source. VerificationResult has five variants (common/src/verification.rs:33-49): Pass, ProvisionalPass, Fail, OffMachine, Unverified. is_pass() (verification.rs:54-59) returns true only for Pass/ProvisionalPass. In ensure_evidence_integrity (gate.rs:67-78) a ResolvedConfirmed row carrying OffMachine or Unverified is not is_pass(), so it skips the line 75 mismatch guard and lands on the line 77 `_` catch-all -> ResolvedWithoutPass. So the live invariant ("an Unverified/OffMachine outcome can never back a resolved label") holds correctly TODAY — this is not a live correctness bug.\n\nThe test resolved_confirmed_needs_a_pass_verdict (gate.rs:171-198) does only exercise None (line 173-182) and Fail (line 184-197). No test in this module ever constructs a ResolvedConfirmed contribution carrying VerificationResult::OffMachine or VerificationResult::Unverified, so the gate's handling of those two specific variants is asserted nowhere at the gate boundary. The reviewer's silent-regression scenario is real: if the line 77 catch-all were narrowed during a future refactor (e.g. someone enumerates variants and writes `Some(Fail) => Err(ResolvedWithoutPass)`), a ResolvedConfirmed+Unverified or +OffMachine row would fall out of the match and be admitted, and the existing test suite would stay green. This is a genuine test-adequacy gap, not a style nit.\n\nI down-grade severity from medium to low: there is no current defect, the behavior is already covered indirectly via None/Fail plus the LabelVerdictMismatch path, and the regression is purely hypothetical (contingent on a specific future refactor). The cross-boundary intent ("the gate must defend against a buggy embedder, not trust label_for") makes the missing two cases worth pinning, but it is a hardening request, not a bug. Note also the gate is the only enforcement point — there is no compile-time exhaustiveness check protecting it (the match uses a wildcard, precisely the construct the reviewer flags), which is why a regression here would be silent.
+
+FIX:
+Extend resolved_confirmed_needs_a_pass_verdict (gate.rs:171-198) to also assert both new variants are refused at the gate. After the existing `failing` block, add:\n\n    let off_machine = contribution(\n        OutcomeLabel::ResolvedConfirmed,\n        SignOff::HumanConfirmed,\n        Risk::Reversible,\n        Some(Verification { result: VerificationResult::OffMachine, class: None, recurring: vec![] }),\n    );\n    assert_eq!(ensure_evidence_integrity(&off_machine), Err(GateError::ResolvedWithoutPass));\n\n    let unverified = contribution(\n        OutcomeLabel::ResolvedConfirmed,\n        SignOff::HumanConfirmed,\n        Risk::Reversible,\n        Some(Verification { result: VerificationResult::Unverified, class: None, recurring: vec![] }),\n    );\n    assert_eq!(ensure_evidence_integrity(&unverified), Err(GateError::ResolvedWithoutPass));\n\nThis pins the cross-boundary invariant for all four non-passing inputs (None, Fail, OffMachine, Unverified) so a future narrowing of the gate.rs:77 catch-all fails a test. (Optionally, also add a ResolvedProvisional+Unverified case for symmetry.)
+
+====================================================================================================
+[C12] LOW  —  LabelVerdictMismatch tested in only one direction; ResolvedProvisional+Pass cross-pairing is uncovered
+====================================================================================================
+LOCATION: crates/corpus-client/src/gate.rs:75 (the `(_, Some(r)) if r.is_pass() => LabelVerdictMismatch` arm); existing test at crates/corpus-client/src/gate.rs:201-212 (`confirmed_label_over_a_provisional_pass_is_a_mismatch`). NOTE: the reviewer's cited lines (71-73, 652-663) are wrong — the file is only 265 lines total.
+
+REASONING:
+The match in ensure_evidence_integrity (gate.rs:67-78) admits exactly two label/verdict pairs — (ResolvedConfirmed, Pass) and (ResolvedProvisional, ProvisionalPass) — then routes any OTHER passing verdict to LabelVerdictMismatch via the guard `(_, Some(r)) if r.is_pass()` at line 75. Two distinct cross-pairings reach that guard: (1) ResolvedConfirmed + ProvisionalPass and (2) ResolvedProvisional + Pass (Pass.is_pass()==true per verification.rs:54-59). I confirmed the test module (lines 159-265) exercises only direction (1) in `confirmed_label_over_a_provisional_pass_is_a_mismatch` (lines 201-212). The happy-path test `a_matching_resolved_outcome_passes` (215-230) only checks ResolvedProvisional + provisional(); no test feeds ResolvedProvisional a full Pass. So the reviewer is right that direction (2) is uncovered, and the silent-regression path holds: if someone widened the ResolvedProvisional arm to accept any passing verdict (e.g. `(ResolvedProvisional, Some(r)) if r.is_pass())`), every existing gate test would still pass while a deterministic Pass would be admitted under an intermittent/parole label — exactly the integrity drift described.
+
+I downgrade severity from medium to low: this is purely a test-adequacy / future-regression-risk finding, not a live defect. The shipped code is CORRECT today — ResolvedProvisional + Pass currently does return LabelVerdictMismatch through the existing guard. There is no integrity bypass in the current source, so the impact is bounded to 'a future change could regress undetected,' which is a low-severity coverage gap, not a medium bug. The fix is a one-line additional test.
+
+FIX:
+Add a gate test asserting the opposite cross-pairing is also a mismatch:
+
+#[test]
+fn provisional_label_over_a_full_pass_is_a_mismatch() {
+    let c = contribution(
+        OutcomeLabel::ResolvedProvisional,
+        SignOff::VerifierConfirmed,
+        Risk::Reversible,
+        Some(Verification::pass()), // a full Pass under a provisional label
+    );
+    assert_eq!(
+        ensure_evidence_integrity(&c),
+        Err(GateError::LabelVerdictMismatch)
+    );
+}
+
+====================================================================================================
+[C13] LOW  —  Mixed legacy+chained file (the 'some rows have no chain link' splice path) is untested
+====================================================================================================
+LOCATION: crates/corpus-client/src/store.rs:141-145 (verify_chain missing-link branch); no test in the store.rs #[cfg(test)] module reaches it
+
+REASONING:
+I traced every factual claim against the real source and they all hold.\n\n1) The branch exists exactly as described. store.rs:137-145: `let with = rows.iter().filter(|r| r.integrity.is_some()).count();` then `if with == 0 { Ok(empty) }` (legacy/unchained) and `if with != rows.len() { Err(Storage(\"some rows have no chain link (tampered)\")) }`. This is the splice/mixed-file defense, distinct from the hash-mismatch branch at store.rs:150 (`integ.prev != prev || integ.hash != expected`).\n\n2) A mixed file is genuinely producible, so the branch is load-bearing. schema.rs:178-179 declares `#[serde(default, skip_serializing_if = \"Option::is_none\")] pub integrity: Option<RowIntegrity>`. A hand-written JSON line with no `integrity` key deserializes to `integrity: None` (open() parses each non-empty line via serde_json::from_str, store.rs:267-273). Appending such a line after a chained row yields `0 < with < rows.len()`, which only branch 141 catches. If branch 141 were inverted/removed, that file would open cleanly and the injected unsigned 'confirmed' row would be served as a fix — a real integrity bypass.\n\n3) The coverage gap is real. I enumerated all tests in the module. The only file-tamper test, file_corpus_refuses_a_hand_edited_row (store.rs:787-808), does `text.replace(\"boot_loop\", \"tampered_symptom\")` on a row that STILL carries its integrity field, so `with == rows.len()` holds and it trips the hash-mismatch branch at 150, NOT the missing-link branch at 141. file_corpus_chain_survives_a_clean_reopen (811-828) only exercises the all-chained-valid Ok path. No test appends/prepends an integrity-less row, swaps two chained rows, or removes a middle row. So branch 141 has zero coverage, exactly as reported.\n\nWhy not refuted: the code does currently handle the mixed file correctly; the finding does not claim otherwise — it claims the branch is untested and could silently regress. That claim is accurate.\n\nWhy severity lowered from medium to low: this is a test-adequacy / silent-regression risk, not a present-tense exploitable defect. The defense is correct in the shipped code today. It guards a security-critical integrity branch, which keeps it above a style nit, but a pure coverage gap on already-correct logic does not warrant medium.
+
+FIX:
+Add tests in the store.rs #[cfg(test)] module that drive branch 141 and broaden branch 150 to a non-trivial chain. Example for the splice case: submit one chained row, then append a raw JSON contribution line with no `integrity` field (serialize a Contribution with integrity:None via serde_json::to_string and `writeln!` it onto the file), reopen, and assert `matches!(FileCorpus::open(&path.0), Err(CorpusError::Storage(_)))`. Add a second test that prepends an unchained row before a chained one (also `0 < with < len`). For branch 150 on a real chain: submit 3 rows, read the file lines, swap lines[0] and lines[1] (or delete lines[1]), rewrite, and assert the reopen errors — this proves prev/hash mismatch is caught at a non-zero index rather than only at row 0.
+
+====================================================================================================
+[C14] MEDIUM  —  Reopened demotion is per-row (no run_id dedup), asymmetric with run-deduped confirmations, allowing duplicate/replayed reopens to over-demote a genuinely confirmed fix
+====================================================================================================
+LOCATION: crates/corpus-client/src/store.rs:103-108 (resolved branch uses confirmation_key run-dedup into a HashSet; reopened else-branch does `acc.reopened += 1` per row) and store.rs:121 (`(acc.contributors.len() as u32).saturating_sub(acc.reopened)`). Untested asymmetry: only reopened test is a_reopened_outcome_demotes_the_fix at store.rs:851, which uses three distinct run ids (run-A/run-B/run-C).
+
+REASONING:
+Traced the concrete failure path in the real source. confirmation_key (store.rs:48-54) maps a resolved row to `run:{run_id}` and the caller inserts it into `acc.contributors: HashSet<String>` (store.rs:105), so re-submitting the identical resolved run counts once (test the_same_run_is_one_confirmation_not_many, store.rs:613, pins this). The reopened path takes the opposite shape: the else-branch at store.rs:108 does `acc.reopened += 1` unconditionally, per row, with no run_id key and no set. Neither LocalCorpus::submit (store.rs:diff push) nor FileCorpus::submit (store.rs:327-353) dedups rows, and the gate admits Reopened rows freely as hard negatives (gate.rs: only the is_resolved() branch demands a verdict; a Reopened row needs only sign_off.is_confirmed()). At cold start no attestation is required at all; even with an authority configured, the run_id-binding replay protection (test at store.rs:755) is irrelevant here because the reopened branch never consults run_id, so distinct attestations over the same logical reopen each still increment reopened. Concrete exploit: submit two independent confirmations (run-A, run-B → contributors={run:run-A, run:run-B}, len 2) and the same Reopened run submitted 3x (reopened=3); confirmations = 2.saturating_sub(3) = 0 (store.rs:121), so a twice-independently-confirmed fix is demoted out of retrieval and query returns empty. No existing test fails because a_reopened_outcome_demotes_the_fix (store.rs:851) only ever uses distinct run ids and never repeats a reopen run. This is a real integrity/availability defect (a duplicate or replayed reopen can suppress a valid precedent), not merely a test gap; the reviewer's description, location, and failure path all check out against the current code. Severity medium is appropriate: it suppresses true fixes (availability of valid precedents) rather than admitting false truth, and requires the attacker/duplicate to land multiple reopen rows.
+
+FIX:
+Route reopened rows through the same independence-key dedup as confirmations so a repeated reopen run counts once. Replace the per-row counter with a set: give Acc a `reopened: HashSet<String>` instead of `u32`, and in the else-branch insert an independence key keyed by run_id, e.g. `if let Some(p) = &row.provenance { acc.reopened.insert(format!("run:{}", p.run_id)); } else { acc.reopened.insert(format!("row:{index}")); }` (mirroring confirmation_key's legacy fallback). Then compute `let confirmations = (acc.contributors.len() as u32).saturating_sub(acc.reopened.len() as u32);` at store.rs:121. Add a test 'the_same_reopen_run_demotes_once_not_twice' that submits 2 confirmations (run-A, run-B) plus the same Reopened run-X three times and asserts confirmations == 1 (net 2 - 1). If per-row reopen counting is actually intended, instead document that explicitly and add a test pinning that a repeated reopen run demotes per submission — but the run-deduped confirmation side makes the symmetric set the correct semantics.

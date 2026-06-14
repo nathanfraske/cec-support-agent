@@ -251,6 +251,52 @@ mod tests {
     }
 
     #[test]
+    fn provisional_label_over_a_full_pass_is_a_mismatch() {
+        // The mirror of `confirmed_label_over_a_provisional_pass_is_a_mismatch`:
+        // a provisional label backed by a *deterministic* Pass is also a verdict
+        // that disagrees with its label, not a match.
+        let c = contribution(
+            OutcomeLabel::ResolvedProvisional,
+            SignOff::HumanConfirmed,
+            Risk::Reversible,
+            Some(Verification::pass()),
+        );
+        assert_eq!(
+            ensure_evidence_integrity(&c),
+            Err(GateError::LabelVerdictMismatch)
+        );
+    }
+
+    #[test]
+    fn an_unverified_or_offmachine_verdict_cannot_back_a_resolved_label() {
+        // A resolved label needs a *passing* verdict; Unverified (no real
+        // re-collection) and OffMachine (the verdict belongs to the bench) are
+        // not passes, so they fall through to ResolvedWithoutPass rather than
+        // being silently admitted.
+        for result in [
+            VerificationResult::Unverified,
+            VerificationResult::OffMachine,
+            VerificationResult::Fail,
+        ] {
+            let c = contribution(
+                OutcomeLabel::ResolvedConfirmed,
+                SignOff::HumanConfirmed,
+                Risk::Reversible,
+                Some(Verification {
+                    result,
+                    class: None,
+                    recurring: Vec::new(),
+                }),
+            );
+            assert_eq!(
+                ensure_evidence_integrity(&c),
+                Err(GateError::ResolvedWithoutPass),
+                "{result:?} must not back a resolved label"
+            );
+        }
+    }
+
+    #[test]
     fn hard_negatives_are_admitted_without_a_verdict() {
         // A failure is truth too: it needs only a confirmed sign-off, no verdict,
         // and is unaffected by the destructive-fix rule (it is not a fix).
