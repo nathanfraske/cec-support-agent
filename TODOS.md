@@ -64,7 +64,7 @@ Conventions:
 - [x] [added 2026-06-14 22:55 UTC · done 2026-06-14 23:10 UTC] FIX H (tests, C10–C13 + regressions A–E): +11 tests (gate: provisional-over-pass mismatch, Unverified/OffMachine-not-resolved; store: variant-bind, verdict-bind, attested-reopen, cold-start-refused, rechained-forge-refused, replayed-reopen, HttpCorpus gate×2, mixed-chain). 159 tests green, clippy/fmt clean.
 - [x] [added 2026-06-14 22:55 UTC · done 2026-06-14 23:12 UTC] Reconcile FOLLOWUPS.md — appended the 3 deeper residuals the fixes leave open (keyless-chain key/anchor, chain_hash canonical encoding, rotation×at-rest-readmission interaction)
 - [x] [added 2026-06-14 22:55 UTC · done 2026-06-14 23:12 UTC] Independent adversarial verification of the fix diff (2 parallel reviewers: crypto-encoding lens + gate/store lens) → all 7 fixes CLOSED, no regression, no new bug
-- [ ] [added 2026-06-14 20:50 UTC] Present for review (PR-ready summary) — commit on `feat/agent-ops-evidence-integrity`; push + open PR pending owner OK
+- [x] [added 2026-06-14 20:50 UTC · done 2026-06-14 23:25 UTC] Present for review — committed `11f0609`, pushed `feat/agent-ops-evidence-integrity`, opened **PR #2** (owner approved push+PR) → https://github.com/nathanfraske/cec-support-agent/pull/2
 
 ## Done / obsolete (history)
 

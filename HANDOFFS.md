@@ -15,10 +15,12 @@ Below "Pick up here", keep a reverse-chronological **handoff log** of dated entr
 
 ## Current state
 
-**As of 2026-06-14 ~23:15 UTC.** The adversarial audit of the engine diff is DONE and its findings are FIXED
-and verified. Branch `feat/agent-ops-evidence-integrity`. 159 tests green, clippy/fmt clean. The audit-fix
-work is COMMITTED locally; **push + PR are pending owner OK** (outward-facing). See the latest handoff-log
-entry below for the full fix set.
+**As of 2026-06-14 ~23:25 UTC.** The adversarial audit of the engine diff is DONE, its 14 findings are FIXED
+and verified, and the branch is **presented for review as PR #2**
+(https://github.com/nathanfraske/cec-support-agent/pull/2 — owner approved push+PR). Branch
+`feat/agent-ops-evidence-integrity` pushed at `11f0609`; 159 tests green, clippy/fmt clean. The feature work
+is complete; remaining items are all deferred in `FOLLOWUPS.md`. See the latest handoff-log entry for the fix
+set.
 
 - **Audit:** re-ran the `autodiagnoser-engine-audit` workflow (`wf_5c1c16b9-613`) — the previous agent's run
   had not persisted results and no live task survived. 23 agents, ~1M tokens: 18 findings verified →
@@ -59,15 +61,14 @@ commit on branch `feat/agent-ops-evidence-integrity`.
 
 ## Pick up here
 
-Branch `feat/agent-ops-evidence-integrity`. The full engine sweep (Increments 1–10) AND the adversarial
-audit-fix pass are DONE and COMMITTED locally (159 tests, fmt/clippy clean; ed25519-dalek license-clean).
-**Next: present for review.** The audit-fix commit is local-only — get owner OK, then `git push` and open the
-PR against `main` (outward-facing, so it was deliberately not auto-pushed). A PR-ready summary is in the
-latest handoff-log entry. After the PR, the remaining work is all deferred in `FOLLOWUPS.md` (the 3 new audit
-residuals: key/anchor the keyless chain head; chain_hash canonical encoding; key-rotation × at-rest
-re-admission — plus the pre-existing engine GAP/Windows/VM-backend items). Build loop: `. "$HOME/.cargo/env"`
-then `cargo build/test/clippy/fmt --workspace` (run cargo with `dangerouslyDisableSandbox`). Per-fix status is
-in `TODOS.md`; the confirmed findings in `.claude/audit/confirmed-findings.txt`.
+Branch `feat/agent-ops-evidence-integrity` is **presented for review as PR #2**
+(https://github.com/nathanfraske/cec-support-agent/pull/2). Nothing is blocking. Next steps are reactive:
+**(1)** address any PR review comments; **(2)** when the PR merges, the remaining work is all deferred in
+`FOLLOWUPS.md` — the 3 new audit residuals (key/anchor the keyless chain head; chain_hash canonical encoding;
+key-rotation × at-rest re-admission) plus the pre-existing engine GAP / Windows-CIM / real-VM-backend /
+research-tree items. Build loop: `. "$HOME/.cargo/env"` then `cargo build/test/clippy/fmt --workspace` (run
+cargo with `dangerouslyDisableSandbox`). Per-fix status is in `TODOS.md`; confirmed findings in
+`.claude/audit/confirmed-findings.txt`; the reusable audit is `.claude/wf-audit.js`.
 
 Increments delivered: (1) structured gate + bound verdict; (2) MH-1 ed25519 attestation; (3) MH-2 class +
 run-provenance + EI-03 independent confirmations; (4) MH-4/8/EI-06 hash-chain tamper-evidence + revocation +
