@@ -66,6 +66,21 @@ Conventions:
 - [x] [added 2026-06-14 22:55 UTC · done 2026-06-14 23:12 UTC] Independent adversarial verification of the fix diff (2 parallel reviewers: crypto-encoding lens + gate/store lens) → all 7 fixes CLOSED, no regression, no new bug
 - [x] [added 2026-06-14 20:50 UTC · done 2026-06-14 23:25 UTC] Present for review — committed `11f0609`, pushed `feat/agent-ops-evidence-integrity`, opened **PR #2** (owner approved push+PR) → https://github.com/nathanfraske/cec-support-agent/pull/2
 
+### Private corpus: structure + ground-truth YAML format (owner, 2026-06-14 22:25 UTC)
+
+Decisions: off-tree separate private git repo at `/mnt/e/cec-corpus-private`; YAML-authored fix flows compiled
+to de-identified + ed25519-attested + gate-validated JSONL; BUILD NOW = structure + format spec + templates +
+no-leak rails on both repos; DEFER (as precise wiring TODOs) = the Rust ingest compiler, query/verify tools,
+the corpus service.
+
+- [ ] [added 2026-06-14 22:30 UTC] Design panel (workflow `private-corpus-design` `wf_b61fe974-59a`): 4 lenses (structure/isolation, yaml-format, interaction/wiring, red-team) → synthesized canonical design
+- [ ] [added 2026-06-14 22:30 UTC] Create the off-tree private repo `/mnt/e/cec-corpus-private` (git init) with README + .gitignore + pre-commit + directory tree
+- [ ] [added 2026-06-14 22:30 UTC] Write the YAML fix-flow format SPEC (field-by-field; authored/derived/forbidden table; gate-coupling rules; validation) into the private repo
+- [ ] [added 2026-06-14 22:30 UTC] Write ready-to-fill YAML templates (resolved-confirmed, resolved-provisional, destructive-needs-human, hard-negative) — de-identified vocabulary only
+- [ ] [added 2026-06-14 22:30 UTC] Harden the PUBLIC repo no-leak rails (.gitignore + scripts/githooks/pre-commit) + a boundary doc; fold in red-team defenses
+- [ ] [added 2026-06-14 22:30 UTC] Adversarial verification pass (no-leak auditor + format↔gate completeness + wiring completeness)
+- [ ] [added 2026-06-14 22:30 UTC] Record the full deferred ingest-pipeline wiring plan (compiler crate, query/verify, service) as ordered FOLLOWUPS/TODOs with exact files + acceptance checks
+
 ## Done / obsolete (history)
 
 _(completed items stay above, in place, with their `· done` tombstone)_
