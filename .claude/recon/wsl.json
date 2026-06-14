@@ -1,0 +1,148 @@
+{
+  "policy_summary": "CEC-Platform's \"WSL-EPHEMERAL STATE POLICY\" (owner directive 2026-06-12, codified in /home/nathan/CEC-Platform/CLAUDE.md lines 5-28) treats the WSL2 Linux volume as DISPOSABLE. It was created after a 2026-06-12 attempt to relocate the distro to E: destroyed the entire Linux home; everything came back from the git remote or ops/provision.sh EXCEPT the prior session's agent handoff, which existed only on the WSL volume and was lost forever. The rule: anything load-bearing must live in exactly one of (1) the git remote, (2) the Windows filesystem (E:/C:), or (3) be rebuildable from the repo \u2014 no exceptions.\n\nFour concrete pillars enforce it:\n\n1. DISASTER RECOVERY IS ONE SCRIPT. Recovery = install WSL + Windows NVIDIA driver, `git clone`, `bash ops/provision.sh`. provision.sh is idempotent and rebuilds: APT repos (KiCad 10, Docker, NVIDIA toolkit), system packages, Docker+NVIDIA runtime+user group, the .wslconfig template surface, the pinned routing container, and the cec-llm-broker systemd unit (deployed from the in-tree vendored copy at ops/cec-llm-broker), then wires bot git-auth from the E: secrets file and installs the .git/hooks/pre-push bot guard, finishing with four smoke tests.\n\n2. THE HANDOFF GOES TO GIT EVERY SESSION (the DURABILITY CONTRACT, two halves). See durability_contract field.\n\n3. DURABLE AGENT MEMORY LIVES IN THE COMMITTED TREE. The in-tree .claude/memory/*.md mirror is git-tracked; user-level ~/.claude is disposable; the Stop hook promotes live memory into the committed mirror.\n\n4. SECRETS ARE NEVER WSL-ONLY. The bot PAT lives in a Windows/E: secrets file mounted read-only into WSL (/mnt/e/secrets/cec-bot.env), never solely in the WSL gh login.\n\nSession survivability is layered on top (ops/README-claude-rc.md): the interactive and headless `claude` sessions run inside tmux (socket claude-rc, sessions crc-<project>) under a systemd --user unit claude-rc@.service with Restart=always, so a dropped WSL console / terminal never orphans the agent, and rc-recover.sh cleanly restarts zombied bridges. These scripts live in ops/ specifically so they survive a distro rebuild.",
+  "durability_contract": "The handoff durability contract has TWO HALVES, both refreshed at session Stop and re-seeded at SessionStart, so the handoff can NEVER again exist only on the ephemeral WSL volume.\n\nHALF 1 \u2014 IN-TREE MEMORY MIRROR (committed normally on main):\n- Live agent memory lives at ~/.claude/projects/<sanitized-project-path>/memory/*.md (e.g. .../-home-nathan-CEC-Platform/memory/). This live copy is DISPOSABLE.\n- The durable copy is the git-tracked in-tree mirror at <repo>/.claude/memory/*.md.\n- session-end.sh (Stop) first plain-file-copies every live ~/.claude .../memory/*.md OVER the in-tree .claude/memory/<basename> (no HEAD/index touch; the next normal commit on main carries them). This keeps the versioned handoff from drifting stale (the comment notes the live handoff had grown to 8KB while the committed copy was 2KB).\n- session-start.sh (SessionStart) does the inverse SELF-HEAL: after a WSL wipe + git clone, the live memory dir is empty, so it copies each committed .claude/memory/*.md INTO the live dir \u2014 but ONLY files the live dir lacks (never clobbering a newer live edit). This is why the mandatory handoff is always surfaced at session start even on a fresh clone.\n\nHALF 2 \u2014 OFF-TREE ops/agent-handoff SIDE BRANCH (wipe-proof remote copy, never touches HEAD/index):\n- At every Stop, session-end.sh assembles a commit entirely with git PLUMBING and pushes it straight to refs/heads/ops/agent-handoff on origin. It is non-disruptive by construction: it NEVER checks out, NEVER touches HEAD or the normal index.\n- Mechanics: (a) generate a fresh handoff into a mktemp file (repo state, branch, HEAD oneline, uncommitted count, last 12 commits, working-tree short status, broker /broker/stats curl, and full dumps of current-work-handoff.md + MEMORY.md). (b) `git fetch -q origin ops/agent-handoff`; set GIT_INDEX_FILE to a separate mktemp index; `git read-tree` the remote branch tip (or --empty). (c) For each blob, `git hash-object -w` then `git update-index --add --cacheinfo 100644,<blob>,<path>`, writing handoff to docs/agent/handoff.md and every memory file to .claude/memory/<basename>. (d) `git write-tree`; skip a no-op if the tree equals the parent's tree; `git commit-tree <tree> -p <parent> -m \"agent handoff <UTC> [session-end hook]\"`. (e) unset GIT_INDEX_FILE and `git push <bot-url> <commit>:refs/heads/ops/agent-handoff`.\n- The push prefers the survives-WSL bot PAT (CEC_BOT_PAT from ops/secrets/load-secrets.sh, rewriting the origin URL to https://x-access-token:<PAT>@github.com/...) and falls back to gh creds otherwise.\n- It is fail-soft + time-bounded: exec 2>/dev/null silences all noise on the Stop path, every git/network call is wrapped in `timeout 60`, and every failure path exits 0 \u2014 a Stop hook must never block or fail the session.\n\nTogether: HALF 1 makes the handoff recoverable by a plain `git clone` of main (and re-seeds the live session); HALF 2 guarantees a current copy is on the remote (side branch) at the end of EVERY session even between commits to main.",
+  "components": [
+    {
+      "name": ".claude/settings.json",
+      "path": "/home/nathan/CEC-Platform/.claude/settings.json",
+      "role": "Hook registry \u2014 wires SessionStart (session-start.sh, followups-context.sh, todo-context.sh) and Stop (session-end.sh, v4-idle-queue.sh). Also declares the kicad-happy plugin marketplace.",
+      "mechanism": "Each hook entry is {type:command, command:$CLAUDE_PROJECT_DIR/.claude/hooks/<script>}. SessionStart hooks emit additionalContext JSON; Stop hooks run side-effects."
+    },
+    {
+      "name": ".claude/hooks/session-start.sh",
+      "path": "/home/nathan/CEC-Platform/.claude/hooks/session-start.sh",
+      "role": "DURABILITY CONTRACT half-1 re-seed + mandatory memory-handoff injection. The start-hook half.",
+      "mechanism": "Derives memdir = ~/.claude/projects/$(echo $root | tr '/.' '--')/memory, falling back to a hardcoded canonical -home-nathan-CEC-Platform/memory. Copies committed .claude/memory/*.md into the live dir ONLY for files it lacks (never clobbers newer live edits). Then a python3 heredoc reads current-work-handoff.md (cap 12000) + MEMORY.md (cap 4000) and prints {hookSpecificOutput:{hookEventName:SessionStart, additionalContext:...}} as its ONLY stdout. Also runs scripts/setup-kicad-cli.sh when CLAUDE_CODE_REMOTE=true (stdout->stderr to keep JSON clean)."
+    },
+    {
+      "name": ".claude/hooks/session-end.sh",
+      "path": "/home/nathan/CEC-Platform/.claude/hooks/session-end.sh",
+      "role": "The Stop hook \u2014 enforces the whole WSL-ephemeral policy at session end: refreshes the in-tree mirror (half-1) AND pushes the off-tree ops/agent-handoff side branch (half-2).",
+      "mechanism": "exec 2>/dev/null; drains stdin. Refreshes .claude/memory/ from live memdir (plain cp). Sources ops/secrets/load-secrets.sh for CEC_BOT_PAT. Builds handoff in a mktemp; uses GIT_INDEX_FILE temp index + read-tree/hash-object/update-index/write-tree/commit-tree to compose a commit on top of origin/ops/agent-handoff WITHOUT touching HEAD/index; pushes commit:refs/heads/ops/agent-handoff via the PAT URL (fallback gh). Everything timeout-60 and exit-0 fail-soft. Writes docs/agent/handoff.md + .claude/memory/*.md into the side-branch tree."
+    },
+    {
+      "name": ".claude/hooks/followups-context.sh",
+      "path": "/home/nathan/CEC-Platform/.claude/hooks/followups-context.sh",
+      "role": "SessionStart \u2014 ensures FOLLOWUPS.md exists at repo root and injects the standing 'record every non-blocking deferred item' policy as additionalContext. Not part of the durability contract, but part of the SessionStart bundle.",
+      "mechanism": "Creates FOLLOWUPS.md from a heredoc template if absent; python3 prints additionalContext JSON with the followups policy instruction."
+    },
+    {
+      "name": ".claude/hooks/todo-context.sh",
+      "path": "/home/nathan/CEC-Platform/.claude/hooks/todo-context.sh",
+      "role": "SessionStart \u2014 ensures TODO.md exists (append-only live worklist) and injects the TODO policy. Part of the SessionStart bundle, not the durability contract.",
+      "mechanism": "Creates TODO.md from heredoc if absent; python3 prints additionalContext JSON with the append-only TODO policy."
+    },
+    {
+      "name": ".claude/hooks/v4-idle-queue.sh",
+      "path": "/home/nathan/CEC-Platform/.claude/hooks/v4-idle-queue.sh",
+      "role": "Stop \u2014 CEC-Platform-specific: when idle, hands queued tasks to the DeepSeek-V4 seat. NOT part of the WSL durability policy; project-specific compute orchestration.",
+      "mechanism": "Fast no-op unless docs/v4-queue/pending has entries; else setsid nohup python3 scripts/cec_v4_queue.py run-idle detached. Should NOT be ported."
+    },
+    {
+      "name": ".claude/memory/ (in-tree mirror)",
+      "path": "/home/nathan/CEC-Platform/.claude/memory/",
+      "role": "DURABLE source of truth for agent memory (half-1). Git-tracked, committed normally on main. Contains MEMORY.md (index) + current-work-handoff.md + topic .md files.",
+      "mechanism": "Mirror of ~/.claude/projects/-home-nathan-CEC-Platform/memory/. Stop hook copies live->mirror; start hook seeds mirror->live for files the live dir lacks. A plain git clone of main restores it."
+    },
+    {
+      "name": "ops/secrets/load-secrets.sh",
+      "path": "/home/nathan/CEC-Platform/ops/secrets/load-secrets.sh",
+      "role": "Sources the survives-WSL Windows secrets file and exports CEC_BOT_PAT. Fail-soft when absent.",
+      "mechanism": "CEC_SECRETS_FILE defaults to /mnt/e/secrets/cec-bot.env; if present, set -a; . file; set +a; then export CEC_BOT_PAT. STRUCTURE ONLY \u2014 env file holds CEC_BOT_PAT (and optionally CEC_BOT_USER). No secret values were printed."
+    },
+    {
+      "name": "ops/secrets/git-credential-cec.sh",
+      "path": "/home/nathan/CEC-Platform/ops/secrets/git-credential-cec.sh",
+      "role": "Git credential helper serving the bot PAT for github.com pushes so pushes never depend on the WSL-local gh login.",
+      "mechanism": "Only answers `get` for github.com when CEC_BOT_PAT present; prints username=nathanfraske-bot + password=<PAT> on git's stdin contract; otherwise silent so git falls through."
+    },
+    {
+      "name": "ops/secrets/gh-bot.sh",
+      "path": "/home/nathan/CEC-Platform/ops/secrets/gh-bot.sh",
+      "role": "Run the gh CLI as nathanfraske-bot (PR/api actions), refusing to fall back to the owner login.",
+      "mechanism": "Sources load-secrets.sh; exec env GH_TOKEN=$CEC_BOT_PAT GH_HOST=github.com gh \"$@\"; exits 1 if PAT absent."
+    },
+    {
+      "name": "ops/secrets/README.md",
+      "path": "/home/nathan/CEC-Platform/ops/secrets/README.md",
+      "role": "Documents the secrets-never-WSL-only rule and how the bot PAT is placed (E:\\secrets\\cec-bot.env) and consumed.",
+      "mechanism": "Prose policy; the rule and the git-config wiring snippet live here."
+    },
+    {
+      "name": "ops/hooks/pre-push",
+      "path": "/home/nathan/CEC-Platform/ops/hooks/pre-push",
+      "role": "Bot-push guard installed to .git/hooks/pre-push by provision.sh. Refuses any github.com push that would authenticate as the owner instead of nathanfraske-bot.",
+      "mechanism": "Allows x-access-token:...@github.com URLs (the handoff push); for other github.com URLs runs `git credential fill` with GIT_TERMINAL_PROMPT=0 and aborts unless username==nathanfraske-bot."
+    },
+    {
+      "name": "ops/provision.sh",
+      "path": "/home/nathan/CEC-Platform/ops/provision.sh",
+      "role": "One-shot idempotent disaster-recovery provisioner \u2014 the '(3) rebuildable from the repo' leg of the policy.",
+      "mechanism": "Six steps (apt repos, packages, docker+nvidia, .wslconfig surface, routing container, broker systemd unit from vendored ops/cec-llm-broker) + bot git-auth wiring from load-secrets.sh + unconditional pre-push guard install + four smoke tests. Most of its content (KiCad/CUDA/broker) is CEC-Platform-specific."
+    },
+    {
+      "name": "ops/README-claude-rc.md",
+      "path": "/home/nathan/CEC-Platform/ops/README-claude-rc.md",
+      "role": "Documents the session-survivability layer (tmux + systemd + recover) and its WSL-ephemeral durability rationale.",
+      "mechanism": "Prose; explains the pieces table and the mirrored-networking deferral."
+    },
+    {
+      "name": "ops/claude-rc@.service",
+      "path": "/home/nathan/CEC-Platform/ops/claude-rc@.service",
+      "role": "systemd --user template unit (instanced per project, %i) that supervises a headless `claude remote-control` bridge with Restart=always so it auto-reups across console drops / reboots.",
+      "mechanism": "WorkingDirectory=%h/%i; sets CLAUDE_REMOTE_CONTROL_SESSION_NAME_PREFIX=%i and a full PATH; ExecStart=ops/claude-rc-tmux.sh %i; ExecStop kills tmux session crc-%i; installed to ~/.config/systemd/user/. NOTE: ExecStart path is hardcoded to /home/nathan/CEC-Platform/ops/claude-rc-tmux.sh."
+    },
+    {
+      "name": "ops/claude-rc-tmux.sh",
+      "path": "/home/nathan/CEC-Platform/ops/claude-rc-tmux.sh",
+      "role": "systemd ExecStart wrapper \u2014 runs `claude remote-control` inside a dedicated tmux server (socket claude-rc, session crc-<instance>) and foreground-waits so systemd keeps supervising/reuping.",
+      "mechanism": "tmux -L claude-rc new-session -d -s crc-<inst> -c ~/<inst> -e env... 'exec claude remote-control'; loops `tmux has-session` sleeping 5s; TERM/INT trap tears the session down."
+    },
+    {
+      "name": "ops/claude-session.sh",
+      "path": "/home/nathan/CEC-Platform/ops/claude-session.sh",
+      "role": "Launches/re-attaches the INTERACTIVE claude inside tmux (session claude-<project>) so a dropped terminal doesn't kill the agent.",
+      "mechanism": "tmux has-session -> attach, else tmux new-session -s claude-<proj> -c ~/<proj> claude. proj defaults to CEC-Platform."
+    },
+    {
+      "name": "ops/rc-recover.sh",
+      "path": "/home/nathan/CEC-Platform/ops/rc-recover.sh",
+      "role": "Recovers hung/zombied RC bridges by restarting the systemd claude-rc@* user services.",
+      "mechanism": "Lists claude-rc@* units, self-guards if the shell descends from a live RC bridge, then systemctl --user restart each (optionally filtered by instance)."
+    },
+    {
+      "name": "docker/.wslconfig.example",
+      "path": "/home/nathan/CEC-Platform/docker/.wslconfig.example",
+      "role": "Canonical Windows-side .wslconfig template (the '(2) Windows filesystem' leg). Copy to %UserProfile%\\.wslconfig then wsl --shutdown.",
+      "mechanism": "[wsl2] memory=128GB processors=18 swap=0 localhostForwarding=true. Tuned for the RTX-5090 compute box / Freerouting JVM swarm \u2014 CEC-Platform-specific sizing."
+    }
+  ],
+  "parity_steps_for_target_repo": [
+    "1. Create the .claude hooks dir: /home/nathan/CEC_AutoDiagnoser/.claude/hooks/ (the target currently has only .claude/wf-recon.js and NO settings.json).",
+    "2. Create /home/nathan/CEC_AutoDiagnoser/.claude/settings.json registering SessionStart -> [session-start.sh, followups-context.sh, todo-context.sh] and Stop -> [session-end.sh]. OMIT v4-idle-queue.sh (CEC-Platform-specific DeepSeek seat). DROP the kicad-happy plugin block. Keep any existing target settings if present (there are none today).",
+    "3. Port .claude/hooks/session-start.sh VERBATIM except: (a) change the canonical-fallback memdir from -home-nathan-CEC-Platform to the ACTUAL live dir -home-nathan-CEC-AutoDiagnoser; (b) CRITICAL FIX: the `tr '/.' '--'` derivation maps /home/nathan/CEC_AutoDiagnoser to -home-nathan-CEC_AutoDiagnoser (underscore preserved) but Claude Code's real sanitized dir is -home-nathan-CEC-AutoDiagnoser (underscore->hyphen). The derived path will MISS. Either also translate '_' (use `tr '/._' '---'`) or rely on the corrected canonical fallback. Verify the resulting memdir actually exists. (c) Remove the remote-only setup-kicad-cli.sh block (no such script / not a KiCad repo).",
+    "4. Port .claude/hooks/session-end.sh VERBATIM except: (a) same memdir derivation fix (tr '/._' '---' and the -home-nathan-CEC-AutoDiagnoser canonical fallback); (b) BRANCH=ops/agent-handoff stays; (c) the broker /broker/stats curl block can stay (it is fail-soft and just prints '(broker not reachable...)') or be dropped since AutoDiagnoser has no fixed-port broker; (d) keep the ops/secrets/load-secrets.sh source guarded by its [ -f ] test (file won't exist yet -> harmless no-op, push falls back to gh).",
+    "5. Port .claude/hooks/followups-context.sh and .claude/hooks/todo-context.sh VERBATIM (fully generic, no CEC-Platform coupling).",
+    "6. Create the in-tree mirror dir /home/nathan/CEC_AutoDiagnoser/.claude/memory/ and seed it with at least MEMORY.md and current-work-handoff.md (can be stubs). Make sure .gitignore does NOT exclude .claude/memory (current target .gitignore does not). Commit it on main so a fresh clone restores it.",
+    "7. Create the off-tree side branch by letting the Stop hook push it (it auto-creates refs/heads/ops/agent-handoff on first run via commit-tree+push). The target remote currently has only main; no manual branch creation needed \u2014 the hook bootstraps from --empty when origin/ops/agent-handoff is absent.",
+    "8. Ensure docs/agent/ path is acceptable for the side-branch handoff (the hook writes docs/agent/handoff.md into the SIDE BRANCH tree only, never the working tree, so no working-tree dir is required).",
+    "9. (Secrets, optional but recommended for bot-push parity) Add ops/secrets/load-secrets.sh, git-credential-cec.sh, gh-bot.sh, README.md adapted to cec-support-agent: reuse the same /mnt/e/secrets/cec-bot.env file but a PAT scoped to contents:write on cec-support-agent (or a repo-list PAT). Until then the Stop-hook push falls back to gh creds (works, but pushes as owner).",
+    "10. (Session survivability, optional) Add ops/claude-rc@.service, claude-rc-tmux.sh, claude-session.sh, rc-recover.sh adapted: fix the hardcoded ExecStart path in claude-rc@.service from /home/nathan/CEC-Platform/ops/claude-rc-tmux.sh to the AutoDiagnoser ops path, and note WorkingDirectory=%h/%i expects the project dir name to equal the instance name (here CEC_AutoDiagnoser).",
+    "11. (Provisioner, optional) A cec-support-agent ops/provision.sh would be a Rust/cargo-shaped script (cargo build/test/clippy, githook install) \u2014 do NOT copy the KiCad/CUDA/broker provision.sh. Reuse only the bot git-auth wiring + pre-push install pattern if porting the secrets layer.",
+    "12. chmod +x all ported *.sh hooks. Verify with a dry session: start a claude session, confirm session-start injects the handoff, run a turn, confirm Stop pushes ops/agent-handoff (git ls-remote origin ops/agent-handoff)."
+  ],
+  "adaptations_needed": [
+    "PATH-SANITIZATION BUG (must fix): the hooks derive the live-memory dir with `echo $root | tr '/.' '--'`, which leaves underscores intact -> -home-nathan-CEC_AutoDiagnoser. Claude Code's ACTUAL project dir sanitizes underscore to hyphen -> -home-nathan-CEC-AutoDiagnoser. The derived path will not exist and the seed/refresh would silently target the wrong dir. Fix: translate underscores too (tr '/._' '---') AND set the canonical fallback to -home-nathan-CEC-AutoDiagnoser. CEC-Platform avoids this only because its name has a hyphen, not an underscore.",
+    "Canonical fallback memdir is hardcoded to -home-nathan-CEC-Platform in both session-start.sh and session-end.sh; must become -home-nathan-CEC-AutoDiagnoser.",
+    "No ops/ tree exists in cec-support-agent at all (no ops/secrets, no provision.sh, no claude-rc units). The secrets layer and survivability layer must be created from scratch if wanted; the Stop hook degrades gracefully (gh fallback) without them.",
+    "No bot PAT scoped to cec-support-agent yet. load-secrets.sh reuses /mnt/e/secrets/cec-bot.env, but the existing token is scoped to CEC-Platform (per ops/secrets/README.md it's a classic repo,workflow PAT so it would technically work, but a fine-grained PAT should be scoped to include cec-support-agent contents:write). Without a PAT the Stop push falls back to gh and authenticates as the owner.",
+    "No broker on a fixed port: the session-end.sh '## Broker' curl to http://localhost:${CEC_BROKER_PORT:-8080}/broker/stats has no service to hit in AutoDiagnoser. It is fail-soft (prints '(broker not reachable)') so it can stay, but is cleaner to drop. AutoDiagnoser routes all model access through crates/inference over HTTP (per AGENTS.md) with no fixed broker port.",
+    "v4-idle-queue.sh is CEC-Platform-only (DeepSeek-V4 seat, docs/v4-queue/, scripts/cec_v4_queue.py) \u2014 do NOT port it; drop it from the Stop array.",
+    "session-start.sh's remote kicad-cli provisioning (scripts/setup-kicad-cli.sh, CLAUDE_CODE_REMOTE) is CEC-Platform-only \u2014 remove it; cec-support-agent is a Rust workspace (Cargo.toml/crates/), not a KiCad project.",
+    "provision.sh, docker/.wslconfig.example, and ops/cec-llm-broker are entirely CEC-Platform compute-plane specific (KiCad 10, NVIDIA toolkit, 128GB/18-core sizing, Freerouting JVMs). None should be copied; if a provisioner is wanted it should be Rust/cargo-shaped.",
+    "claude-rc@.service hardcodes ExecStart=/home/nathan/CEC-Platform/ops/claude-rc-tmux.sh and a CEC-Platform-tuned PATH; both need repointing to the AutoDiagnoser ops path. claude-session.sh/claude-rc-tmux.sh default proj to CEC-Platform and use ~/<proj> as cdir \u2014 for AutoDiagnoser pass/instance CEC_AutoDiagnoser and ensure ~/CEC_AutoDiagnoser is the checkout (it is: /home/nathan/CEC_AutoDiagnoser).",
+    "cec-support-agent already has its own git hygiene (scripts/githooks/pre-commit doing cargo fmt + gitleaks + corpus/weight blocking, .gitleaks.toml, .gitignore excluding /target, *.gguf, *.safetensors). The .claude/memory mirror must NOT be caught by these \u2014 confirm .gitignore/pre-commit don't block .claude/memory/*.md (they currently don't). If porting the bot pre-push guard, keep it separate from the existing cargo-fmt pre-commit.",
+    "Target already has AGENTS.md (working rules) but NO CLAUDE.md and NO codified WSL-ephemeral policy text. To complete parity, add the policy statement (adapted, dropping broker/KiCad specifics) to a CLAUDE.md or AGENTS.md so the durability contract is documented, not just implemented."
+  ],
+  "secrets_handling": "Secrets are governed by the 'never WSL-only' rule (ops/secrets/README.md). The single load-bearing credential is the agent bot PAT (CEC_BOT_PAT), used by session-end.sh to push the ops/agent-handoff side branch and by git-credential-cec.sh / gh-bot.sh to author+push+API as nathanfraske-bot. STRUCTURE (no values read or printed): the PAT lives in a Windows-side file mounted read-only into WSL at /mnt/e/secrets/cec-bot.env (overridable via CEC_SECRETS_FILE), surviving any WSL wipe. load-secrets.sh is sourced (not executed): `CEC_SECRETS_FILE=${CEC_SECRETS_FILE:-/mnt/e/secrets/cec-bot.env}; [ -f ] && set -a; . file; set +a; export CEC_BOT_PAT`. The env file holds CEC_BOT_PAT (one line) and optionally CEC_BOT_USER (default nathanfraske-bot). Consumption is fail-soft: a missing file is NOT an error \u2014 git/gh fall back to the WSL-local gh login WITH A WARNING (that fallback is the exact disposable-state failure mode the policy exists to kill, and on push it would authenticate as the OWNER). The session-end push rewrites the origin URL to https://x-access-token:<PAT>@github.com/... so the token only ever appears on git's stdin contract, never in logs (the helper prints to git's stdin only; gh-bot passes it via GH_TOKEN env). A .git/hooks/pre-push guard (ops/hooks/pre-push) fail-closes any non-bot github.com push (allows the x-access-token URL, runs `git credential fill` with GIT_TERMINAL_PROMPT=0 and aborts unless username==nathanfraske-bot). For cec-support-agent parity: reuse the same E: file but ensure the PAT's scope covers cec-support-agent contents:write (the current token is a broad classic repo,workflow PAT, which would work but should be narrowed); do NOT print or commit the value; keep .env/*.key/*.pem gitignored (target .gitignore already excludes .env, .env.*, *.key, *.pem) and gitleaks-guarded (target has .gitleaks.toml + a gitleaks pre-commit)."
+}
