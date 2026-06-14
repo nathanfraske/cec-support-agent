@@ -128,6 +128,23 @@ fn parse_args() -> Result<Option<Args>, String> {
             }
             // The single verb; accepted for readability of the command line.
             "diagnose" => {}
+            // Generate a sign-off authority key pair. The PUBLIC key goes on the
+            // engine (CEC_SIGNOFF_PUBKEY) to ENFORCE attestation; the SECRET seed
+            // (CEC_SIGNOFF_SEED) is held only where sign-off is performed — never
+            // on the engine in a split deployment, or alongside it for a single
+            // operator who is themselves the authority.
+            "gen-signoff-key" => {
+                let authority = corpus_client::SignOffAuthority::generate();
+                println!("# cec-support-agent sign-off authority key — store the seed securely");
+                println!("# PUBLIC KEY (engine, enforces attestation):");
+                println!(
+                    "export CEC_SIGNOFF_PUBKEY={}",
+                    authority.public_key().to_hex()
+                );
+                println!("# SECRET SEED (sign-off side only; keep off the engine):");
+                println!("export CEC_SIGNOFF_SEED={}", authority.seed_hex());
+                return Ok(None);
+            }
             other => return Err(format!("unknown argument: {other}")),
         }
     }
@@ -275,17 +292,47 @@ async fn run(args: Args) -> anyhow::Result<()> {
         }
     }
 
+    // Sign-off attestation (MH-1): if CEC_SIGNOFF_PUBKEY is set, the corpus
+    // store ENFORCES that every confirmed row carries a valid ed25519
+    // attestation by that authority (a self-asserted HumanConfirmed is refused).
+    // If CEC_SIGNOFF_SEED is set, this run holds the authority and attests its
+    // own outcomes (single-operator mode). A set-but-invalid key is a hard error
+    // — never silently run unprotected. `signoff_authority` is threaded into
+    // record_outcome so each contribution is attested before submit.
+    let signoff_pubkey = parse_env_pubkey()?;
+    let signoff_authority = parse_env_authority()?;
+    if let Some(pubkey) = &signoff_pubkey {
+        println!(
+            "  sign-off: attestation ENFORCED (authority {}…){}",
+            &pubkey.id(),
+            if signoff_authority.is_some() {
+                "; this run holds the seed and self-attests (single-operator mode)"
+            } else {
+                "; this run must receive attestations (none produced here)"
+            }
+        );
+    }
+
     // 4. The corpus: file-backed when `--corpus` names a path — the
     //    self-hosted flywheel, where the next run facing a known signature
     //    starts from this run's outcome — and in-memory otherwise. Cold start
     //    either way: no CEC service is required.
     let corpus: Box<dyn CorpusStore> = match &args.corpus {
         Some(path) => {
-            let file = FileCorpus::open(path)?;
+            let mut file = FileCorpus::open(path)?;
+            if let Some(pubkey) = &signoff_pubkey {
+                file = file.with_authority(pubkey.clone());
+            }
             println!("  corpus: file-backed at {path} ({} row(s))", file.len());
             Box::new(file)
         }
-        None => Box::new(LocalCorpus::new()),
+        None => {
+            let mut local = LocalCorpus::new();
+            if let Some(pubkey) = &signoff_pubkey {
+                local = local.with_authority(pubkey.clone());
+            }
+            Box::new(local)
+        }
     };
     let known = corpus.query(&signature, &config_class).await?;
     println!(
@@ -496,6 +543,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
                     sign_off,
                     None,
                     Some(row_provenance.clone()),
+                    signoff_authority.as_ref(),
                 )
                 .await;
                 return Ok(());
@@ -544,6 +592,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
                             sign_off,
                             None,
                             Some(row_provenance.clone()),
+                            signoff_authority.as_ref(),
                         )
                         .await;
                         final_label = Some(label);
@@ -622,6 +671,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
                     sign_off,
                     Some(verdict.to_verification(class)),
                     Some(row_provenance.clone()),
+                    signoff_authority.as_ref(),
                 )
                 .await;
 
@@ -744,6 +794,7 @@ async fn record_outcome(
     sign_off: SignOff,
     verification: Option<common::Verification>,
     provenance: Option<RowProvenance>,
+    authority: Option<&corpus_client::SignOffAuthority>,
 ) {
     let mut contribution = Contribution::new(
         Outcome {
@@ -757,6 +808,11 @@ async fn record_outcome(
     );
     if let Some(provenance) = provenance {
         contribution = contribution.with_provenance(provenance);
+    }
+    // Attest AFTER provenance so the run-provenance pin is bound into the
+    // signature (a valid attestation cannot be replayed onto a fabricated run).
+    if let Some(authority) = authority {
+        contribution = contribution.attested_by(authority);
     }
     match corpus.submit(&contribution).await {
         Ok(()) => println!("  corpus: outcome recorded (label={label:?}, sign-off={sign_off:?})"),
@@ -831,6 +887,32 @@ fn host_inventory() -> Vec<String> {
         format!("arch:{}", std::env::consts::ARCH),
         format!("family:{}", std::env::consts::FAMILY),
     ]
+}
+
+/// Read the sign-off authority PUBLIC key from `CEC_SIGNOFF_PUBKEY` (hex). Absent
+/// → `None` (attestation not enforced — cold start). Present but invalid → a hard
+/// error: a typo must never silently drop the engine into an unprotected mode.
+fn parse_env_pubkey() -> anyhow::Result<Option<corpus_client::SignOffPublicKey>> {
+    match std::env::var("CEC_SIGNOFF_PUBKEY") {
+        Err(_) => Ok(None),
+        Ok(hex) => corpus_client::SignOffPublicKey::from_hex(hex.trim())
+            .map(Some)
+            .ok_or_else(|| {
+                anyhow::anyhow!("CEC_SIGNOFF_PUBKEY is not a valid ed25519 public key (hex)")
+            }),
+    }
+}
+
+/// Read the sign-off authority SECRET seed from `CEC_SIGNOFF_SEED` (hex), for a
+/// single operator who is themselves the authority. Absent → `None`. Present but
+/// invalid → a hard error.
+fn parse_env_authority() -> anyhow::Result<Option<corpus_client::SignOffAuthority>> {
+    match std::env::var("CEC_SIGNOFF_SEED") {
+        Err(_) => Ok(None),
+        Ok(hex) => corpus_client::SignOffAuthority::from_seed_hex(hex.trim())
+            .map(Some)
+            .ok_or_else(|| anyhow::anyhow!("CEC_SIGNOFF_SEED is not a valid 32-byte seed (hex)")),
+    }
 }
 
 /// A fresh, opaque id for this run, so the corpus can tell independent
@@ -1021,6 +1103,12 @@ fn print_help() {
 
 USAGE:
     cec-support-agent diagnose [OPTIONS]
+    cec-support-agent gen-signoff-key
+
+COMMANDS:
+    diagnose             Run the diagnostic pipeline (the default).
+    gen-signoff-key      Generate a sign-off authority ed25519 key pair and print
+                         the CEC_SIGNOFF_PUBKEY / CEC_SIGNOFF_SEED exports.
 
 OPTIONS:
     --describe <TEXT>    Describe the user's problem
@@ -1044,6 +1132,16 @@ OPTIONS:
                          before execution (the sign-off-gated default).
     -h, --help           Print help
     -V, --version        Print version
+
+ENVIRONMENT:
+    CEC_SIGNOFF_PUBKEY   Sign-off authority public key (hex). When set, the corpus
+                         ENFORCES that every confirmed row carries a valid ed25519
+                         attestation — a self-asserted sign-off is refused.
+    CEC_SIGNOFF_SEED     Sign-off authority secret seed (hex). When set, this run
+                         holds the authority and attests its own outcomes
+                         (single-operator mode). In a split deployment, set only
+                         the pubkey on the engine and produce attestations
+                         elsewhere. A set-but-invalid value is a hard error.
 
 Cold start: with no --endpoint (or with --offline), the agent runs the full
 diagnostic -> route -> candidate -> judge pipeline using the model-free
@@ -1150,6 +1248,7 @@ mod tests {
             &config_class,
             SignOff::HumanConfirmed,
             Some(common::Verification::pass()),
+            None,
             None,
         )
         .await;
