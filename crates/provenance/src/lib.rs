@@ -85,10 +85,32 @@ impl SigningKey {
     }
 }
 
-/// The canonical bytes a signature covers: the plan's JSON serialization
-/// (field order is fixed by the struct definitions in `common`).
+/// The canonical bytes a signature covers: a deterministic, serde-INDEPENDENT
+/// encoding of the plan's semantic content (id, title, and each step's action,
+/// description, and risk, in order). Naming every field explicitly means the
+/// signature does not depend on serde struct field order or on the JSON
+/// serializer, so it stays stable across crate versions and is reproducible by
+/// a verifier in another language — unlike `serde_json::to_vec`, whose bytes are
+/// coupled to the struct definitions. Any change to a bound field changes these
+/// bytes and breaks verification.
 fn canonical(plan: &Plan) -> Vec<u8> {
-    serde_json::to_vec(plan).expect("plans serialize")
+    use std::fmt::Write as _;
+    let mut s = String::from("cec-plan-canonical-v1\n");
+    let _ = writeln!(s, "id:{}", plan.id);
+    let _ = writeln!(s, "title:{}", plan.title);
+    for step in &plan.steps {
+        // Length-prefix the free-text fields so they cannot be confused with the
+        // field separators or with each other.
+        let _ = writeln!(
+            s,
+            "step:action={};desc[{}]={};risk={:?}",
+            step.action,
+            step.description.len(),
+            step.description,
+            step.risk
+        );
+    }
+    s.into_bytes()
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -249,6 +271,34 @@ mod tests {
         let mut signed = key.sign(&plan());
         signed.plan.steps[0].risk = Risk::Destructive;
         assert_eq!(key.verify(&signed), Err(ProvenanceError::BadSignature));
+
+        // The canonical encoding also binds the plan title and each step's
+        // rendered description (what the human consented to), not just actions.
+        let mut signed = key.sign(&plan());
+        signed.plan.title = "a different title".into();
+        assert_eq!(key.verify(&signed), Err(ProvenanceError::BadSignature));
+
+        let mut signed = key.sign(&plan());
+        signed.plan.steps[0].description = "look (but actually do something)".into();
+        assert_eq!(key.verify(&signed), Err(ProvenanceError::BadSignature));
+    }
+
+    #[test]
+    fn the_canonical_encoding_is_not_coupled_to_serde() {
+        // Two independently-built but semantically-identical plans sign the same.
+        let a = key_signed_title("p1", "fix");
+        let b = key_signed_title("p1", "fix");
+        assert_eq!(a, b);
+    }
+
+    fn key_signed_title(id: &str, title: &str) -> Vec<u8> {
+        let mut plan = Plan::new(id, title);
+        plan.steps.push(PlanStep {
+            description: "look".into(),
+            action: "cim_query".into(),
+            risk: Risk::ReadOnly,
+        });
+        super::canonical(&plan)
     }
 
     #[test]
