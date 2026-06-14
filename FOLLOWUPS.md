@@ -70,6 +70,36 @@ see `.claude/audit/confirmed-findings.txt` and HANDOFFS). These are the deeper r
   historical rows against the key that signed them) a prerequisite for rotation, not just a nicety. — where
   to resume: `crates/provenance/src/lib.rs` (SignOffPublicKey set) + `crates/corpus-client/src/store.rs`.
 
+### Private corpus: structure + format DONE; ingest pipeline deferred (2026-06-14 22:25 UTC)
+
+The off-tree private corpus repo (`/mnt/e/cec-corpus-private`), the YAML ground-truth fix-flow format,
+templates, and the no-leak rails (here + there) are built and verified. The full ordered wiring plan with
+acceptance checks is in **`/mnt/e/cec-corpus-private/WIRING.md` (W0–W9)** — these are the public-repo-visible
+pointers to it. Two independent adversarial audits confirmed: no corpus data/keys in either repo's tree or
+history, one-way coupling holds, and the format is complete/correct against the live gate.
+
+- [ ] [added 2026-06-14 23:35 UTC] **[Secrets exposure — owner action, HIGH]** `/mnt/e/secrets` is `0o777`
+  and holds **world-readable real credentials** (`cec-bot.env` = a GitHub PAT, `cec-sudo.env` = a sudo
+  password). `chmod` is a **no-op on the DrvFs `/mnt/e` mount** (verified), so the fix is Windows ACLs
+  (`icacls`), encryption-at-rest, or moving secrets to a Linux-native 0700 path. Pre-existing, independent of
+  the corpus, but the ed25519 seed (W5) must NOT land there unprotected. — where to resume: `/mnt/e/secrets`,
+  WIRING.md W0.
+- [ ] [added 2026-06-14 23:35 UTC] **[Activate the no-leak guard]** Install `gitleaks` on PATH (a hard dep of
+  both pre-commit hooks; make it a WSL-durability provisioning step), then `git config core.hooksPath` in BOTH
+  repos (`scripts/githooks` here, `.githooks` in the private repo). Today the hooks are DORMANT — only
+  `.gitignore` defends, and it cannot stop `git add -f`. — WIRING.md W1. (Supersedes the older `[Custody
+  activation]` item above for the corpus-boundary half.)
+- [ ] [added 2026-06-14 23:35 UTC] **[Private remote]** Create a PRIVATE GitHub repo for `cec-corpus-private`
+  (or reuse `nathanfraske/cec-runs`), add it as `origin`, push. Never mirror to the public org. — WIRING.md W2.
+- [ ] [added 2026-06-14 23:35 UTC] **[corpus-ingest pipeline]** Build the deferred Rust compiler/tooling in
+  the PRIVATE repo (git-deps the public engine at `schema/PIN`; the public workspace gains nothing): scaffold
+  + keygen + the compile pipeline (YAML→de-id→attest→gate→JSONL) + verify/query + the corpus service + key
+  rotation. Full steps + acceptance checks: WIRING.md W4–W9.
+- [ ] [added 2026-06-14 23:35 UTC] **[Ignore residual — low]** Path-only ignores can't catch a corpus dump
+  renamed to an arbitrary extension (`.txt`/`.csv`) or UPPERCASE `.FLOW.YAML`. The real defense is the hook
+  grepping staged *content* for a JSONL-row / `attestation`/`fingerprint` shape — add when the hook is
+  activated (W1). Caught today: `*.flow.y{a,}ml`, `*.jsonl`, `*.ndjson`, `*.seed`, `*.env`, `cec-corpus*`.
+
 ### WSL-ephemeral / agent-ops optional hardening (from `docs/wsl-ephemeral-state-policy.md`)
 
 The durability contract is complete as-is; these are optional tightenings.

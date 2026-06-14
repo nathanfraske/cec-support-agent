@@ -15,12 +15,20 @@ Below "Pick up here", keep a reverse-chronological **handoff log** of dated entr
 
 ## Current state
 
-**As of 2026-06-14 ~23:25 UTC.** The adversarial audit of the engine diff is DONE, its 14 findings are FIXED
-and verified, and the branch is **presented for review as PR #2**
-(https://github.com/nathanfraske/cec-support-agent/pull/2 — owner approved push+PR). Branch
-`feat/agent-ops-evidence-integrity` pushed at `11f0609`; 159 tests green, clippy/fmt clean. The feature work
-is complete; remaining items are all deferred in `FOLLOWUPS.md`. See the latest handoff-log entry for the fix
-set.
+**As of 2026-06-14 ~23:40 UTC.** Two things are done this session: (1) the engine audit-fix (PR #2), and
+(2) the **private corpus** structure + ground-truth YAML format.
+
+- **(1) Engine audit-fix:** 14 findings FIXED + verified; **PR #2**
+  (https://github.com/nathanfraske/cec-support-agent/pull/2), branch `feat/agent-ops-evidence-integrity` at
+  `11f0609`; 159 tests green.
+- **(2) Private corpus:** a SEPARATE off-tree private git repo at **`/mnt/e/cec-corpus-private`** (HEAD
+  `c636168`) holds the YAML ground-truth fix-flow format (`cec-fix-flow/v1`), 4 templates + a worked example,
+  the machine lint, the vocabulary snapshot, the no-leak rails, and the W0–W9 wiring plan (`WIRING.md`). The
+  ingest compiler/tooling is DEFERRED (W4–W9). The PUBLIC repo got the matching rails (`BOUNDARY.md`, hardened
+  `.gitignore` + pre-commit) — those are **committed-pending** in the working tree (push pending owner OK).
+  Two adversarial audits confirmed no corpus data/keys in either tree or history and a complete/correct format.
+  **Open HIGH item (owner):** `/mnt/e/secrets` is world-readable with a real PAT + sudo password and `chmod`
+  is a no-op on DrvFs — see FOLLOWUPS / WIRING W0.
 
 - **Audit:** re-ran the `autodiagnoser-engine-audit` workflow (`wf_5c1c16b9-613`) — the previous agent's run
   had not persisted results and no live task survived. 23 agents, ~1M tokens: 18 findings verified →
@@ -162,8 +170,31 @@ See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementati
   turning on enforcement requires a corpus built under that authority, and key ROTATION now needs a key-id →
   key registry (filed in FOLLOWUPS) before a rotated key can open old rows.
 
+- [2026-06-14 23:40 UTC] **`chmod` is a no-op on the `/mnt/e` DrvFs mount (verified).** `chmod 700/600`
+  silently "succeeds" but perms stay `0o777` — so a secret on `/mnt/e` is world-readable and POSIX perms
+  cannot fix it. `/mnt/e/secrets` already holds a real GitHub PAT + sudo password world-readable. For a secret
+  that must be BOTH durable (survive a WSL wipe → off-tree on `/mnt/e`) AND protected, use encryption-at-rest
+  (`age`/`gpg`) or Windows ACLs (`icacls`), not `chmod`. This is why the corpus ed25519 seed custody (WIRING
+  W5) is encrypt-at-rest, not a `chmod 600`.
+- [2026-06-14 23:40 UTC] **The private corpus is `/mnt/e/cec-corpus-private` — a SEPARATE git repo, never
+  touched by public-repo git.** The boundary is mechanical: the public `.gitignore` + pre-commit refuse
+  `*.flow.y{a,}ml`/`*.jsonl`/`*.ndjson`/`*.seed`/`*.env`/`cec-corpus*`; the dependency arrow is private→public
+  only (the deferred `corpus-ingest` crate git-deps the engine at `schema/PIN`, the public workspace gains
+  nothing). The YAML→row mapping is in `/mnt/e/cec-corpus-private/spec/fix-flow.schema.md`: every DERIVED field
+  (fingerprint, plan.title/description, attestation, integrity) is compiler-only and FORBIDDEN in YAML, and the
+  gate's coupling rules are encoded in the JSON Schema so an inadmissible flow fails the lint, not the gate.
+
 ## Handoff log (reverse-chronological)
 
+- **2026-06-14 23:40 UTC** — **Private corpus structure + ground-truth format.** Built the off-tree private
+  repo `/mnt/e/cec-corpus-private` (HEAD `c636168`): the `cec-fix-flow/v1` YAML format (`spec/`), 4 templates +
+  a worked example, the JSON-Schema lint (validated to accept all templates and reject every inadmissible
+  flow), the `vocabulary.yaml` snapshot (faithful to the real `extract.rs`), the no-leak rails on both repos,
+  and the W0–W9 deferred-wiring plan. Ran a design panel (5 agents) then 2 adversarial auditors (no-leak +
+  format↔gate); fixed all actionable findings. Public-side rails (`BOUNDARY.md`, `.gitignore`, pre-commit) are
+  in the working tree, **push pending owner OK**. Next: present; decide whether the public rails ride PR #2 or
+  a separate branch; then the deferred ingest pipeline (WIRING W4–W9). **HIGH owner item:** `/mnt/e/secrets`
+  world-readable (FOLLOWUPS).
 - **2026-06-14 23:15 UTC** — **Audit + fix pass.** Re-ran the adversarial audit workflow (the prior run's
   results were lost): 14 confirmed findings → 7 distinct fixes, all in `crates/corpus-client` + `support-agent`:
   **(A, CRITICAL)** open-time attestation re-admission (`FileCorpus::with_authority` → `Result`, re-runs the

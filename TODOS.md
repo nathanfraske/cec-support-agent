@@ -73,13 +73,14 @@ to de-identified + ed25519-attested + gate-validated JSONL; BUILD NOW = structur
 no-leak rails on both repos; DEFER (as precise wiring TODOs) = the Rust ingest compiler, query/verify tools,
 the corpus service.
 
-- [ ] [added 2026-06-14 22:30 UTC] Design panel (workflow `private-corpus-design` `wf_b61fe974-59a`): 4 lenses (structure/isolation, yaml-format, interaction/wiring, red-team) → synthesized canonical design
-- [ ] [added 2026-06-14 22:30 UTC] Create the off-tree private repo `/mnt/e/cec-corpus-private` (git init) with README + .gitignore + pre-commit + directory tree
-- [ ] [added 2026-06-14 22:30 UTC] Write the YAML fix-flow format SPEC (field-by-field; authored/derived/forbidden table; gate-coupling rules; validation) into the private repo
-- [ ] [added 2026-06-14 22:30 UTC] Write ready-to-fill YAML templates (resolved-confirmed, resolved-provisional, destructive-needs-human, hard-negative) — de-identified vocabulary only
-- [ ] [added 2026-06-14 22:30 UTC] Harden the PUBLIC repo no-leak rails (.gitignore + scripts/githooks/pre-commit) + a boundary doc; fold in red-team defenses
-- [ ] [added 2026-06-14 22:30 UTC] Adversarial verification pass (no-leak auditor + format↔gate completeness + wiring completeness)
-- [ ] [added 2026-06-14 22:30 UTC] Record the full deferred ingest-pipeline wiring plan (compiler crate, query/verify, service) as ordered FOLLOWUPS/TODOs with exact files + acceptance checks
+- [x] [added 2026-06-14 22:30 UTC · done 2026-06-14 22:50 UTC] Design panel (workflow `private-corpus-design` `wf_b61fe974-59a`): 4 lenses + synthesis → canonical design (structure, YAML spec, rails, W0–W9 wiring). Provenance in the private repo `.design/`.
+- [x] [added 2026-06-14 22:30 UTC · done 2026-06-14 23:00 UTC] Create the off-tree private repo `/mnt/e/cec-corpus-private` (git init, repo-local identity) with README + BOUNDARY + .gitignore + .githooks/pre-commit + the full directory tree; committed (`4520667`)
+- [x] [added 2026-06-14 22:30 UTC · done 2026-06-14 23:10 UTC] Write the YAML fix-flow format SPEC `spec/fix-flow.schema.md` (field-by-field; authored/derived/forbidden table; gate-coupling rules; 12 validation rules) + the machine lint `spec/fix-flow.schema.json` + `spec/vocabulary.yaml` (faithful to the real extract.rs)
+- [x] [added 2026-06-14 22:30 UTC · done 2026-06-14 23:10 UTC] Write 4 ready-to-fill YAML templates + a worked example — de-identified vocabulary only; all PASS the JSON-Schema lint, which REJECTS every inadmissible flow (unconfirmed, label/verdict mismatch, destructive-without-human, verdict-on-hard-negative, forbidden derived keys, IPv4 bom)
+- [x] [added 2026-06-14 22:30 UTC · done 2026-06-14 23:20 UTC] Harden the PUBLIC repo no-leak rails (.gitignore + scripts/githooks/pre-commit broadened) + create `BOUNDARY.md`; rails verified to bite (ignore + hook grep) and to allow source
+- [x] [added 2026-06-14 22:30 UTC · done 2026-06-14 23:35 UTC] Adversarial verification pass (2 parallel auditors): no-leak — no corpus data/keys in either tree or history, one-way coupling holds; format↔gate — COMPLETE/CORRECT (all enums match, worked example admittable). Fixed all actionable findings (reopened⇒provenance, *.env/*.ndjson/.yml ignores, IPv4 bom, spec honesty on the bom residual, W0 chmod-no-op)
+- [x] [added 2026-06-14 22:30 UTC · done 2026-06-14 23:35 UTC] Record the deferred ingest-pipeline wiring plan (W0–W9, ordered, with acceptance checks) in `/mnt/e/cec-corpus-private/WIRING.md` + public FOLLOWUPS pointers (secrets exposure, guard activation, private remote, corpus-ingest, ignore residual)
+- [x] [added 2026-06-14 23:35 UTC · done 2026-06-14 23:45 UTC] Present: public no-leak rails (`.gitignore`/pre-commit/`BOUNDARY.md`) + tracking committed `920e22a` and PUSHED onto **PR #2** (owner chose to extend PR #2). Private repo committed locally at `c636168`; its remote is deferred (WIRING W2).
 
 ## Done / obsolete (history)
 
