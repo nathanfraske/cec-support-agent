@@ -1,10 +1,12 @@
+use std::collections::HashSet;
+
 use async_trait::async_trait;
 use common::{ConfigClass, FaultSignature};
 use provenance::SignOffPublicKey;
 use thiserror::Error;
 
 use crate::gate::{ensure_attested, ensure_evidence_integrity, GateError};
-use crate::schema::{Contribution, FixMapping};
+use crate::schema::{chain_hash, Contribution, FixMapping, OutcomeLabel, RowIntegrity};
 
 /// Run the full admission gate for a store: the evidence-integrity checks
 /// always, plus the sign-off **attestation** check when an authority is
@@ -52,33 +54,41 @@ fn confirmation_key(row: &Contribution, plan_id: &str, index: usize) -> Option<S
 }
 
 /// Derive the fix mappings for a signature at a config class from a set of
-/// corpus rows. Only resolved rows back a mapping (failures stay in the rows as
-/// hard negatives); rows confirming the same plan aggregate into one mapping
-/// whose confirmation count is the number of INDEPENDENT confirmations
-/// ([`confirmation_key`]). A plan with no independent confirmation is not
-/// offered.
+/// corpus rows. Only resolved rows back a mapping (other hard negatives stay in
+/// the rows but never offer a fix); rows confirming the same plan aggregate into
+/// one mapping whose confirmation count is the number of INDEPENDENT
+/// confirmations ([`confirmation_key`]), **net of `Reopened` events** — a fix
+/// that recurred inside its monitoring horizon is demoted (EI-06 / T-104). A
+/// plan whose id is in `revoked` (an owner-only retraction list) is never
+/// offered, and a plan with no net independent confirmation is not offered.
 fn fix_mappings(
     rows: &[Contribution],
     signature: &FaultSignature,
     config_class: &ConfigClass,
+    revoked: &HashSet<String>,
 ) -> Vec<FixMapping> {
-    use std::collections::HashSet;
+    use std::collections::HashMap;
 
     struct Acc {
         signature: FaultSignature,
         plan: common::Plan,
         contributors: HashSet<String>,
+        reopened: u32,
     }
 
     let mut order: Vec<String> = Vec::new();
-    let mut accs: std::collections::HashMap<String, Acc> = std::collections::HashMap::new();
+    let mut accs: HashMap<String, Acc> = HashMap::new();
 
     for (index, row) in rows.iter().enumerate() {
         if row.outcome.signature.fingerprint != signature.fingerprint
             || row.config_class != *config_class
-            || !row.outcome.label.is_resolved()
         {
             continue;
+        }
+        let resolved = row.outcome.label.is_resolved();
+        let reopened = matches!(row.outcome.label, OutcomeLabel::Reopened);
+        if !resolved && !reopened {
+            continue; // a plain hard negative affects no mapping
         }
         let plan_id = row.outcome.plan.id.clone();
         let acc = accs.entry(plan_id.clone()).or_insert_with(|| {
@@ -87,19 +97,28 @@ fn fix_mappings(
                 signature: row.outcome.signature.clone(),
                 plan: row.outcome.plan.clone(),
                 contributors: HashSet::new(),
+                reopened: 0,
             }
         });
-        if let Some(key) = confirmation_key(row, &plan_id, index) {
-            acc.contributors.insert(key);
+        if resolved {
+            if let Some(key) = confirmation_key(row, &plan_id, index) {
+                acc.contributors.insert(key);
+            }
+        } else {
+            acc.reopened += 1;
         }
     }
 
     order
         .iter()
         .filter_map(|plan_id| {
+            if revoked.contains(plan_id) {
+                return None; // owner-revoked: never offered as a fix
+            }
             let acc = &accs[plan_id];
-            let confirmations = acc.contributors.len() as u32;
-            // A plan with only circular (self-primed) support is not offered.
+            // Each reopen cancels one independent confirmation; circular
+            // (self-primed) confirmations never counted in the first place.
+            let confirmations = (acc.contributors.len() as u32).saturating_sub(acc.reopened);
             (confirmations > 0).then(|| FixMapping {
                 signature: acc.signature.clone(),
                 plan: acc.plan.clone(),
@@ -107,6 +126,35 @@ fn fix_mappings(
             })
         })
         .collect()
+}
+
+/// Verify a loaded file's tamper-evidence hash chain and return the chain head
+/// (the last row's hash). A file is either fully chained (every row carries
+/// [`RowIntegrity`] and the chain verifies in order) or fully unchained (a
+/// legacy/empty file, no integrity anywhere). A mix — or any edited, reordered,
+/// or mid-stream-removed row — is a tamper and an error, not silent acceptance.
+fn verify_chain(rows: &[Contribution]) -> Result<String, CorpusError> {
+    let with = rows.iter().filter(|r| r.integrity.is_some()).count();
+    if with == 0 {
+        return Ok(String::new()); // unchained legacy/empty file
+    }
+    if with != rows.len() {
+        return Err(CorpusError::Storage(
+            "corpus integrity: some rows have no chain link (tampered)".into(),
+        ));
+    }
+    let mut prev = String::new();
+    for (i, row) in rows.iter().enumerate() {
+        let integ = row.integrity.as_ref().expect("checked all present");
+        let expected = chain_hash(&prev, row);
+        if integ.prev != prev || integ.hash != expected {
+            return Err(CorpusError::Storage(format!(
+                "corpus integrity: row {i} fails the tamper-evidence chain"
+            )));
+        }
+        prev = integ.hash.clone();
+    }
+    Ok(prev)
 }
 
 /// A corpus backend: look up fix mappings and submit confirmed outcomes.
@@ -138,6 +186,7 @@ pub trait CorpusStore: Send + Sync {
 pub struct LocalCorpus {
     rows: std::sync::Mutex<Vec<Contribution>>,
     authority: Option<SignOffPublicKey>,
+    revoked: HashSet<String>,
 }
 
 impl LocalCorpus {
@@ -151,6 +200,14 @@ impl LocalCorpus {
     /// not forge an attestation.
     pub fn with_authority(mut self, authority: SignOffPublicKey) -> Self {
         self.authority = Some(authority);
+        self
+    }
+
+    /// Owner-only retraction: plan ids in `revoked` are never offered as a fix
+    /// (a proven-wrong precedent withdrawn by the owner). Hard negatives and the
+    /// rows themselves are untouched; only retrieval is suppressed.
+    pub fn with_revoked(mut self, revoked: impl IntoIterator<Item = String>) -> Self {
+        self.revoked = revoked.into_iter().collect();
         self
     }
 
@@ -174,7 +231,7 @@ impl CorpusStore for LocalCorpus {
         config_class: &ConfigClass,
     ) -> Result<Vec<FixMapping>, CorpusError> {
         let guard = self.rows.lock().expect("corpus mutex poisoned");
-        Ok(fix_mappings(&guard, signature, config_class))
+        Ok(fix_mappings(&guard, signature, config_class, &self.revoked))
     }
 
     async fn submit(&self, contribution: &Contribution) -> Result<(), CorpusError> {
@@ -195,11 +252,16 @@ pub struct FileCorpus {
     path: std::path::PathBuf,
     rows: std::sync::Mutex<Vec<Contribution>>,
     authority: Option<SignOffPublicKey>,
+    revoked: HashSet<String>,
+    /// The tamper-evidence chain head (the last row's hash).
+    chain_head: std::sync::Mutex<String>,
 }
 
 impl FileCorpus {
     /// Open (or start) a corpus file. A missing file is an empty corpus; an
-    /// unparseable one is an error rather than silent data loss.
+    /// unparseable one is an error rather than silent data loss; a file whose
+    /// tamper-evidence chain does not verify (an edited/reordered/removed row)
+    /// is an error, so a hand-edited precedent is never served.
     pub fn open(path: impl Into<std::path::PathBuf>) -> Result<Self, CorpusError> {
         let path = path.into();
         let rows = match std::fs::read_to_string(&path) {
@@ -217,10 +279,13 @@ impl FileCorpus {
                 )))
             }
         };
+        let head = verify_chain(&rows)?;
         Ok(Self {
             path,
             rows: std::sync::Mutex::new(rows),
             authority: None,
+            revoked: HashSet::new(),
+            chain_head: std::sync::Mutex::new(head),
         })
     }
 
@@ -228,6 +293,12 @@ impl FileCorpus {
     /// `authority`. The store holds only the public key.
     pub fn with_authority(mut self, authority: SignOffPublicKey) -> Self {
         self.authority = Some(authority);
+        self
+    }
+
+    /// Owner-only retraction: plan ids in `revoked` are never offered as a fix.
+    pub fn with_revoked(mut self, revoked: impl IntoIterator<Item = String>) -> Self {
+        self.revoked = revoked.into_iter().collect();
         self
     }
 
@@ -250,15 +321,25 @@ impl CorpusStore for FileCorpus {
         config_class: &ConfigClass,
     ) -> Result<Vec<FixMapping>, CorpusError> {
         let guard = self.rows.lock().expect("corpus mutex poisoned");
-        Ok(fix_mappings(&guard, signature, config_class))
+        Ok(fix_mappings(&guard, signature, config_class, &self.revoked))
     }
 
     async fn submit(&self, contribution: &Contribution) -> Result<(), CorpusError> {
         // Gate enforced before any state change — nothing that fails the
         // evidence-integrity gate is written to disk or held in memory.
         admit(contribution, &self.authority)?;
+        // Attach the tamper-evidence chain link, computed from the current head
+        // over everything else in the row, then append the linked row.
+        let mut head = self.chain_head.lock().expect("chain mutex poisoned");
+        let mut linked = contribution.clone();
+        linked.integrity = None;
+        let hash = chain_hash(&head, &linked);
+        linked.integrity = Some(RowIntegrity {
+            prev: head.clone(),
+            hash: hash.clone(),
+        });
         let line =
-            serde_json::to_string(contribution).map_err(|e| CorpusError::Storage(e.to_string()))?;
+            serde_json::to_string(&linked).map_err(|e| CorpusError::Storage(e.to_string()))?;
         use std::io::Write as _;
         let mut file = std::fs::OpenOptions::new()
             .create(true)
@@ -267,7 +348,8 @@ impl CorpusStore for FileCorpus {
             .map_err(|e| CorpusError::Storage(format!("open {}: {e}", self.path.display())))?;
         writeln!(file, "{line}").map_err(|e| CorpusError::Storage(e.to_string()))?;
         let mut guard = self.rows.lock().expect("corpus mutex poisoned");
-        guard.push(contribution.clone());
+        guard.push(linked);
+        *head = hash;
         Ok(())
     }
 }
@@ -697,6 +779,110 @@ mod tests {
         let row = contribution(OutcomeLabel::ResolvedConfirmed, SignOff::HumanConfirmed);
         corpus.submit(&row).await.expect("accepted at cold start");
         assert_eq!(corpus.len(), 1);
+    }
+
+    // --- MH-4 tamper-evidence, EI-06 revocation, MH-8 reopened-demotion -------
+
+    #[tokio::test]
+    async fn file_corpus_refuses_a_hand_edited_row() {
+        let path = TempPath::new("tamper");
+        {
+            let corpus = FileCorpus::open(&path.0).expect("open");
+            corpus
+                .submit(&contribution(
+                    OutcomeLabel::ResolvedConfirmed,
+                    SignOff::HumanConfirmed,
+                ))
+                .await
+                .expect("write a chained row");
+        }
+        // Hand-edit the persisted row's evidence; the chain no longer verifies.
+        let text = std::fs::read_to_string(&path.0).expect("read");
+        let tampered = text.replace("boot_loop", "tampered_symptom");
+        assert_ne!(text, tampered, "the edit must actually change the file");
+        std::fs::write(&path.0, tampered).expect("write");
+        assert!(
+            matches!(FileCorpus::open(&path.0), Err(CorpusError::Storage(_))),
+            "a hand-edited row must be caught as a storage (integrity) error"
+        );
+    }
+
+    #[tokio::test]
+    async fn file_corpus_chain_survives_a_clean_reopen() {
+        let path = TempPath::new("chain-ok");
+        {
+            let corpus = FileCorpus::open(&path.0).expect("open");
+            for _ in 0..3 {
+                corpus
+                    .submit(&contribution(
+                        OutcomeLabel::ResolvedProvisional,
+                        SignOff::VerifierConfirmed,
+                    ))
+                    .await
+                    .expect("write");
+            }
+        }
+        // An untouched file reopens cleanly (the chain verifies).
+        let reopened = FileCorpus::open(&path.0).expect("clean reopen");
+        assert_eq!(reopened.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn a_revoked_plan_is_never_offered() {
+        let corpus = LocalCorpus::new().with_revoked(["p1".to_string()]);
+        corpus
+            .submit(&contribution(
+                OutcomeLabel::ResolvedConfirmed,
+                SignOff::HumanConfirmed,
+            ))
+            .await
+            .expect("row admitted");
+        let hits = corpus
+            .query(
+                &FaultSignature::from_symptoms(vec![Symptom("boot_loop".into())]),
+                &config_class(),
+            )
+            .await
+            .expect("query");
+        assert!(hits.is_empty(), "an owner-revoked plan is not retrievable");
+    }
+
+    #[tokio::test]
+    async fn a_reopened_outcome_demotes_the_fix() {
+        let corpus = LocalCorpus::new();
+        let sig = FaultSignature::from_symptoms(vec![Symptom("boot_loop".into())]);
+        // One confirmation, then a reopen for the same plan: net zero → not offered.
+        corpus
+            .submit(
+                &contribution(OutcomeLabel::ResolvedConfirmed, SignOff::HumanConfirmed)
+                    .with_provenance(provenance("run-A", false, &[])),
+            )
+            .await
+            .expect("confirm");
+        corpus
+            .submit(
+                &contribution(OutcomeLabel::Reopened, SignOff::HumanConfirmed)
+                    .with_provenance(provenance("run-B", false, &[])),
+            )
+            .await
+            .expect("reopen");
+        let demoted = corpus.query(&sig, &config_class()).await.expect("query");
+        assert!(
+            demoted.is_empty(),
+            "a reopened fix is demoted out of retrieval"
+        );
+
+        // A second independent confirmation outweighs the one reopen → offered (1).
+        corpus
+            .submit(
+                &contribution(OutcomeLabel::ResolvedConfirmed, SignOff::HumanConfirmed)
+                    .with_provenance(provenance("run-C", false, &[])),
+            )
+            .await
+            .expect("reconfirm");
+        let hits = corpus.query(&sig, &config_class()).await.expect("query");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].confirmations, 1, "2 confirmations net 1 reopen");
     }
 
     #[tokio::test]

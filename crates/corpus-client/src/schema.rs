@@ -95,6 +95,21 @@ pub struct Outcome {
     pub verification: Option<Verification>,
 }
 
+/// Per-row tamper-evidence: a hash chain linking this row to the previous one
+/// in a [`crate::FileCorpus`]. `hash = sha256(prev || canonical-row-without-
+/// integrity)`. The store fills this in on write; on open it recomputes the
+/// chain and refuses a file where any row has been edited, reordered, or removed
+/// mid-stream — so a hand-edited "confirmed" precedent is never served. (The
+/// known residual is truncation of the tail, which a hash chain cannot detect
+/// without an external anchor; see FOLLOWUPS.)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RowIntegrity {
+    /// The previous row's `hash` ("" for the first row).
+    pub prev: String,
+    /// `sha256(prev || canonical(row-without-integrity))`, hex.
+    pub hash: String,
+}
+
 /// An attestation that a recognized sign-off authority — NOT the submitting
 /// process — performed this sign-off. It is an ed25519 signature over the
 /// contribution's canonical tuple ([`attestation_message`]), by a key the
@@ -158,6 +173,10 @@ pub struct Contribution {
     /// uses it to admit only independent confirmations.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance: Option<RowProvenance>,
+    /// Tamper-evidence chain link, filled in by a [`crate::FileCorpus`] on write.
+    /// Not part of the signed/attested tuple (the store adds it after admission).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub integrity: Option<RowIntegrity>,
 }
 
 impl Contribution {
@@ -173,6 +192,7 @@ impl Contribution {
             sign_off,
             attestation: None,
             provenance: None,
+            integrity: None,
         }
     }
 
@@ -239,6 +259,27 @@ pub(crate) fn attestation_message(c: &Contribution) -> Vec<u8> {
         }
     }
     s.into_bytes()
+}
+
+/// The chain hash for a row given the previous row's hash: `sha256(prev ||
+/// canonical(row-without-integrity))`, hex. The row is canonicalized with its
+/// `integrity` field cleared so the hash never depends on itself; every other
+/// field (including the attestation and provenance) is covered, so any edit
+/// breaks the chain.
+pub(crate) fn chain_hash(prev: &str, row: &Contribution) -> String {
+    use sha2::{Digest, Sha256};
+    let mut bare = row.clone();
+    bare.integrity = None;
+    let payload = serde_json::to_vec(&bare).expect("contribution serializes");
+    let mut hasher = Sha256::new();
+    hasher.update(prev.as_bytes());
+    hasher.update(b"\n");
+    hasher.update(&payload);
+    hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 /// A stable tag for an outcome label (its data, not its `Debug` formatting).
