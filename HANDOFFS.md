@@ -42,24 +42,24 @@ commit on branch `feat/agent-ops-evidence-integrity`.
 
 ## Pick up here
 
-Branch `feat/agent-ops-evidence-integrity`, pushed to origin (durable). **Increment 1 of the engine work is
-DONE** (committed): the evidence-integrity gate `ensure_evidence_integrity` is now structured + binds the
-verification verdict into the row + enforces destructive-resolved-fix⇒human IN corpus-client. Build/test loop
-works locally (the WSL Rust toolchain had to be installed — `. "$HOME/.cargo/env"` then
-`cargo build/test/clippy/fmt --workspace`; 125 tests green).
+Branch `feat/agent-ops-evidence-integrity`, pushed to origin (durable). **Increments 1 & 2 of the engine work
+are DONE** (committed + pushed): (1) structured `ensure_evidence_integrity` gate + the verification verdict
+bound into the row + destructive-resolved-fix⇒human enforced in corpus-client; (2) **MH-1 keystone** — ed25519
+sign-off attestation (`provenance::SignOffAuthority`/`SignOffPublicKey`; engine holds only the public key;
+stores `.with_authority(pubkey)`; a self-asserted `HumanConfirmed` is refused). 136 tests green; fmt/clippy/
+license-checks clean. Build loop: `. "$HOME/.cargo/env"` then `cargo build/test/clippy/fmt --workspace`
+(run cargo with `dangerouslyDisableSandbox` — it needs the registry network).
 
-**Next (Increment 2): MH-1, the keystone.** The gate still trusts a caller-set `SignOff` enum — an embedder
-can construct `Contribution{ sign_off: HumanConfirmed }` and pass. Implement owner-key **attestation** over
-`(signature, plan, label, sign_off, config_class)` (extend `provenance::SignedPlan` → `SignedContribution`),
-verified in the gate for `HumanConfirmed`. **This needs an owner decision first** (in `FOLLOWUPS.md`
-"[Custody]"): the key-custody / trust model — asymmetric (ed25519, engine holds only the public key) vs HMAC,
-and where the human-authority key lives. Surface that decision before coding MH-1.
-Other queued engine work is in `FOLLOWUPS.md`. The original full design: build **MH-1 (EI-08
-owner-key attestation over the contribution tuple)** FIRST — every other integrity gap degrades to a
-forgeable annotation without it (`crates/corpus-client/src/gate.rs:15` + `crates/provenance/src/lib.rs:63-80`).
-Then verdict-binding (MH-2), real post-fix re-collection (MH-3/NR-1), tamper-evidence + revocation (MH-4/8),
-honest `config_class` (MH-6). To start the research track, fill `docs/research/` following the commit-ordering
-discipline (negative-results before claims; prereg before any lane field). See `docs/evidence-integrity-and-research-checklist.md` §6–§8.
+**Next options (all in `FOLLOWUPS.md`, none blocked):**
+- **MH-1 operator/CLI wiring** — generate+persist the authority keypair, configure the store from
+  `CEC_SIGNOFF_PUBKEY`, and produce attestations at human sign-off time (NOT both keys in the engine process).
+  Until then MH-1 is library-only (embedders/tests use it).
+- **MH-2 remainder** — carry `VerificationClass` + a provenance/lane pin onto the row (dep-free; unblocks
+  EI-03/A5 independent-confirmation guard).
+- **MH-3 / NR-1** — real post-fix re-collection (replaces the bootstrap echo at `main.rs:558-559`).
+- **MH-4/8/EI-06** — hash-chained tamper-evidence + owner-only revocation for `FileCorpus` (sha2 only).
+- Canonical-JSON plan encoding; MH-6 honest config_class (Windows); fill `docs/research/` (ordering discipline).
+See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementation status.
 
 ## Lessons learned (append-only)
 
@@ -101,8 +101,18 @@ discipline (negative-results before claims; prereg before any lane field). See `
   EscalatedHumanUnresolved (tools unsupported) so the resolved-accept path can only be exercised live on
   Windows — it's covered by unit tests in `crates/corpus-client/src/gate.rs`.
 
+- [2026-06-14 21:05 UTC] **MH-1 design (ed25519, owner-chosen):** sign-off attestation is ASYMMETRIC, unlike
+  plan-signing (which stays HMAC because judge+executor are one process). `provenance::SignOffAuthority` holds
+  the private key; the engine embeds only `SignOffPublicKey` and verifies. corpus-client now depends on
+  provenance (verify side) — no cycle (provenance only deps `common`). The attestation covers a canonical,
+  serde-independent tuple string (`schema::attestation_message`), so it survives the known serde-field-order
+  fragility. A store enforces attestation ONLY when `.with_authority()` is set (cold start has none → unchanged).
+
 ## Handoff log (reverse-chronological)
 
+- **2026-06-14 21:05 UTC** — Implemented Increment 2 (MH-1 keystone): ed25519 sign-off attestation in
+  provenance + corpus-client; stores `.with_authority`; +12 tests incl. the forgery test; ed25519-dalek
+  license-clean. Updated the checklist doc (§9 changelog), research inventory, FOLLOWUPS. All gates green.
 - **2026-06-14 20:41 UTC** — Implemented Increment 1 of the engine work (structured evidence-integrity gate +
   verdict binding + destructive-fix-needs-human in corpus-client; +6 tests; SECURITY.md updated). Installed
   the WSL Rust toolchain. All gates green. Next: MH-1 attestation (needs the owner's key-custody decision).

@@ -1,7 +1,8 @@
 use common::{Risk, VerificationResult};
+use provenance::{SignOffPublicKey, SignOffSignature};
 use thiserror::Error;
 
-use crate::schema::{Contribution, OutcomeLabel, SignOff};
+use crate::schema::{attestation_message, Contribution, OutcomeLabel, SignOff};
 
 /// Why a contribution was refused at the evidence-integrity gate.
 ///
@@ -28,6 +29,14 @@ pub enum GateError {
     /// destructive "fix" with a verifier sign-off.
     #[error("refused: a resolved destructive plan requires human sign-off")]
     DestructiveFixNeedsHuman,
+    /// The store requires a sign-off authority's attestation but the row carries
+    /// none — a self-asserted sign-off, unsigned by any authority.
+    #[error("refused: sign-off requires an authority attestation, but none is present")]
+    AttestationMissing,
+    /// The row's attestation does not verify against the configured authority:
+    /// wrong key, a tampered tuple, or a malformed signature.
+    #[error("refused: the sign-off attestation does not verify against the configured authority")]
+    AttestationInvalid,
 }
 
 /// The evidence-integrity gate: the single checkpoint that admits a row into the
@@ -83,6 +92,30 @@ pub fn ensure_evidence_integrity(contribution: &Contribution) -> Result<(), Gate
 /// which this delegates to: the gate now enforces more than sign-off confirmation.
 pub fn ensure_signed_off(contribution: &Contribution) -> Result<(), GateError> {
     ensure_evidence_integrity(contribution)
+}
+
+/// Verify the sign-off **attestation** against a configured authority: a
+/// confirmed row must carry a valid ed25519 signature, by `authority`, over its
+/// canonical tuple. This is the cryptographic half of the truth-admission
+/// boundary — the engine holds only the public key, so it cannot mint a passing
+/// attestation, and a self-asserted `HumanConfirmed` (no/invalid signature) is
+/// refused. Called by [`CorpusStore::submit`](crate::CorpusStore::submit) only
+/// when the store was configured with an authority (cold start has none).
+pub fn ensure_attested(
+    contribution: &Contribution,
+    authority: &SignOffPublicKey,
+) -> Result<(), GateError> {
+    let attestation = contribution
+        .attestation
+        .as_ref()
+        .ok_or(GateError::AttestationMissing)?;
+    let signature =
+        SignOffSignature::from_hex(&attestation.signature).ok_or(GateError::AttestationInvalid)?;
+    if authority.verify(&attestation_message(contribution), &signature) {
+        Ok(())
+    } else {
+        Err(GateError::AttestationInvalid)
+    }
 }
 
 #[cfg(test)]

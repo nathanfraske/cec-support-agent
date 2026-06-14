@@ -1,9 +1,24 @@
 use async_trait::async_trait;
 use common::{ConfigClass, FaultSignature};
+use provenance::SignOffPublicKey;
 use thiserror::Error;
 
-use crate::gate::{ensure_evidence_integrity, GateError};
+use crate::gate::{ensure_attested, ensure_evidence_integrity, GateError};
 use crate::schema::{Contribution, FixMapping};
+
+/// Run the full admission gate for a store: the evidence-integrity checks
+/// always, plus the sign-off **attestation** check when an authority is
+/// configured (cold start has none).
+fn admit(
+    contribution: &Contribution,
+    authority: &Option<SignOffPublicKey>,
+) -> Result<(), GateError> {
+    ensure_evidence_integrity(contribution)?;
+    if let Some(authority) = authority {
+        ensure_attested(contribution, authority)?;
+    }
+    Ok(())
+}
 
 /// Errors raised by a corpus backend.
 #[derive(Debug, Error)]
@@ -80,12 +95,21 @@ pub trait CorpusStore: Send + Sync {
 #[derive(Default)]
 pub struct LocalCorpus {
     rows: std::sync::Mutex<Vec<Contribution>>,
+    authority: Option<SignOffPublicKey>,
 }
 
 impl LocalCorpus {
     /// A new, empty corpus.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Require every confirmed row to carry a valid sign-off attestation by
+    /// `authority`. The store holds only the public key, so it can verify but
+    /// not forge an attestation.
+    pub fn with_authority(mut self, authority: SignOffPublicKey) -> Self {
+        self.authority = Some(authority);
+        self
     }
 
     /// Number of accepted rows held in memory (all labels, including hard
@@ -113,7 +137,7 @@ impl CorpusStore for LocalCorpus {
 
     async fn submit(&self, contribution: &Contribution) -> Result<(), CorpusError> {
         // Gate enforced before any state change.
-        ensure_evidence_integrity(contribution)?;
+        admit(contribution, &self.authority)?;
         let mut guard = self.rows.lock().expect("corpus mutex poisoned");
         guard.push(contribution.clone());
         Ok(())
@@ -128,6 +152,7 @@ impl CorpusStore for LocalCorpus {
 pub struct FileCorpus {
     path: std::path::PathBuf,
     rows: std::sync::Mutex<Vec<Contribution>>,
+    authority: Option<SignOffPublicKey>,
 }
 
 impl FileCorpus {
@@ -153,7 +178,15 @@ impl FileCorpus {
         Ok(Self {
             path,
             rows: std::sync::Mutex::new(rows),
+            authority: None,
         })
+    }
+
+    /// Require every confirmed row to carry a valid sign-off attestation by
+    /// `authority`. The store holds only the public key.
+    pub fn with_authority(mut self, authority: SignOffPublicKey) -> Self {
+        self.authority = Some(authority);
+        self
     }
 
     /// Number of rows held (all labels, including hard negatives).
@@ -181,7 +214,7 @@ impl CorpusStore for FileCorpus {
     async fn submit(&self, contribution: &Contribution) -> Result<(), CorpusError> {
         // Gate enforced before any state change — nothing that fails the
         // evidence-integrity gate is written to disk or held in memory.
-        ensure_evidence_integrity(contribution)?;
+        admit(contribution, &self.authority)?;
         let line =
             serde_json::to_string(contribution).map_err(|e| CorpusError::Storage(e.to_string()))?;
         use std::io::Write as _;
@@ -202,6 +235,7 @@ impl CorpusStore for FileCorpus {
 pub struct HttpCorpus {
     base_url: String,
     http: reqwest::Client,
+    authority: Option<SignOffPublicKey>,
 }
 
 impl HttpCorpus {
@@ -210,7 +244,15 @@ impl HttpCorpus {
         Self {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             http: reqwest::Client::new(),
+            authority: None,
         }
+    }
+
+    /// Require every confirmed row to carry a valid sign-off attestation by
+    /// `authority` before it leaves the process.
+    pub fn with_authority(mut self, authority: SignOffPublicKey) -> Self {
+        self.authority = Some(authority);
+        self
     }
 }
 
@@ -247,8 +289,8 @@ impl CorpusStore for HttpCorpus {
 
     async fn submit(&self, contribution: &Contribution) -> Result<(), CorpusError> {
         // Gate enforced before the network call: a contribution that fails the
-        // evidence-integrity gate never leaves the process.
-        ensure_evidence_integrity(contribution)?;
+        // admission gate never leaves the process.
+        admit(contribution, &self.authority)?;
         let url = format!("{}/v1/contributions", self.base_url);
         let response = self
             .http
@@ -432,6 +474,77 @@ mod tests {
             .expect("query");
         assert_eq!(hits.len(), 1, "same plan aggregates into one mapping");
         assert_eq!(hits[0].confirmations, 2);
+    }
+
+    // --- Sign-off attestation (MH-1): the engine cannot forge a confirmed row
+    //     when an authority is configured. ------------------------------------
+
+    #[tokio::test]
+    async fn authority_store_rejects_an_unattested_confirmed_row() {
+        let authority = provenance::SignOffAuthority::generate();
+        let corpus = LocalCorpus::new().with_authority(authority.public_key());
+        // A self-asserted HumanConfirmed with no attestation: the exact forgery.
+        let forged = contribution(OutcomeLabel::ResolvedConfirmed, SignOff::HumanConfirmed);
+        let error = corpus.submit(&forged).await.expect_err("must be refused");
+        assert!(matches!(
+            error,
+            CorpusError::Gate(GateError::AttestationMissing)
+        ));
+        assert!(corpus.is_empty(), "a forged row must not be stored");
+    }
+
+    #[tokio::test]
+    async fn authority_store_accepts_a_genuinely_attested_row() {
+        let authority = provenance::SignOffAuthority::generate();
+        let corpus = LocalCorpus::new().with_authority(authority.public_key());
+        let attested = contribution(OutcomeLabel::ResolvedConfirmed, SignOff::HumanConfirmed)
+            .attested_by(&authority);
+        corpus.submit(&attested).await.expect("genuine attestation");
+        assert_eq!(corpus.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn an_attestation_by_another_authority_is_refused() {
+        let authority = provenance::SignOffAuthority::generate();
+        let attacker = provenance::SignOffAuthority::generate();
+        let corpus = LocalCorpus::new().with_authority(authority.public_key());
+        // Signed by a key the store does not trust.
+        let row = contribution(OutcomeLabel::ResolvedConfirmed, SignOff::HumanConfirmed)
+            .attested_by(&attacker);
+        let error = corpus.submit(&row).await.expect_err("untrusted authority");
+        assert!(matches!(
+            error,
+            CorpusError::Gate(GateError::AttestationInvalid)
+        ));
+    }
+
+    #[tokio::test]
+    async fn tampering_with_the_tuple_after_attestation_is_refused() {
+        let authority = provenance::SignOffAuthority::generate();
+        let corpus = LocalCorpus::new().with_authority(authority.public_key());
+        // Attest a verifier-level row, then forge it up to human: the attestation
+        // covers sign_off, so the signature no longer matches.
+        let mut row = contribution(
+            OutcomeLabel::ResolvedProvisional,
+            SignOff::VerifierConfirmed,
+        )
+        .attested_by(&authority);
+        row.sign_off = SignOff::HumanConfirmed;
+        let error = corpus.submit(&row).await.expect_err("tampered tuple");
+        assert!(matches!(
+            error,
+            CorpusError::Gate(GateError::AttestationInvalid)
+        ));
+    }
+
+    #[tokio::test]
+    async fn without_an_authority_an_unattested_confirmed_row_is_accepted() {
+        // Cold start: no authority configured, so attestation is not required
+        // (Increment-1 behavior is preserved).
+        let corpus = LocalCorpus::new();
+        let row = contribution(OutcomeLabel::ResolvedConfirmed, SignOff::HumanConfirmed);
+        corpus.submit(&row).await.expect("accepted at cold start");
+        assert_eq!(corpus.len(), 1);
     }
 
     #[tokio::test]

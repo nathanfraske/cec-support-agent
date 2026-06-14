@@ -51,7 +51,7 @@ Each item is tagged **ENFORCED-NOW**, **PARTIAL**, or **GAP**, with its code hoo
 
 - [ ] **EI-07 — Monotone-tightening law (raise-only on the safety bar).** `ENFORCED-NOW` — the one EI with a real in-code analog. `required_escalation` only ever raises the bar via `.max()` (a non-software route → `HumanConfirm`, an unvalidated state-changing plan → `HumanConfirm`, independent of judge confidence, `panel/src/lib.rs:324-329`); the corpus prior raises only `likelihood`, never safety/reversibility (`lib.rs:240-254`). **One GAP to lock:** assert it as an **invariant** so a future edit cannot let a `CorpusPrimed` prior lower escalation or touch the safety axis, and so `required_escalation` is provably never below `escalation_for`'s base. *Hook:* `crates/panel/src/lib.rs:240-254, 317-331`.
 
-- [ ] **EI-08 — Signature gate: sign-off must be ATTESTED, not asserted.** `GAP (load-bearing).` `ensure_signed_off` trusts a bare enum; `SigningKey::generate()` (`main.rs:485`) mints a **fresh ephemeral key per run** with no judge identity, and the verdict (`main.rs:560`) and de-id proof are never bound to the row. A library embedder can submit `Contribution{ sign_off: HumanConfirmed }` with no human in the loop and the gate passes. Widen `ensure_signed_off` into `ensure_evidence_integrity` that, for `HumanConfirmed`, requires an attestation over `(signature, plan, label, sign_off, config_class)` signed by a **non-ephemeral, identified key the submitting process does not hold**. *Hook:* `crates/corpus-client/src/gate.rs:15-21`; `crates/provenance/src/lib.rs:63-80` (extend `SignedPlan` → `SignedContribution`); sign-off set from `--sign-off` at `main.rs:440-444`.
+- [x] **EI-08 — Signature gate: sign-off must be ATTESTED, not asserted.** `IMPLEMENTED (library — Increment 2, ed25519).` The sign-off authority (`provenance::SignOffAuthority`) holds an ed25519 private key and signs the canonical `(signature, plan, label, sign_off, config_class)` tuple; the engine embeds only `SignOffPublicKey` and re-verifies at the gate (`ensure_attested`). A store configured with `.with_authority(pubkey)` refuses any confirmed row whose attestation is missing or does not verify — so a `Contribution{ sign_off: HumanConfirmed }` constructed by the submitting process is refused (it cannot mint a valid signature without the private key). **Remaining (see §8 / FOLLOWUPS):** operator/CLI wiring to generate+supply the key and produce attestations at human sign-off time; key rotation / multi-key registry; separate verifier-vs-human authorities. *Hook:* `crates/corpus-client/src/gate.rs` (`ensure_attested`); `crates/provenance/src/lib.rs` (`SignOffAuthority`/`SignOffPublicKey`/`SignOffSignature`); `crates/corpus-client/src/schema.rs` (`SignOffAttestation`, `attested_by`, `attestation_message`).
 
 **The unified checkpoint (the must-have that binds EI-01..EI-08):**
 
@@ -134,7 +134,7 @@ The ordered list an agent/contributor literally ticks. **Checklist A** is enforc
 
 | # | Attack on the inverted corpus | Defense (checklist item) | Code hook | Status |
 |---|---|---|---|---|
-| MH-1 | Construct `Contribution{sign_off: HumanConfirmed}` directly — the gate passes (one forgeable enum) | **Sign-off attested, not asserted**: gate requires a verifiable attestation; for `HumanConfirmed` the key is held by a party the submitting process is not | `gate.rs:15` → `ensure_evidence_integrity`; `provenance:63-80` | **GAP (keystone)** |
+| MH-1 | Construct `Contribution{sign_off: HumanConfirmed}` directly — the gate passes (one forgeable enum) | **Sign-off attested, not asserted**: gate requires a verifiable ed25519 attestation by an authority whose private key the submitting process does not hold | `gate.rs` `ensure_attested`; `provenance` `SignOffAuthority` | **DONE (library, Increment 2)** — store `.with_authority(pubkey)`; operator wiring + rotation deferred |
 | MH-2 | Flip/forge a label; a "resolved" row is unauditable because no evidence is stored | **Verdict bound into the row** (`Pass`/`ProvisionalPass` + `VerificationClass` + recurring-symptom diff); gate rejects an `is_resolved()` row whose verdict isn't a pass | `schema.rs:91-101`; `verify.rs` | GAP |
 | MH-3 | Every completed software-state run auto-mints `ResolvedConfirmed` (post re-derived from request text, diff always empty) | **Resolved requires a real re-collection** from a live instrument, attested by a distinct collection-run id; bootstrap-echo rows are advisory-only | `main.rs:558-559` | GAP |
 | MH-4 | Hand-edit a confirmed JSONL precedent; it is reloaded and served retrieval-first, bypassing the gate | **Per-row tamper-evidence + re-validate on load**: `FileCorpus::open` re-runs the integrity check; append-only by signature/hash-chain, not OS perms | `store.rs:138-144,181-197` | GAP |
@@ -145,7 +145,7 @@ The ordered list an agent/contributor literally ticks. **Checklist A** is enforc
 | MH-9 | A schema/vocabulary change opens a leak the suite does not cover | **Standing leakage gate**: suite stays green in CI and is **extended** on every schema/vocabulary/plan-shape change; no item ships without an adversarial test | `corpus-client/src/lib.rs:34-127` | PARTIAL (suite green; obligation new) |
 | EI-03/A5 | Re-submit the identical row to manufacture false confidence (`confirmations==2` from one run) | **Independent-confirmation guard** keyed on `run_id`/lane | `store.rs:39-50,411-423` | GAP |
 
-**Sequencing:** **MH-1 is the keystone.** MH-2/3/4/7/8 all assume an attestation exists to bind verdict/origin/revocation to a row; if MH-1 slips, the others degrade to advisory annotations a caller can also forge. **Build MH-1 first.**
+**Sequencing:** **MH-1 is the keystone — now DONE at the library level (Increment 2, ed25519).** With the attestation in place, MH-2/3/4/7/8 can bind verdict/origin/revocation to a row that a caller cannot forge. Remaining keystone work is operator wiring (supplying/holding the authority key) and rotation — see §8 / FOLLOWUPS.
 
 ---
 
@@ -161,15 +161,54 @@ The ordered list an agent/contributor literally ticks. **Checklist A** is enforc
 
 ## 8. Deferred items (copy verbatim into `FOLLOWUPS.md`)
 
-- [ ] **[EI-08 / MH-1 — keystone]** Implement owner-key attestation over the contribution tuple: extend `provenance::SignedPlan` → `SignedContribution` over `(signature, plan, label, sign_off, config_class)` with a judge/verifier identity, and verify it in `ensure_signed_off`/`ensure_evidence_integrity` for `HumanConfirmed`. Resume: `crates/corpus-client/src/gate.rs:15` + `crates/provenance/src/lib.rs:63-80`.
+> These were the deferred items at authoring time. **`FOLLOWUPS.md` is the live tracker** (append-only with
+> tombstones); **§9 below records what has since been implemented.** Items already shipped are struck through
+> here for orientation.
+
+- [x] ~~**[EI-08 / MH-1 — keystone]** Implement owner-key attestation over the contribution tuple.~~ **DONE (library, Increment 2, ed25519)** — see §9. Operator wiring + rotation remain in FOLLOWUPS.
 - [ ] **[Custody]** Decide the non-ephemeral judge key custody / rotation / audit-log retention path (`crates/provenance/src/lib.rs:11-16`); `SigningKey::generate()` at `crates/support-agent/src/main.rs:485` mints a fresh per-run key with no judge identity — the EI-08 attestation cannot be real without an identified, persistent judge.
 - [ ] **[Canonicalization]** Replace serde field-order canonicalization with a sorted/canonical-JSON encoder before signatures are cross-version/cross-language verified. Resume: `crates/provenance/src/lib.rs:88-91`.
 - [ ] **[MH-3 / NR-1]** Wire a real post-fix re-collection that replaces the bootstrap echo `signature_of(&collect_diagnostics(&args.describe))` so the bound verdict reflects a genuine post-state diff and `ResolvedConfirmed` cannot be trivially minted. Resume: `crates/support-agent/src/main.rs:558-559`.
-- [ ] **[MH-2 / EI-01]** Add a provenance/lane pin and bind the `verify.rs` Verdict + `VerificationClass` + recurring-symptom diff into `Contribution`/`Outcome` so resolved rows are auditable against their own evidence. Resume: `crates/corpus-client/src/schema.rs:76-101`.
+- [x] ~~**[MH-2 / EI-01]** ...bind the `verify.rs` Verdict + recurring-symptom diff into `Outcome`...~~ **PARTIALLY DONE (Increment 1)**: the Verdict + recurring diff are bound (`Outcome.verification: Option<common::Verification>`) and the gate rejects a resolved label without a matching pass. Remaining: carry `VerificationClass` + a provenance/lane pin — see §9 and FOLLOWUPS.
 - [ ] **[EI-03 / A5]** Add a run-independence guard to confirmation aggregation keyed on `run_id`/lane, with a test that a duplicate row does not inflate the count. Resume: `crates/corpus-client/src/store.rs:39-50,411-423`.
 - [ ] **[MH-4 / MH-8 / EI-06]** Add per-row tamper-evidence (signature or hash chain) + an owner-only revocation/retraction list to `FileCorpus`; re-verify on `FileCorpus::open`; have `fix_mappings` honor revocation and let `OutcomeLabel::Reopened` demote a prior resolved mapping. Resume: `crates/corpus-client/src/store.rs:26-53,136-157,181-197`.
 - [ ] **[MH-6 / A7]** Derive `config_class` from real CIM hardware/driver inventory (or BOM revision) instead of OS+ARCH, attested to the producing machine. Resume: `crates/support-agent/src/main.rs:742-747`.
 - [ ] **[MH-5]** Validate model-generated steps (claimed-risk-vs-actual-action reconciliation) and de-identify at generation; add inference-channel provenance (no cert pinning / endpoint / model attestation today) so a swapped endpoint is visible on the row. Resume: `crates/support-agent/src/main.rs:878-886`.
 - [ ] **[Sandbox evidence]** Provide a production `SandboxValidator` impl (the `swarm` trait has none; the CLI hardcodes `sandbox_validated=false`, `main.rs:376`) and decide whether sandbox evidence is bound into the row, so "unvalidated equals escalate" is backed by positive validation evidence.
-- [ ] **[Research tree]** Create `docs/research/` (README + claims + prereg-control-lane + negative-results + instrumentation-inventory); commit `negative-results.md` before `claims.md` and `prereg-control-lane.md` before any row carries a lane field. Precondition: this working dir must be a git repo with intact history or the commit-ordering honesty guarantee is unenforceable.
-- [ ] **[Custody activation]** Run `git config core.hooksPath scripts/githooks` to activate the corpus/weights pre-commit exfil guard (dormant in fresh clones), and extend `SECURITY.md`'s invariant list to name each new gate so a bypass is a reportable security issue.
+- [x] ~~**[Research tree]** Create `docs/research/` ...~~ **DONE (scaffolded)** — `docs/research/` exists (README + populated negative-results + instrumentation-inventory + claims/prereg scaffolds). Filling claims/prereg per the commit-ordering discipline remains in FOLLOWUPS.
+- [ ] **[Custody activation]** Run `git config core.hooksPath scripts/githooks` to activate the corpus/weights pre-commit exfil guard (dormant in fresh clones) — *still open*. `SECURITY.md`'s invariant list **has** been extended to name the strengthened gate (Increment 1).
+
+---
+
+## 9. Implementation status (changelog)
+
+The §1–§7 design is the spec; this records what has been built against it on branch
+`feat/agent-ops-evidence-integrity`. `FOLLOWUPS.md` carries the remaining engine work.
+
+### Increment 1 — structured gate + bound verdict (commit `c9af199`)
+- `ensure_signed_off` → **`ensure_evidence_integrity`** with a structured `GateError`
+  (`Unconfirmed` / `ResolvedWithoutPass` / `LabelVerdictMismatch` / `DestructiveFixNeedsHuman`).
+- The verifier's verdict is **bound into the row**: `common::Verification { result, recurring }` on
+  `Outcome` (`Verdict::to_verification()`); a **resolved label now requires a matching passing verdict**, and
+  a **resolved destructive plan requires human sign-off** — enforced inside `corpus-client`, not just the CLI.
+- Hard negatives are still admitted freely (a failure is truth too).
+
+### Increment 2 — MH-1 keystone: ed25519 sign-off attestation (commit `<this>`)
+- Owner chose the **asymmetric** trust model. `provenance::SignOffAuthority` holds an ed25519 **private** key
+  and signs the canonical `(signature, plan, label, sign_off, config_class)` tuple
+  (`attestation_message`); the engine embeds only `SignOffPublicKey` and re-verifies (`ensure_attested`).
+- `Contribution` gains an optional `attestation` (`SignOffAttestation`) set by `attested_by(&authority)`.
+  Stores gain **`.with_authority(pubkey)`**; when configured they refuse any confirmed row whose attestation
+  is missing or invalid. A `Contribution{ sign_off: HumanConfirmed }` built by the submitting process is
+  therefore **refused** — it cannot produce a valid signature without the private key.
+- Cold start (no authority) is unchanged (back-compat); proven by tests.
+- `ed25519-dalek` added; its dependency tree is license-clean against `deny.toml`.
+
+**Verification:** `cargo build/test --workspace` (136 tests), `cargo fmt --check`, `cargo clippy -D warnings`
+all clean; cold-start CLI smoke OK. The resolved-accept path needs a Windows host to exercise live (off-Windows
+the tools report unsupported); it is covered by unit tests.
+
+**Still open (in `FOLLOWUPS.md`):** MH-1 operator/CLI wiring + key rotation + verifier-vs-human authorities;
+MH-2 remainder (`VerificationClass` + lane pin); MH-3 (real post-fix re-collection, NR-1); EI-03/A5 (independent
+confirmations); MH-4/8/EI-06 (tamper-evidence + revocation); MH-5 (model-output validation); MH-6 (honest
+config-class); canonical-JSON plan encoding; sandbox-validation evidence; filling the research tree.

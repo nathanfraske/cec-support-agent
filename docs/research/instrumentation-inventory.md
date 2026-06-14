@@ -11,7 +11,7 @@ no row reads hope-to-compute-later.
 | # | Number / claim | Mechanism | Where (file:line) | Partition | Status | Precondition to flip |
 |---|---|---|---|---|---|---|
 | 1 | Zero PII leakage into serialized rows | Adversarial seeded-identifier leakage suite | `crates/corpus-client/src/lib.rs:34-127` | n/a | **DONE** | — |
-| 2 | Zero unsigned rows admitted | Sign-off gate `ensure_signed_off` | `crates/corpus-client/src/gate.rs:15` | n/a | **PARTIAL** (enum asserted, not proven — NR-2) | EI-08/MH-1 attestation |
+| 2 | Zero unsigned rows admitted | Gate `ensure_evidence_integrity` + ed25519 `ensure_attested` | `crates/corpus-client/src/gate.rs` | n/a | **DONE when an authority is configured** (a store with `.with_authority` refuses a forged `HumanConfirmed`); cold-start (no authority) is still discipline-only | operator wiring of the authority key |
 | 3 | Hard negatives never re-offered as fixes | Quarantine filter + test | `store.rs:35-38` / `store.rs:334-348` | n/a | **DONE** | — |
 | 4 | Retrieval-first resolution-rate uplift (C1) | Retrieval-first vs preregistered control lane | `main.rs:289,318` + `panel/src/lib.rs:248-254` | influenced vs uninfluenced | **BUILDING** | control lane (prereg §0) |
 | 5 | "Verified-resolved" rate | Verdict bound into the row | `verify.rs` → `schema.rs:91-101` | n/a | **BUILDING** | verdict binding (NR-3 / MH-2) |

@@ -95,6 +95,21 @@ pub struct Outcome {
     pub verification: Option<Verification>,
 }
 
+/// An attestation that a recognized sign-off authority — NOT the submitting
+/// process — performed this sign-off. It is an ed25519 signature over the
+/// contribution's canonical tuple ([`attestation_message`]), by a key the
+/// engine does not hold. When a store is configured with a
+/// [`provenance::SignOffPublicKey`], the gate refuses any confirmed row whose
+/// attestation is missing or does not verify — so a self-asserted
+/// `HumanConfirmed` cannot be minted by the process that admits rows.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SignOffAttestation {
+    /// Short id of the authority public key that signed (diagnostic).
+    pub authority_id: String,
+    /// Hex-encoded ed25519 signature over the canonical tuple.
+    pub signature: String,
+}
+
 /// A de-identified outcome proposed for inclusion in the corpus: the
 /// (signature, plan, outcome) triple plus its context.
 ///
@@ -111,19 +126,78 @@ pub struct Contribution {
     /// Sign-off state. Must be confirmed for [`crate::CorpusStore::submit`] to
     /// accept it.
     pub sign_off: SignOff,
+    /// The sign-off authority's attestation over this row's canonical tuple.
+    /// `None` at cold start (no authority configured). When a store carries an
+    /// authority public key, this must be present and valid for a confirmed row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attestation: Option<SignOffAttestation>,
 }
 
 impl Contribution {
     /// Build a contribution from an outcome, its config class, and its
     /// sign-off state. The outcome's plan is de-identified here, so a raw
-    /// plan cannot enter a contribution at all.
+    /// plan cannot enter a contribution at all. The attestation is unset;
+    /// attach one with [`Contribution::attested_by`].
     pub fn new(mut outcome: Outcome, config_class: ConfigClass, sign_off: SignOff) -> Self {
         outcome.plan = de_identify_plan(&outcome.plan);
         Self {
             outcome,
             config_class,
             sign_off,
+            attestation: None,
         }
+    }
+
+    /// Attach a sign-off authority's attestation over this contribution's
+    /// canonical tuple. Call after [`Contribution::new`] (so the attestation
+    /// covers the de-identified plan that is actually stored). The authority
+    /// holds the private key; the engine that admits the row holds only the
+    /// matching public key and re-verifies at the gate.
+    pub fn attested_by(mut self, authority: &provenance::SignOffAuthority) -> Self {
+        let signature = authority.attest(&attestation_message(&self));
+        self.attestation = Some(SignOffAttestation {
+            authority_id: authority.public_key().id(),
+            signature: signature.to_hex(),
+        });
+        self
+    }
+}
+
+/// The canonical bytes a sign-off attestation covers: the contribution's
+/// `(signature, plan, label, sign_off, config_class)` tuple in a stable,
+/// serde-independent encoding. The attestation field itself is excluded (it
+/// signs everything else). Built from the de-identified plan that is stored, so
+/// the gate re-derives exactly what the authority signed. Tampering with any
+/// covered field changes these bytes and breaks verification.
+pub(crate) fn attestation_message(c: &Contribution) -> Vec<u8> {
+    use std::fmt::Write as _;
+    let o = &c.outcome;
+    let mut s = String::from("cec-signoff-attestation-v1\n");
+    let _ = writeln!(s, "fp:{}", o.signature.fingerprint);
+    let mut symptoms: Vec<&str> = o.signature.symptoms.iter().map(|x| x.0.as_str()).collect();
+    symptoms.sort_unstable();
+    let _ = writeln!(s, "sym:{}", symptoms.join(","));
+    let _ = writeln!(s, "plan:{}", o.plan.id);
+    for step in &o.plan.steps {
+        let _ = writeln!(s, "step:{}:{:?}", step.action, step.risk);
+    }
+    let _ = writeln!(s, "label:{}", label_tag(&o.label));
+    let _ = writeln!(s, "signoff:{:?}", c.sign_off);
+    let _ = writeln!(s, "class:{}", c.config_class.key());
+    s.into_bytes()
+}
+
+/// A stable tag for an outcome label (its data, not its `Debug` formatting).
+fn label_tag(label: &OutcomeLabel) -> String {
+    match label {
+        OutcomeLabel::ResolvedConfirmed => "resolved_confirmed".into(),
+        OutcomeLabel::ResolvedProvisional => "resolved_provisional".into(),
+        OutcomeLabel::Reopened => "reopened".into(),
+        OutcomeLabel::EscalatedHardware { part_class } => {
+            format!("escalated_hardware:{part_class}")
+        }
+        OutcomeLabel::EscalatedHumanUnresolved => "escalated_human_unresolved".into(),
+        OutcomeLabel::Withdrawn => "withdrawn".into(),
     }
 }
 

@@ -9,6 +9,7 @@ description = "Corpus API client, schema, and cold-start store. Enforces the ver
 
 [dependencies]
 common = { workspace = true }
+provenance = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 reqwest = { workspace = true }

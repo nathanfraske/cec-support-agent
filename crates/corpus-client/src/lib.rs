@@ -26,9 +26,16 @@ mod gate;
 mod schema;
 mod store;
 
-pub use gate::{ensure_evidence_integrity, ensure_signed_off, GateError};
-pub use schema::{de_identify_plan, Contribution, FixMapping, Outcome, OutcomeLabel, SignOff};
+pub use gate::{ensure_attested, ensure_evidence_integrity, ensure_signed_off, GateError};
+pub use schema::{
+    de_identify_plan, Contribution, FixMapping, Outcome, OutcomeLabel, SignOff, SignOffAttestation,
+};
 pub use store::{CorpusError, CorpusStore, FileCorpus, HttpCorpus, LocalCorpus};
+
+// The sign-off authority types live in `provenance`; re-export them so a caller
+// configuring a store with `.with_authority(...)` (and attesting via
+// `Contribution::attested_by(...)`) does not need a separate import.
+pub use provenance::{SignOffAuthority, SignOffPublicKey, SignOffSignature};
 
 #[cfg(test)]
 mod leakage_tests {
