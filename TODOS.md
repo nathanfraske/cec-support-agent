@@ -66,6 +66,22 @@ Conventions:
 - [x] [added 2026-06-14 22:55 UTC · done 2026-06-14 23:12 UTC] Independent adversarial verification of the fix diff (2 parallel reviewers: crypto-encoding lens + gate/store lens) → all 7 fixes CLOSED, no regression, no new bug
 - [x] [added 2026-06-14 20:50 UTC · done 2026-06-14 23:25 UTC] Present for review — committed `11f0609`, pushed `feat/agent-ops-evidence-integrity`, opened **PR #2** (owner approved push+PR) → https://github.com/nathanfraske/cec-support-agent/pull/2
 
+### Private corpus: structure + ground-truth YAML format (owner, 2026-06-14 22:25 UTC)
+
+Decisions: off-tree separate private git repo at `/mnt/e/cec-corpus-private`; YAML-authored fix flows compiled
+to de-identified + ed25519-attested + gate-validated JSONL; BUILD NOW = structure + format spec + templates +
+no-leak rails on both repos; DEFER (as precise wiring TODOs) = the Rust ingest compiler, query/verify tools,
+the corpus service.
+
+- [x] [added 2026-06-14 22:30 UTC · done 2026-06-14 22:50 UTC] Design panel (workflow `private-corpus-design` `wf_b61fe974-59a`): 4 lenses + synthesis → canonical design (structure, YAML spec, rails, W0–W9 wiring). Provenance in the private repo `.design/`.
+- [x] [added 2026-06-14 22:30 UTC · done 2026-06-14 23:00 UTC] Create the off-tree private repo `/mnt/e/cec-corpus-private` (git init, repo-local identity) with README + BOUNDARY + .gitignore + .githooks/pre-commit + the full directory tree; committed (`4520667`)
+- [x] [added 2026-06-14 22:30 UTC · done 2026-06-14 23:10 UTC] Write the YAML fix-flow format SPEC `spec/fix-flow.schema.md` (field-by-field; authored/derived/forbidden table; gate-coupling rules; 12 validation rules) + the machine lint `spec/fix-flow.schema.json` + `spec/vocabulary.yaml` (faithful to the real extract.rs)
+- [x] [added 2026-06-14 22:30 UTC · done 2026-06-14 23:10 UTC] Write 4 ready-to-fill YAML templates + a worked example — de-identified vocabulary only; all PASS the JSON-Schema lint, which REJECTS every inadmissible flow (unconfirmed, label/verdict mismatch, destructive-without-human, verdict-on-hard-negative, forbidden derived keys, IPv4 bom)
+- [x] [added 2026-06-14 22:30 UTC · done 2026-06-14 23:20 UTC] Harden the PUBLIC repo no-leak rails (.gitignore + scripts/githooks/pre-commit broadened) + create `BOUNDARY.md`; rails verified to bite (ignore + hook grep) and to allow source
+- [x] [added 2026-06-14 22:30 UTC · done 2026-06-14 23:35 UTC] Adversarial verification pass (2 parallel auditors): no-leak — no corpus data/keys in either tree or history, one-way coupling holds; format↔gate — COMPLETE/CORRECT (all enums match, worked example admittable). Fixed all actionable findings (reopened⇒provenance, *.env/*.ndjson/.yml ignores, IPv4 bom, spec honesty on the bom residual, W0 chmod-no-op)
+- [x] [added 2026-06-14 22:30 UTC · done 2026-06-14 23:35 UTC] Record the deferred ingest-pipeline wiring plan (W0–W9, ordered, with acceptance checks) in `/mnt/e/cec-corpus-private/WIRING.md` + public FOLLOWUPS pointers (secrets exposure, guard activation, private remote, corpus-ingest, ignore residual)
+- [ ] [added 2026-06-14 23:35 UTC] Present: commit the public no-leak rails (`.gitignore`/pre-commit/`BOUNDARY.md`) + tracking; push pending owner OK (same branch as PR #2, or split)
+
 ## Done / obsolete (history)
 
 _(completed items stay above, in place, with their `· done` tombstone)_
