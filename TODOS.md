@@ -109,7 +109,13 @@ mesh-wiring "brain"), **MyOwnMesh** (MIT private mesh: identity/RPC/governance),
 - [x] [added 2026-06-15 01:45 UTC · done 2026-06-15 01:55 UTC] RFC for Chris → `docs/integration-rfc-for-chris.md` (the frame; D1 single-shot + D2 versioning decided; Q1–Q5 open for Chris; the wire contract AllMyStuff codes against; P0 = built). Integration doc P0 section updated to **DONE** with the verified accept-criteria.
 - [x] [added 2026-06-15 01:55 UTC · done 2026-06-15 02:00 UTC] **Found + fixed: PR #2 is RED on CI** — `11f0609` shipped 4 rustfmt-1.9 violations in `corpus-client/{schema.rs,store.rs}`; CI runs `fmt --all --check`. Fixed in-tree (isolated as a portable fmt-only commit for cherry-pick onto PR #2). Whole branch now fmt CLEAN. The push to make PR #2 green is owner-gated → FOLLOWUPS.
 - [x] [added 2026-06-15 02:00 UTC · done 2026-06-15 02:10 UTC] Commit P0 + RFC + docs + fmt fix locally (durable); present to owner; await the push-routing call (PR #2 green) + Chris's Q1–Q5 — owner chose "push both": fmt fix + 2 doc commits fast-forwarded onto `feat/agent-ops-evidence-integrity` (`920a..538cd43`, PR #2 CI re-running), P0 pushed and opened as **stacked PR #3** (base = PR #2's branch). Commits `538cd43` (fmt), `d61b962` (P0).
-- [ ] [added 2026-06-15 02:10 UTC] Confirm PR #2 CI is GREEN after the fmt fix (`gh pr checks 2`) and PR #3 CI passes; then await Chris's Q1–Q5 + decide P1/P2 start (the MIT AllMyStuff-side de-id allowlist + serde-only `diagnose` contract)
+- [x] [added 2026-06-15 02:10 UTC · done 2026-06-15 02:15 UTC] Confirm PR #2 CI is GREEN after the fmt fix (`gh pr checks 2`) — all `check` jobs (ubuntu/macos/windows) + audit pass; only the pre-existing `secrets` job red (now under triage). PR #3 likewise.
+
+### Triage: the failing `secrets`/gitleaks CI job (owner, 2026-06-15 02:15 UTC)
+
+- [x] [added 2026-06-15 02:15 UTC · done 2026-06-15 02:18 UTC] Root-cause the `secrets` job failure — CONFIRMED via the job logs: gitleaks-action@v2 requires `GITHUB_TOKEN` for `pull_request`-event scans (breaking change); the workflow's step has none, so the PR-event run fails fast (~4s) while the push-event run passes. NOT a license issue (personal repo), NOT a regression from P0.
+- [x] [added 2026-06-15 02:15 UTC · done 2026-06-15 02:18 UTC] Rule out a real leak — ran gitleaks 8.24.3 locally over the FULL git history (36 commits) AND the working tree with the repo's `.gitleaks.toml`: both "no leaks found", exit 0. The de-id rails held.
+- [ ] [added 2026-06-15 02:18 UTC] Workflow `triage-secrets-ci` (`wf_60234519-881`, 4 agents): adversarially verify the exact fix (permissions/fork-PR nuance), audit adjacent CI issues (Node 20→24 deprecation forced June 16 — tomorrow; double-trigger; pinning; cargo-deny), and independently cross-check "no real secret" against project-specific shapes. Then apply the fix to `ci.yml` + verify.
 
 ## Done / obsolete (history)
 
