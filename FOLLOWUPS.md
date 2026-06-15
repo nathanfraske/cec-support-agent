@@ -91,10 +91,13 @@ history, one-way coupling holds, and the format is complete/correct against the 
   activation]` item above for the corpus-boundary half.)
 - [ ] [added 2026-06-14 23:35 UTC] **[Private remote]** Create a PRIVATE GitHub repo for `cec-corpus-private`
   (or reuse `nathanfraske/cec-runs`), add it as `origin`, push. Never mirror to the public org. — WIRING.md W2.
-- [ ] [added 2026-06-14 23:35 UTC] **[corpus-ingest pipeline]** Build the deferred Rust compiler/tooling in
-  the PRIVATE repo (git-deps the public engine at `schema/PIN`; the public workspace gains nothing): scaffold
-  + keygen + the compile pipeline (YAML→de-id→attest→gate→JSONL) + verify/query + the corpus service + key
-  rotation. Full steps + acceptance checks: WIRING.md W4–W9.
+- [x] [added 2026-06-14 23:35 UTC · closed 2026-06-15 00:50 UTC → BUILT (W4–W7) in the private repo, commits `b34b916`+`400351d`; W8/W9 remain below] **[corpus-ingest pipeline]** Build the deferred Rust compiler/tooling in
+  the PRIVATE repo (git-deps the public engine at `schema/PIN`; the public workspace gains nothing). DONE:
+  keygen (age encryption-at-rest), compile (YAML→de-id→attest→gate→hash-chained JSONL), verify (chain +
+  re-admission + tail anchor); verified end-to-end incl. the engine retrieving a compiled row retrieval-first;
+  an adversarial review found+fixed a CRITICAL symptom-leak. STILL DEFERRED: W8 the HTTP corpus service,
+  W9 key rotation (WIRING.md). The seed-custody decision (W0) = **age passphrase encryption-at-rest**, now
+  implemented in `seed.rs`; the operator runs `make keygen` with their real `CEC_SEED_PASSPHRASE`.
 - [ ] [added 2026-06-14 23:35 UTC] **[Ignore residual — low]** Path-only ignores can't catch a corpus dump
   renamed to an arbitrary extension (`.txt`/`.csv`) or UPPERCASE `.FLOW.YAML`. The real defense is the hook
   grepping staged *content* for a JSONL-row / `attestation`/`fingerprint` shape — add when the hook is

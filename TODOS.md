@@ -82,6 +82,13 @@ the corpus service.
 - [x] [added 2026-06-14 22:30 UTC · done 2026-06-14 23:35 UTC] Record the deferred ingest-pipeline wiring plan (W0–W9, ordered, with acceptance checks) in `/mnt/e/cec-corpus-private/WIRING.md` + public FOLLOWUPS pointers (secrets exposure, guard activation, private remote, corpus-ingest, ignore residual)
 - [x] [added 2026-06-14 23:35 UTC · done 2026-06-14 23:45 UTC] Present: public no-leak rails (`.gitignore`/pre-commit/`BOUNDARY.md`) + tracking committed `920e22a` and PUSHED onto **PR #2** (owner chose to extend PR #2). Private repo committed locally at `c636168`; its remote is deferred (WIRING W2).
 
+### Private corpus: ingest pipeline W4–W7 (owner: "build it now", seed custody = age encryption-at-rest, 2026-06-15 00:13 UTC)
+
+- [x] [added 2026-06-15 00:20 UTC · done 2026-06-15 00:40 UTC] Build `corpus-ingest` (private repo `crates/corpus-ingest`, pinned git-dep on the engine `11f0609`): `keygen` (ed25519 authority, seed AGE-encrypted at rest via `CEC_SEED_PASSPHRASE`), `compile` (de_identify → from_symptoms → with_provenance → attested_by LAST → gate dry-run → FileCorpus rebuilt-from-empty + hash chain; symptom/action/coupling validation), `verify` (chain + per-row re-admission + tail anchor). Committed `b34b916`.
+- [x] [added 2026-06-15 00:20 UTC · done 2026-06-15 00:40 UTC] Verify end-to-end: keygen→compile→verify on the worked example (attested, chained, zero identity strings); 4 negative tests (tamper, destructive+verifier, non-vocab symptom, wrong passphrase) all reject; the ENGINE retrieves the compiled row **retrieval-first** (`CorpusPrimed`, 1 confirmation) — the full author→compile→attest→retrieve loop proven.
+- [x] [added 2026-06-15 00:40 UTC · done 2026-06-15 00:50 UTC] Adversarial code review of `corpus-ingest` → found 1 CRITICAL (a spaced multi-token symptom could masquerade as a module name and leak identity into the signature; no plan-de-id backstop). FIXED: enforce the extractor's `[a-z0-9._]` single-token charset + added the crate's first 4 tests. Re-verified the leak flow is rejected. Committed `400351d`.
+- [ ] [added 2026-06-15 00:50 UTC] Remaining (operator): W0 run `make keygen` with the real passphrase; W1 install gitleaks + activate the hooks; W2 private remote; W8 the HTTP service; W9 key rotation. Plus the HIGH owner item: `/mnt/e/secrets` bot-PAT/sudo exposure.
+
 ## Done / obsolete (history)
 
 _(completed items stay above, in place, with their `· done` tombstone)_

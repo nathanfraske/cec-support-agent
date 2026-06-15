@@ -22,13 +22,15 @@ Below "Pick up here", keep a reverse-chronological **handoff log** of dated entr
   (https://github.com/nathanfraske/cec-support-agent/pull/2), branch `feat/agent-ops-evidence-integrity` at
   `11f0609`; 159 tests green.
 - **(2) Private corpus:** a SEPARATE off-tree private git repo at **`/mnt/e/cec-corpus-private`** (HEAD
-  `c636168`) holds the YAML ground-truth fix-flow format (`cec-fix-flow/v1`), 4 templates + a worked example,
-  the machine lint, the vocabulary snapshot, the no-leak rails, and the W0–W9 wiring plan (`WIRING.md`). The
-  ingest compiler/tooling is DEFERRED (W4–W9). The PUBLIC repo got the matching rails (`BOUNDARY.md`, hardened
-  `.gitignore` + pre-commit) — those are **committed-pending** in the working tree (push pending owner OK).
-  Two adversarial audits confirmed no corpus data/keys in either tree or history and a complete/correct format.
-  **Open HIGH item (owner):** `/mnt/e/secrets` is world-readable with a real PAT + sudo password and `chmod`
-  is a no-op on DrvFs — see FOLLOWUPS / WIRING W0.
+  `400351d`) holds the YAML ground-truth fix-flow format (`cec-fix-flow/v1`), templates, lint, vocabulary,
+  no-leak rails, AND the **`corpus-ingest` compiler (W4–W7, BUILT + verified end-to-end)**: `keygen` (seed
+  age-encrypted at rest), `compile` (de-id → attest → gate → hash-chained JSONL), `verify`. Proven loop:
+  author YAML → compile → the engine retrieves it retrieval-first (`CorpusPrimed`). An adversarial code review
+  found + fixed one CRITICAL symptom-leak. The PUBLIC repo's matching rails (`BOUNDARY.md`, hardened
+  `.gitignore`/pre-commit) are on **PR #2** (`920e22a`). Still deferred: W1 (gitleaks+activate hooks), W2
+  (private remote), W8 (HTTP service), W9 (rotation). **Operator's first step:** `make keygen` with a real
+  `CEC_SEED_PASSPHRASE`. **Open HIGH item:** `/mnt/e/secrets` world-readable PAT+sudo; `chmod` is a no-op on
+  DrvFs (FOLLOWUPS).
 
 - **Audit:** re-ran the `autodiagnoser-engine-audit` workflow (`wf_5c1c16b9-613`) — the previous agent's run
   had not persisted results and no live task survived. 23 agents, ~1M tokens: 18 findings verified →
@@ -186,6 +188,17 @@ See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementati
 
 ## Handoff log (reverse-chronological)
 
+- **2026-06-15 00:50 UTC** — **Built the `corpus-ingest` compiler (private repo W4–W7).** A pinned-git-dep
+  Rust crate that compiles authored YAML flows → de-identified, ed25519-attested, gate-validated, hash-chained
+  corpus rows; seed custody is **age passphrase encryption-at-rest** (the owner's choice; `chmod` is dead on
+  `/mnt/e`). Verified end-to-end: keygen→compile→verify on the worked example (zero identity strings); 4
+  negative tests reject (tamper, destructive+verifier, non-vocab symptom, wrong passphrase); and the engine
+  retrieves the compiled row **retrieval-first**. An adversarial review caught one **CRITICAL**: a spaced
+  multi-token symptom (`"DESKTOP-NATHAN01 jsmith.exe"`) could masquerade as a module name and leak identity
+  into the attested signature (the plan de-id is no backstop for the signature) — FIXED by enforcing the
+  extractor's `[a-z0-9._]` single-token charset, + the crate's first 4 tests. Private HEAD `400351d`. Next
+  (operator): `make keygen` with the real passphrase; then W1/W2/W8/W9. **Lesson:** `cargo test` does NOT
+  rebuild the `bin` — re-run `cargo build` before re-testing a CLI fix or you test the stale binary.
 - **2026-06-14 23:40 UTC** — **Private corpus structure + ground-truth format.** Built the off-tree private
   repo `/mnt/e/cec-corpus-private` (HEAD `c636168`): the `cec-fix-flow/v1` YAML format (`spec/`), 4 templates +
   a worked example, the JSON-Schema lint (validated to accept all templates and reject every inadmissible
