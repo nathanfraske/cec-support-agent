@@ -58,6 +58,14 @@ see `.claude/audit/confirmed-findings.txt` and HANDOFFS). These are the deeper r
   to resume: `crates/corpus-client/src/schema.rs` (chain_hash) + `crates/corpus-client/src/store.rs`
   (verify_chain / with_authority). Subsumes the **tail-truncation** residual (a hash chain cannot detect
   removal of trailing rows without an external/length anchor) noted in `RowIntegrity`'s doc.
+- [ ] [added 2026-06-15 01:25 UTC] **[HttpCorpus read-path is unverified]** `HttpCorpus::query`
+  (`crates/corpus-client/src/store.rs:425-453`) returns the server's `FixMapping`s with NO `admit()` and NO
+  attestation check — the submit path is gated but the **read** path trusts the corpus server entirely. A
+  malicious/compromised server could feed forged precedents the engine uses retrieval-first. Surfaced by the
+  MyOwn-integration design. Fix: the new `MeshCorpus` MUST re-verify the ed25519 attestation on every received
+  row (planned, P3 acceptance (d) in `docs/integration-myown-family.md`); apply the same hardening to
+  `HttpCorpus` (carry attestation-bearing rows on the query path, or re-verify). — where to resume:
+  `crates/corpus-client/src/store.rs` (HttpCorpus::query) + the mesh adapter.
 - [ ] [added 2026-06-14 23:05 UTC] **[chain_hash canonical encoding]** `chain_hash` now carries a version
   prefix (`cec-corpus-chain-v1`) but still hashes the `serde_json` image of the row — coupled to struct
   field order, fine for same-code recompute but not cross-language. If the chain ever needs external
@@ -78,12 +86,17 @@ acceptance checks is in **`/mnt/e/cec-corpus-private/WIRING.md` (W0–W9)** — 
 pointers to it. Two independent adversarial audits confirmed: no corpus data/keys in either repo's tree or
 history, one-way coupling holds, and the format is complete/correct against the live gate.
 
-- [ ] [added 2026-06-14 23:35 UTC] **[Secrets exposure — owner action, HIGH]** `/mnt/e/secrets` is `0o777`
-  and holds **world-readable real credentials** (`cec-bot.env` = a GitHub PAT, `cec-sudo.env` = a sudo
-  password). `chmod` is a **no-op on the DrvFs `/mnt/e` mount** (verified), so the fix is Windows ACLs
-  (`icacls`), encryption-at-rest, or moving secrets to a Linux-native 0700 path. Pre-existing, independent of
-  the corpus, but the ed25519 seed (W5) must NOT land there unprotected. — where to resume: `/mnt/e/secrets`,
-  WIRING.md W0.
+- [~] [added 2026-06-14 23:35 UTC · recalibrated 2026-06-15 00:53 UTC → LOW, accepted by owner] **[Secrets
+  perms on `/mnt/e/secrets`]** `/mnt/e/secrets` shows `0o777`; `chmod` is a no-op (it's a 9p mount with
+  `uid=1000`, no `metadata` option). Originally flagged HIGH, but **recalibrated**: not in git, single-user
+  trusted machine, and `chmod 600` wouldn't help anyway (same-user processes read it regardless; "world" in
+  WSL is just the one uid). `cec-bot.env` is **NOT dead** — it's a deliberate **least-privilege bot PAT**
+  (push-only, cannot merge: a separation-of-duties control mirroring the corpus sign-off gate; consumed by
+  `session-end.sh` when `ops/secrets/load-secrets.sh` provides it). The corpus ed25519 seed is now
+  **encrypted at rest** (age, `seed.rs`), so the volume perms don't expose it. Owner deems the residual
+  acceptable. Re-open only if `E:` is ever backed up/synced off-box, becomes multi-user, or runs untrusted
+  code — then move to encrypt-at-rest / Windows ACLs. The gh login token (broad, non-expiring, in ext4
+  `~/.config/gh` 0600) is a separate, lower-priority hygiene item.
 - [ ] [added 2026-06-14 23:35 UTC] **[Activate the no-leak guard]** Install `gitleaks` on PATH (a hard dep of
   both pre-commit hooks; make it a WSL-durability provisioning step), then `git config core.hooksPath` in BOTH
   repos (`scripts/githooks` here, `.githooks` in the private repo). Today the hooks are DORMANT — only
@@ -91,10 +104,13 @@ history, one-way coupling holds, and the format is complete/correct against the 
   activation]` item above for the corpus-boundary half.)
 - [ ] [added 2026-06-14 23:35 UTC] **[Private remote]** Create a PRIVATE GitHub repo for `cec-corpus-private`
   (or reuse `nathanfraske/cec-runs`), add it as `origin`, push. Never mirror to the public org. — WIRING.md W2.
-- [ ] [added 2026-06-14 23:35 UTC] **[corpus-ingest pipeline]** Build the deferred Rust compiler/tooling in
-  the PRIVATE repo (git-deps the public engine at `schema/PIN`; the public workspace gains nothing): scaffold
-  + keygen + the compile pipeline (YAML→de-id→attest→gate→JSONL) + verify/query + the corpus service + key
-  rotation. Full steps + acceptance checks: WIRING.md W4–W9.
+- [x] [added 2026-06-14 23:35 UTC · closed 2026-06-15 00:50 UTC → BUILT (W4–W7) in the private repo, commits `b34b916`+`400351d`; W8/W9 remain below] **[corpus-ingest pipeline]** Build the deferred Rust compiler/tooling in
+  the PRIVATE repo (git-deps the public engine at `schema/PIN`; the public workspace gains nothing). DONE:
+  keygen (age encryption-at-rest), compile (YAML→de-id→attest→gate→hash-chained JSONL), verify (chain +
+  re-admission + tail anchor); verified end-to-end incl. the engine retrieving a compiled row retrieval-first;
+  an adversarial review found+fixed a CRITICAL symptom-leak. STILL DEFERRED: W8 the HTTP corpus service,
+  W9 key rotation (WIRING.md). The seed-custody decision (W0) = **age passphrase encryption-at-rest**, now
+  implemented in `seed.rs`; the operator runs `make keygen` with their real `CEC_SEED_PASSPHRASE`.
 - [ ] [added 2026-06-14 23:35 UTC] **[Ignore residual — low]** Path-only ignores can't catch a corpus dump
   renamed to an arbitrary extension (`.txt`/`.csv`) or UPPERCASE `.FLOW.YAML`. The real defense is the hook
   grepping staged *content* for a JSONL-row / `attestation`/`fingerprint` shape — add when the hook is
