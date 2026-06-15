@@ -493,7 +493,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
             "  sandbox: no validator configured; the winner is unvalidated (unvalidated = escalate)"
         );
     }
-    let sandbox_validated = sandbox_validated_for(sandbox.as_deref(), best).await;
+    let sandbox_validated = sandbox_validated_for(sandbox.as_deref(), best, args.json).await;
     let escalation = required_escalation(&route, sandbox_validated, best, &score);
 
     let consent_needed = match best.plan.risk() {
@@ -527,11 +527,11 @@ async fn run(args: Args) -> anyhow::Result<()> {
     human!("  consent needed:  {consent_needed:?}");
 
     // Machine-readable result envelope for an embedder driving the engine as a
-    // sidecar (cec-diagnose/v1). Carries only de-identified data: vocabulary
-    // symptoms (never the request text), the hashed config class, and the plan's
-    // action vocabulary. Single line on stdout, after the human trace.
+    // sidecar (cec-diagnose/v1). De-identified by construction (see
+    // `diagnose_envelope`). The ONLY line written to stdout under --json — the
+    // human trace went to stderr via `human!`/`tprintln!`.
     if args.json {
-        emit_diagnose_envelope(
+        let envelope = diagnose_envelope(
             &signature,
             &config_class,
             &route,
@@ -539,6 +539,10 @@ async fn run(args: Args) -> anyhow::Result<()> {
             index,
             &consent_needed,
             &escalation,
+        );
+        println!(
+            "{}",
+            serde_json::to_string(&envelope).expect("diagnose envelope serializes")
         );
     }
 
@@ -611,6 +615,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
                     None,
                     Some(row_provenance.clone()),
                     signoff_authority.as_ref(),
+                    args.json,
                 )
                 .await;
                 return Ok(());
@@ -660,6 +665,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
                             None,
                             Some(row_provenance.clone()),
                             signoff_authority.as_ref(),
+                            args.json,
                         )
                         .await;
                         final_label = Some(label);
@@ -739,6 +745,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
                     Some(verdict.to_verification(class)),
                     Some(row_provenance.clone()),
                     signoff_authority.as_ref(),
+                    args.json,
                 )
                 .await;
 
@@ -851,6 +858,14 @@ fn explain_label(label: &OutcomeLabel) -> &'static str {
 /// `verification` is the verdict bound to the row so a resolved outcome is
 /// auditable against its evidence; `None` for outcomes that never executed
 /// (a withdrawn ticket, or no executable plan).
+/// Route a human-trace line to stderr under `--json` (keeping stdout pure for the
+/// single `cec-diagnose/v1` envelope) or to stdout otherwise. Module-scoped so the
+/// free helpers reached from `run()` honor the stdout contract too — the `human!`
+/// macro is local to `run()` and does not cover functions it calls.
+macro_rules! tprintln {
+    ($json:expr, $($a:tt)*) => {{ if $json { eprintln!($($a)*) } else { println!($($a)*) } }};
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn record_outcome(
     corpus: &dyn CorpusStore,
@@ -862,6 +877,7 @@ async fn record_outcome(
     verification: Option<common::Verification>,
     provenance: Option<RowProvenance>,
     authority: Option<&corpus_client::SignOffAuthority>,
+    json: bool,
 ) {
     let mut contribution = Contribution::new(
         Outcome {
@@ -882,8 +898,11 @@ async fn record_outcome(
         contribution = contribution.attested_by(authority);
     }
     match corpus.submit(&contribution).await {
-        Ok(()) => println!("  corpus: outcome recorded (label={label:?}, sign-off={sign_off:?})"),
-        Err(error) => println!("  corpus: submit refused: {error}"),
+        Ok(()) => tprintln!(
+            json,
+            "  corpus: outcome recorded (label={label:?}, sign-off={sign_off:?})"
+        ),
+        Err(error) => tprintln!(json, "  corpus: submit refused: {error}"),
     }
 }
 
@@ -906,13 +925,18 @@ fn collect_diagnostics(describe: &str) -> Vec<DiagnosticEvent> {
 /// no user data) gets a real per-plan report: a clean apply is positive
 /// evidence that lowers the escalation bar; a dirty apply or a validation error
 /// does not (it stays conservative — escalate).
-async fn sandbox_validated_for(sandbox: Option<&dyn SandboxValidator>, best: &Candidate) -> bool {
+async fn sandbox_validated_for(
+    sandbox: Option<&dyn SandboxValidator>,
+    best: &Candidate,
+    json: bool,
+) -> bool {
     let Some(validator) = sandbox else {
         return false;
     };
     match validator.validate(best).await {
         Ok(report) => {
-            println!(
+            tprintln!(
+                json,
                 "  sandbox: {} — {}",
                 if report.applied_cleanly {
                     "validated cleanly"
@@ -924,7 +948,10 @@ async fn sandbox_validated_for(sandbox: Option<&dyn SandboxValidator>, best: &Ca
             report.applied_cleanly
         }
         Err(error) => {
-            println!("  sandbox: validation failed ({error}); treating as unvalidated");
+            tprintln!(
+                json,
+                "  sandbox: validation failed ({error}); treating as unvalidated"
+            );
             false
         }
     }
@@ -960,16 +987,18 @@ fn signature_of(events: &[DiagnosticEvent]) -> FaultSignature {
     FaultSignature::from_symptoms(symptoms)
 }
 
-/// The config class for this host. A real collector derives it from the CIM
-/// hardware and driver inventory (or the BOM revision on a CEC build); the
-/// bootstrap uses the host's coarse identity so corpus rows are still scoped
-/// to like configs.
-/// Emit the `cec-diagnose/v1` machine-readable result envelope on stdout (one
-/// line) for an embedder driving the engine as a sidecar. De-identified by
-/// construction: vocabulary symptoms (never the request text), the hashed config
-/// class, and the plan's action vocabulary — nothing identity-bearing.
+/// Build the `cec-diagnose/v1` machine-readable result envelope for an embedder
+/// driving the engine as a sidecar. De-identified BY CONSTRUCTION: it carries
+/// only the hashed `fault.fingerprint`, the vocabulary `symptoms` (never the
+/// request text), the hashed `config_class`, the route/consent/escalation enums,
+/// and per candidate the `plan_id`, `source`, `max_risk`, and the **action
+/// vocabulary** (tool names). It deliberately OMITS a candidate's free-text
+/// `title`/`rationale` and a step's `description`, which can carry raw request
+/// prose (hostname/user/IP/serial) — the app maps the action vocabulary to its
+/// own human-readable labels. Returns the JSON value; the caller emits the
+/// single stdout line so the function stays unit-testable.
 #[allow(clippy::too_many_arguments)]
-fn emit_diagnose_envelope(
+fn diagnose_envelope(
     signature: &FaultSignature,
     config_class: &ConfigClass,
     route: &Route,
@@ -977,20 +1006,19 @@ fn emit_diagnose_envelope(
     selected: usize,
     consent: &Consent,
     escalation: &Escalation,
-) {
+) -> serde_json::Value {
     let cands: Vec<_> = candidates
         .iter()
         .map(|c| {
             serde_json::json!({
                 "plan_id": c.plan.id,
-                "title": c.plan.title,
                 "source": format!("{:?}", c.source),
                 "max_risk": format!("{:?}", c.plan.risk()),
-                "rationale": c.rationale,
+                "actions": c.plan.steps.iter().map(|s| s.action.clone()).collect::<Vec<_>>(),
             })
         })
         .collect();
-    let envelope = serde_json::json!({
+    serde_json::json!({
         "schema_version": "cec-diagnose/v1",
         "fault": {
             "fingerprint": signature.fingerprint,
@@ -1003,11 +1031,7 @@ fn emit_diagnose_envelope(
         "consent_required": format!("{consent:?}"),
         "escalation": format!("{escalation:?}"),
         "executed": false,
-    });
-    println!(
-        "{}",
-        serde_json::to_string(&envelope).expect("diagnose envelope serializes")
-    );
+    })
 }
 
 fn host_config_class(args: &Args) -> anyhow::Result<ConfigClass> {
@@ -1321,26 +1345,114 @@ mod tests {
 
     #[test]
     fn external_inventory_keys_are_de_identified_into_the_config_class() {
-        // An external inventory source might include identity-bearing keys. The
-        // engine never trusts that; it re-derives the config class as an
-        // order-independent HASH, so a planted hostname/mac survives only as a
-        // one-way hash, never verbatim. (The supplying tool de-identifies too; this
-        // is the engine-side backstop, per docs/integration-myown-family.md.)
+        // The engine re-derives the config class as a one-way hash of the keys, so
+        // an identity-bearing key is CONSUMED into the hash (it scopes retrieval)
+        // but never stored or echoed verbatim. These assertions bite — the earlier
+        // version checked a 16-hex hash for identity substrings, which is true by
+        // construction and could never catch a regression.
         let keys = vec![
             "os:windows 11".to_string(),
             "host:DESKTOP-NATHAN01".to_string(),
-            "mac:00:1a:2b:3c:4d:5e".to_string(),
         ];
-        let key = ExternalInventory::new(keys)
-            .config_class()
-            .key()
-            .to_lowercase();
-        for ident in ["desktop-nathan01", "00:1a:2b", "nathan", "4d:5e"] {
+        let class = ExternalInventory::new(keys.clone()).config_class();
+        // (a) it is the derived hash: 16 lowercase-hex chars, == from_inventory(keys).
+        let key = class.key();
+        assert_eq!(key.len(), 16, "expected a 16-hex DerivedHash, got {key:?}");
+        assert!(
+            key.chars().all(|c| c.is_ascii_hexdigit()) && key == key.to_lowercase(),
+            "config class is not lowercase hex: {key:?}"
+        );
+        assert_eq!(class, ConfigClass::from_inventory(keys.clone()));
+        // (b) the identity key is CONSUMED, not silently dropped: changing only the
+        // hostname changes the class (so a vacuous "ignored it" impl would fail here).
+        let other = ExternalInventory::new(vec![
+            "os:windows 11".to_string(),
+            "host:DESKTOP-OTHER99".to_string(),
+        ])
+        .config_class();
+        assert_ne!(class, other, "an identity key must affect the class");
+        // ...but the SAME facts in any order collide (order-independent hash).
+        let reordered = ExternalInventory::new(vec![
+            "host:DESKTOP-NATHAN01".to_string(),
+            "os:windows 11".to_string(),
+        ])
+        .config_class();
+        assert_eq!(class, reordered);
+    }
+
+    #[test]
+    fn diagnose_envelope_emits_no_candidate_free_text_so_request_prose_cannot_leak() {
+        // The envelope is a SEPARATE serialization path from the corpus de-id. A
+        // candidate's free-text rationale/title and a step description can carry the
+        // raw request prose (hostname/user/IP/serial); the envelope must ship only
+        // the de-identified action vocabulary. Plant identity in every free-text
+        // field and assert none survives serialization (the D1 regression guard).
+        let plant = "DESKTOP-NATHAN01 nathan 192.168.1.20 SN12345678";
+        let mut cand = heuristic_candidate("explorer.exe crashes on login 0x1234");
+        cand.rationale = format!("addresses {plant}");
+        cand.plan.title = format!("fix for {plant}");
+        for step in &mut cand.plan.steps {
+            step.description = format!("run against {plant}");
+        }
+        let sig =
+            FaultSignature::from_symptoms(extract_symptoms("explorer.exe crashes on login 0x1234"));
+        let cfg = CoarseHostInventory.config_class();
+        let env = diagnose_envelope(
+            &sig,
+            &cfg,
+            &Route::SoftwareState,
+            std::slice::from_ref(&cand),
+            0,
+            &Consent::AllowReversible,
+            &Escalation::HumanConfirm,
+        );
+        let blob = serde_json::to_string(&env).unwrap().to_lowercase();
+        for tok in ["desktop-nathan01", "nathan", "192.168.1.20", "sn12345678"] {
             assert!(
-                !key.contains(ident),
-                "identity {ident:?} leaked into the config class: {key}"
+                !blob.contains(tok),
+                "identity {tok:?} leaked into the envelope: {blob}"
             );
         }
+        // The de-identified action vocabulary IS present (the plan shape the app renders).
+        let actions = env["candidates"][0]["actions"]
+            .as_array()
+            .expect("actions array");
+        assert!(!actions.is_empty());
+    }
+
+    #[test]
+    fn diagnose_envelope_has_the_cec_diagnose_v1_shape() {
+        let cand = heuristic_candidate("explorer.exe crashes on login 0x1234");
+        let sig =
+            FaultSignature::from_symptoms(extract_symptoms("explorer.exe crashes on login 0x1234"));
+        let cfg = CoarseHostInventory.config_class();
+        let env = diagnose_envelope(
+            &sig,
+            &cfg,
+            &Route::SoftwareState,
+            std::slice::from_ref(&cand),
+            0,
+            &Consent::AllowReversible,
+            &Escalation::HumanConfirm,
+        );
+        assert_eq!(env["schema_version"], "cec-diagnose/v1");
+        assert_eq!(env["executed"], false);
+        assert_eq!(env["config_class"], cfg.key());
+        let syms: Vec<String> = sig.symptoms.iter().map(|s| s.0.clone()).collect();
+        assert_eq!(env["fault"]["symptoms"], serde_json::json!(syms));
+        // selected index is in range
+        let selected = env["selected"].as_u64().unwrap() as usize;
+        let cands = env["candidates"].as_array().unwrap();
+        assert!(selected < cands.len());
+        // each candidate carries exactly the de-identified fields — no title/rationale
+        let c0 = &cands[0];
+        for f in ["plan_id", "source", "max_risk", "actions"] {
+            assert!(c0.get(f).is_some(), "envelope candidate missing {f}");
+        }
+        assert!(
+            c0.get("title").is_none() && c0.get("rationale").is_none(),
+            "envelope candidate must not carry free-text fields"
+        );
     }
 
     #[test]
@@ -1377,15 +1489,15 @@ mod tests {
     async fn sandbox_validation_drives_the_validated_flag() {
         let best = heuristic_candidate("x");
         assert!(
-            !sandbox_validated_for(None, &best).await,
+            !sandbox_validated_for(None, &best, false).await,
             "no validator -> unvalidated (escalate)"
         );
         assert!(
-            sandbox_validated_for(Some(&FakeSandbox { clean: true }), &best).await,
+            sandbox_validated_for(Some(&FakeSandbox { clean: true }), &best, false).await,
             "a clean sandbox apply is positive validation evidence"
         );
         assert!(
-            !sandbox_validated_for(Some(&FakeSandbox { clean: false }), &best).await,
+            !sandbox_validated_for(Some(&FakeSandbox { clean: false }), &best, false).await,
             "a dirty apply stays unvalidated"
         );
     }
@@ -1486,6 +1598,7 @@ mod tests {
             Some(common::Verification::pass()),
             None,
             None,
+            false,
         )
         .await;
         // ...and run 2 facing the same signature retrieves it as precedent.

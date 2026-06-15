@@ -88,8 +88,14 @@ debugging). The envelope carries only de-identified data: vocabulary symptoms (n
 raw request text), the **hashed** config class, the plan's action vocabulary, route,
 consent level, and escalation. Fields:
 `{schema_version, fault:{fingerprint,symptoms[]}, config_class, route, candidates[],
-selected, consent_required, escalation, executed}`. Per D2, within `v1` new fields are
-additive-only; a breaking change bumps the major and the consumer errors on an unknown one.
+selected, consent_required, escalation, executed}`, where each **candidate** carries ONLY
+`{plan_id, source, max_risk, actions[]}` — the `actions` are tool-name vocabulary (e.g.
+`cim_query`, `create_restore_point`) that **AllMyStuff maps to its own human-readable
+labels**. The envelope deliberately omits a candidate's free-text `title`/`rationale` and
+a step's `description`, because those can carry the raw request prose (hostname/user/IP/
+serial); this is enforced by a de-id regression test + a process-level stdout-contract
+test. Per D2, within `v1` new fields are additive-only; a breaking change bumps the major
+and the consumer errors on an unknown one.
 
 Next: P1 (AllMyStuff-side de-id allowlist + the serde-only `diagnose` contract) — which is
 where AllMyStuff first touches the engine, and where Q1–Q5 start to bite.
