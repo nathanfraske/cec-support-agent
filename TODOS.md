@@ -97,8 +97,9 @@ Wire cec-support-agent (AGPL engine) cleanly into the MyOwn family: **AllMyStuff
 mesh-wiring "brain"), **MyOwnMesh** (MIT private mesh: identity/RPC/governance), **MyOwnLLM** (local inference).
 
 - [ ] [added 2026-06-15 01:01 UTC] Recon both repos' real APIs (AllMyStuff `allmystuff-inventory`/`-bridge`; MyOwnMesh `myownmesh-core` identity/rpc/governance) + the engine's trait seams + the AGPL↔MIT boundary
-- [ ] [added 2026-06-15 01:01 UTC] Design workflow → synthesized **integration plan** (seams: inventory→config_class; app embeds engine over a process/RPC boundary; corpus-over-mesh RPC service with device-identity attestation + owner-authorization sign-off; inference→MyOwnLLM). Land it in `docs/`
-- [ ] [added 2026-06-15 01:01 UTC] Adversarial review of the plan (license propagation, the standalone-engine invariant, no-leak across the mesh, dep-cycle avoidance) then present
+- [x] [added 2026-06-15 01:01 UTC · done 2026-06-15 01:25 UTC] Design workflow (`myown-integration-design` `wf_4462fe7a-a37`, 8 agents): mapped the real APIs (cloned both repos) + synthesized the **integration plan** → `docs/integration-myown-family.md`. Verified the 3 load-bearing claims (AllMyStuff's myownmesh Tauri-sidecar pattern is real → reuse for the engine; `allmystuff-protocol` is serde-only → license firewall; `HttpCorpus::query` is unverified → a real finding). Plan: process boundary (no link) keeps AllMyStuff MIT; P0–P4 phased; seams = inventory→config_class, sidecar brain, corpus-over-mesh, identity unification, inference→MyOwnLLM.
+- [x] [added 2026-06-15 01:01 UTC · done 2026-06-15 01:25 UTC] Surfaced engine finding → FOLLOWUPS: `HttpCorpus::query` returns server rows unverified (no admit/attestation on the read path); MeshCorpus must re-verify (P3).
+- [ ] [added 2026-06-15 01:25 UTC] Present the integration plan + 7 open questions for the owner's call; decide P0 start (the engine `--json`/`--inventory-keys` seams are the dependency-free first step)
 
 ## Done / obsolete (history)
 

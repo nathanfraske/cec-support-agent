@@ -58,6 +58,14 @@ see `.claude/audit/confirmed-findings.txt` and HANDOFFS). These are the deeper r
   to resume: `crates/corpus-client/src/schema.rs` (chain_hash) + `crates/corpus-client/src/store.rs`
   (verify_chain / with_authority). Subsumes the **tail-truncation** residual (a hash chain cannot detect
   removal of trailing rows without an external/length anchor) noted in `RowIntegrity`'s doc.
+- [ ] [added 2026-06-15 01:25 UTC] **[HttpCorpus read-path is unverified]** `HttpCorpus::query`
+  (`crates/corpus-client/src/store.rs:425-453`) returns the server's `FixMapping`s with NO `admit()` and NO
+  attestation check — the submit path is gated but the **read** path trusts the corpus server entirely. A
+  malicious/compromised server could feed forged precedents the engine uses retrieval-first. Surfaced by the
+  MyOwn-integration design. Fix: the new `MeshCorpus` MUST re-verify the ed25519 attestation on every received
+  row (planned, P3 acceptance (d) in `docs/integration-myown-family.md`); apply the same hardening to
+  `HttpCorpus` (carry attestation-bearing rows on the query path, or re-verify). — where to resume:
+  `crates/corpus-client/src/store.rs` (HttpCorpus::query) + the mesh adapter.
 - [ ] [added 2026-06-14 23:05 UTC] **[chain_hash canonical encoding]** `chain_hash` now carries a version
   prefix (`cec-corpus-chain-v1`) but still hashes the `serde_json` image of the row — coupled to struct
   field order, fine for same-code recompute but not cross-language. If the chain ever needs external

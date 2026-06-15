@@ -91,8 +91,11 @@ public endpoint) with mesh **device-identity → config_class/provenance attesta
 → the sign-off gate** (HumanConfirmed; "authorization not authentication" maps cleanly); **(d)** inference →
 MyOwnLLM. Clean-integration invariant: the engine stays standalone (cold-start, no mesh required) and exposes
 **trait seams** (it already has `host_inventory()`, `CorpusStore`, `SandboxValidator`); the MyOwn crates
-provide **adapters** — deps point app→engine→mesh, never a cycle. A design workflow is mapping the real APIs +
-synthesizing a phased plan (will land in `docs/`). **Reactive:** PR #2 review comments; the deferred
+provide **adapters** — deps point app→engine→mesh, never a cycle. **The plan is written:
+`docs/integration-myown-family.md`** (process boundary keeps AllMyStuff MIT; P0–P4 phased; 3 load-bearing
+claims verified; surfaced a real engine finding — `HttpCorpus::query` is unverified, in FOLLOWUPS). NEXT:
+owner decides the 7 open questions + whether to start P0 (the engine `--json`/`--inventory-keys` seams — the
+dependency-free first step). **Reactive:** PR #2 review comments; the deferred
 `FOLLOWUPS.md` residuals (keyless-chain anchor, chain_hash canonical encoding, rotation registry, Windows-CIM,
 real-VM-backend, research-tree). Build loop: `. "$HOME/.cargo/env"` then `cargo build/test/clippy/fmt --workspace` (run
 cargo with `dangerouslyDisableSandbox`). Per-fix status is in `TODOS.md`; confirmed findings in
