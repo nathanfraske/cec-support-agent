@@ -113,13 +113,17 @@ query path** (P3 acceptance (d)), and the same hardening should be considered fo
 Each phase is independently shippable with an acceptance check; the engine stays
 green and standalone throughout.
 
-- **P0 — Engine machine-output + inventory seams** *(in-tree, AGPL, additive)*. Add
-  `--json` (versioned result envelope; human output stays default) and `--inventory-keys
-  <file|->`; add `common::inventory.rs` with the `InventoryProvider` trait +
+- **P0 — Engine machine-output + inventory seams** *(in-tree, AGPL, additive)* — **DONE
+  (this branch).** Added `--json` (the `cec-diagnose/v1` result envelope) and
+  `--inventory-keys <file|->`; `common::inventory.rs` with the `InventoryProvider` trait +
   `CoarseHostInventory` (today's os/arch/family default) + `ExternalInventory`; an
-  engine-side de-id regression test on the `--inventory-keys` path. **Accept:** a bare
-  `diagnose` yields a byte-identical `DerivedHash` to today; cold-start unchanged; a
-  planted hostname/mac in `--inventory-keys` survives only as a one-way hash. *(depends: none)*
+  engine-side de-id regression test on the `--inventory-keys` path. **Wire contract:**
+  under `--json`, **stdout is exactly one line — the JSON envelope — and the human trace
+  goes to stderr**, so an embedder reads one JSON object off stdout (robust under
+  `--sign-off` too; not "parse the last line"). **Accept (verified):** a bare `diagnose`
+  yields a byte-identical `DerivedHash` to today; cold-start unchanged; a planted
+  hostname/mac in `--inventory-keys` survives only as a one-way hash; `--json` stdout
+  parses as a single `cec-diagnose/v1` object. *(depends: none)*
 - **P1 — App-side de-id allowlist + serde-only diagnose contract** *(MIT, in AllMyStuff)*.
   `inventory_to_config_keys()` (KEEP allowlist; explicit DROP of hostname/mac/ip/serial;
   memory bucketed); `allmystuff-protocol::diagnose` serde-only mirror. **Accept:**
