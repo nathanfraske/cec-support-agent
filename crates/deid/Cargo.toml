@@ -1,0 +1,11 @@
+[package]
+name = "deid"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Validating de-identification mints: a corpus-bound value must pass a positive content allowlist, not merely come from a trusted chokepoint."
+
+[dependencies]
+common = { workspace = true }

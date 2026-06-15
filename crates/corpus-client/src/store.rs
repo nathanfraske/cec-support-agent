@@ -510,6 +510,7 @@ mod tests {
             config_class(),
             sign_off,
         )
+        .expect("test contribution de-identifies")
     }
 
     #[tokio::test]
@@ -960,6 +961,7 @@ mod tests {
             ConfigClass::BomRevision("x".into()),
             SignOff::HumanConfirmed,
         )
+        .expect("test contribution de-identifies")
         .attested_by(&authority);
         // Flip to the other variant with the same inner key.
         row.config_class = ConfigClass::DerivedHash("x".into());

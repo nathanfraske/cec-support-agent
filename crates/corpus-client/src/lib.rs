@@ -46,21 +46,17 @@ mod leakage_tests {
     use super::*;
     use common::{extract_symptoms, ConfigClass, FaultSignature, Plan, PlanStep, Risk};
 
-    /// Identifiers seeded through the pipeline. None may survive into a
-    /// serialized corpus row, under any casing.
-    const SEEDED_IDENTIFIERS: &[&str] = &[
-        "desktop-nathan01",
-        "nathan",
-        "c:\\users",
-        "nathan@example.com",
-        "192.168.1.20",
-        "00:1a:2b:3c:4d:5e",
-        "sn12345678",
-    ];
+    /// Identity tokens seeded through the pipeline — the SINGLE source of truth
+    /// from `leakguard`, so a new test cannot quietly narrow the set (the gap that
+    /// let the old suite pass green while `action`/`id` leaked verbatim).
+    use leakguard::POISON;
 
-    /// A support request and a (hostile) model-written plan, both saturated
-    /// with identity, as the worst realistic input.
-    fn seeded_contribution() -> Contribution {
+    /// A support request and a model-written plan saturated with identity in the
+    /// FREE-TEXT fields (describe/title/description) but with a CLEAN, in-vocabulary
+    /// `action`/`id` — the case that legitimately de-identifies (the free text is
+    /// stripped to the action vocabulary). `Contribution::new` must succeed and the
+    /// row must leak nothing.
+    fn clean_contribution() -> Contribution {
         let describe = "DESKTOP-NATHAN01 (user nathan, MAC 00:1A:2B:3C:4D:5E, \
                         serial SN12345678): explorer.exe crashes on login, WER \
                         bucket 0x1234; logs under C:\\Users\\nathan; contact \
@@ -83,24 +79,18 @@ mod leakage_tests {
             ConfigClass::from_inventory(["os:windows 11 23h2", "gpu:rtx-4070"]),
             SignOff::HumanConfirmed,
         )
+        .expect("a clean-action plan de-identifies")
     }
 
     #[test]
     fn no_seeded_identifier_reaches_a_serialized_corpus_row() {
-        let row = serde_json::to_string(&seeded_contribution())
-            .expect("contribution serializes")
-            .to_lowercase();
-        for identifier in SEEDED_IDENTIFIERS {
-            assert!(
-                !row.contains(identifier),
-                "identifier {identifier:?} leaked into the corpus row: {row}"
-            );
-        }
+        let row = serde_json::to_string(&clean_contribution()).expect("contribution serializes");
+        leakguard::assert_no_poison(&row, "corpus row");
     }
 
     #[test]
     fn the_row_still_carries_the_structured_evidence() {
-        let row = seeded_contribution();
+        let row = clean_contribution();
         let symptoms: Vec<&str> = row
             .outcome
             .signature
@@ -112,6 +102,63 @@ mod leakage_tests {
         assert!(symptoms.contains(&"0x1234"));
         assert_eq!(row.outcome.plan.steps[0].action, "driver_rollback");
         assert_eq!(row.outcome.plan.steps[0].description, "driver_rollback");
+    }
+
+    // --- The C1 regression guards: the two fields `de_identify_plan` historically
+    //     copied VERBATIM and the old suite never seeded. Identity placed here must
+    //     now ABORT the row, not ride into it.
+
+    #[test]
+    fn a_poisoned_action_is_refused_not_copied_through() {
+        let signature = FaultSignature::from_symptoms(extract_symptoms("explorer.exe 0x1234"));
+        let mut plan = Plan::new("heuristic-1", "title");
+        plan.steps.push(PlanStep {
+            description: "x".into(),
+            // The documented agent mistake: a generator routes prose into `action`
+            // ("powershell ... DESKTOP-NATHAN01") — identity in the action field.
+            action: format!("powershell on {}", POISON[0]),
+            risk: Risk::ReadOnly,
+        });
+        let refused = Contribution::new(
+            Outcome {
+                signature,
+                plan,
+                label: OutcomeLabel::ResolvedConfirmed,
+                verification: Some(common::Verification::pass()),
+            },
+            ConfigClass::from_inventory(["os:windows"]),
+            SignOff::HumanConfirmed,
+        );
+        assert!(
+            refused.is_err(),
+            "a poisoned action must be REFUSED by the de-id mint, not copied into the row"
+        );
+    }
+
+    #[test]
+    fn a_poisoned_plan_id_is_refused() {
+        let signature = FaultSignature::from_symptoms(extract_symptoms("explorer.exe 0x1234"));
+        // An id built from request text: format!("fix for {describe}") — spaces/caps.
+        let mut plan = Plan::new("fix for DESKTOP-NATHAN01", "title");
+        plan.steps.push(PlanStep {
+            description: "x".into(),
+            action: "cim_query".into(),
+            risk: Risk::ReadOnly,
+        });
+        let refused = Contribution::new(
+            Outcome {
+                signature,
+                plan,
+                label: OutcomeLabel::ResolvedConfirmed,
+                verification: Some(common::Verification::pass()),
+            },
+            ConfigClass::from_inventory(["os:windows"]),
+            SignOff::HumanConfirmed,
+        );
+        assert!(
+            refused.is_err(),
+            "a poisoned plan id must be REFUSED by the de-id mint"
+        );
     }
 
     #[test]
@@ -127,7 +174,7 @@ mod leakage_tests {
             action: "registry_set".into(),
             risk: Risk::Reversible,
         });
-        let row = de_identify_plan(&plan);
+        let row = de_identify_plan(&plan).expect("clean actions de-identify");
         assert_eq!(row.id, "p");
         assert_eq!(row.title, "cim_query -> registry_set");
         assert_eq!(row.risk(), Risk::Reversible);

@@ -182,18 +182,24 @@ pub struct Contribution {
 impl Contribution {
     /// Build a contribution from an outcome, its config class, and its
     /// sign-off state. The outcome's plan is de-identified here, so a raw
-    /// plan cannot enter a contribution at all. The attestation is unset;
-    /// attach one with [`Contribution::attested_by`].
-    pub fn new(mut outcome: Outcome, config_class: ConfigClass, sign_off: SignOff) -> Self {
-        outcome.plan = de_identify_plan(&outcome.plan);
-        Self {
+    /// plan cannot enter a contribution at all — and the de-id is validating:
+    /// an out-of-vocabulary action or a prose-bearing plan id refuses the row
+    /// (see [`de_identify_plan`]) instead of being copied through. The
+    /// attestation is unset; attach one with [`Contribution::attested_by`].
+    pub fn new(
+        mut outcome: Outcome,
+        config_class: ConfigClass,
+        sign_off: SignOff,
+    ) -> Result<Self, deid::Reject> {
+        outcome.plan = de_identify_plan(&outcome.plan)?;
+        Ok(Self {
             outcome,
             config_class,
             sign_off,
             attestation: None,
             provenance: None,
             integrity: None,
-        }
+        })
     }
 
     /// Record how this row was produced (run id, retrieval-first, primed-from)
@@ -359,23 +365,34 @@ fn label_tag(label: &OutcomeLabel) -> String {
 /// Step descriptions and the plan title are where model output and request
 /// prose — and therefore hostnames, usernames, and paths — can hide; the
 /// corpus row carries the action vocabulary instead.
-pub fn de_identify_plan(plan: &Plan) -> Plan {
+///
+/// The kept fields are minted, not copied: `step.action` must be a member of
+/// the frozen [`deid::ACTION_VOCABULARY`] and `plan.id` a clean bounded slug.
+/// Both were historically copied through verbatim — the keystone leak vector
+/// (C1) of `docs/corpus-leak-prevention.md` — so identity routed into either
+/// field now aborts the row instead of riding into it.
+pub fn de_identify_plan(plan: &Plan) -> Result<Plan, deid::Reject> {
+    let id = deid::plan_id(&plan.id)?;
+    let steps = plan
+        .steps
+        .iter()
+        .map(|step| {
+            let action = deid::action(&step.action)?;
+            Ok(common::PlanStep {
+                description: action.clone(),
+                action,
+                risk: step.risk,
+            })
+        })
+        .collect::<Result<Vec<_>, deid::Reject>>()?;
     let mut row = Plan::new(
-        plan.id.clone(),
-        plan.steps
+        id,
+        steps
             .iter()
             .map(|step| step.action.as_str())
             .collect::<Vec<_>>()
             .join(" -> "),
     );
-    row.steps = plan
-        .steps
-        .iter()
-        .map(|step| common::PlanStep {
-            description: step.action.clone(),
-            action: step.action.clone(),
-            risk: step.risk,
-        })
-        .collect();
-    row
+    row.steps = steps;
+    Ok(row)
 }

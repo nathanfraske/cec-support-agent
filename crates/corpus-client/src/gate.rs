@@ -132,7 +132,9 @@ mod tests {
         let mut plan = Plan::new("p1", "fix");
         plan.steps.push(PlanStep {
             description: "do".into(),
-            action: "act".into(),
+            // A real tool name — the validating de-id mint rejects out-of-vocabulary
+            // actions, and these tests exercise the gate, not the action vocabulary.
+            action: "cim_query".into(),
             risk,
         });
         plan
@@ -154,6 +156,7 @@ mod tests {
             config_class(),
             sign_off,
         )
+        .expect("test contribution de-identifies")
     }
 
     #[test]
