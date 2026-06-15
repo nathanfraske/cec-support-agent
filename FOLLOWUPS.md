@@ -78,12 +78,17 @@ acceptance checks is in **`/mnt/e/cec-corpus-private/WIRING.md` (W0–W9)** — 
 pointers to it. Two independent adversarial audits confirmed: no corpus data/keys in either repo's tree or
 history, one-way coupling holds, and the format is complete/correct against the live gate.
 
-- [ ] [added 2026-06-14 23:35 UTC] **[Secrets exposure — owner action, HIGH]** `/mnt/e/secrets` is `0o777`
-  and holds **world-readable real credentials** (`cec-bot.env` = a GitHub PAT, `cec-sudo.env` = a sudo
-  password). `chmod` is a **no-op on the DrvFs `/mnt/e` mount** (verified), so the fix is Windows ACLs
-  (`icacls`), encryption-at-rest, or moving secrets to a Linux-native 0700 path. Pre-existing, independent of
-  the corpus, but the ed25519 seed (W5) must NOT land there unprotected. — where to resume: `/mnt/e/secrets`,
-  WIRING.md W0.
+- [~] [added 2026-06-14 23:35 UTC · recalibrated 2026-06-15 00:53 UTC → LOW, accepted by owner] **[Secrets
+  perms on `/mnt/e/secrets`]** `/mnt/e/secrets` shows `0o777`; `chmod` is a no-op (it's a 9p mount with
+  `uid=1000`, no `metadata` option). Originally flagged HIGH, but **recalibrated**: not in git, single-user
+  trusted machine, and `chmod 600` wouldn't help anyway (same-user processes read it regardless; "world" in
+  WSL is just the one uid). `cec-bot.env` is **NOT dead** — it's a deliberate **least-privilege bot PAT**
+  (push-only, cannot merge: a separation-of-duties control mirroring the corpus sign-off gate; consumed by
+  `session-end.sh` when `ops/secrets/load-secrets.sh` provides it). The corpus ed25519 seed is now
+  **encrypted at rest** (age, `seed.rs`), so the volume perms don't expose it. Owner deems the residual
+  acceptable. Re-open only if `E:` is ever backed up/synced off-box, becomes multi-user, or runs untrusted
+  code — then move to encrypt-at-rest / Windows ACLs. The gh login token (broad, non-expiring, in ext4
+  `~/.config/gh` 0600) is a separate, lower-priority hygiene item.
 - [ ] [added 2026-06-14 23:35 UTC] **[Activate the no-leak guard]** Install `gitleaks` on PATH (a hard dep of
   both pre-commit hooks; make it a WSL-durability provisioning step), then `git config core.hooksPath` in BOTH
   repos (`scripts/githooks` here, `.githooks` in the private repo). Today the hooks are DORMANT — only
