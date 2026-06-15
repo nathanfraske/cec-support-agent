@@ -15,11 +15,16 @@ Below "Pick up here", keep a reverse-chronological **handoff log** of dated entr
 
 ## Current state
 
-**As of 2026-06-15 ~02:15 UTC.** On branch **`feat/myown-integration-p0`**. **MyOwn-family integration P0 is
-BUILT + verified + PUSHED as stacked PR #3** (base = PR #2's branch). All gates green. **PR #2's red CI is
-FIXED** — the fmt fix was pushed and PR #2's `check` jobs now pass on ubuntu/macos/windows. Owner approved
-"push both." Only remaining red anywhere: the **pre-existing `secrets`/gitleaks job** (not a regression, not
-merge-blocking today — FOLLOWUPS).
+**As of 2026-06-15 ~02:30 UTC.** On branch **`feat/myown-integration-p0`**. **MyOwn-family integration P0 is
+BUILT + verified + PUSHED as stacked PR #3** (base = PR #2's branch). **Both PR #2 and PR #3 are now FULLY
+GREEN on CI** — every job (check ×3 OSes, audit, secrets) passes on both triggers, zero failures.
+- The earlier **fmt regression** (PR #2's `11f0609`) was fixed (`538cd43`) and pushed.
+- The **`secrets`/gitleaks job** was triaged (workflow `wf_60234519-881`) — root cause was a missing
+  `GITHUB_TOKEN` env (gitleaks-action@v2 breaking change for PR-event scans), NOT a leak (gitleaks full-history
+  + an independent 10-method cross-check both `all_clear`). FIXED in `.github/workflows/ci.yml`: added the token
+  env + a scoped `permissions` block, and bumped `checkout@v4→v5` + `gitleaks-action@v2→v3` to clear the
+  2026-06-16 Node-20 cutover. Applied to both branches (no force-push): PR #3 `53dd992`, PR #2 cherry-pick
+  `951ae82`. Owner approved each push.
 
 - **P0 (DONE, this branch):** the engine's dependency-free machine-output + inventory seams.
   - `crates/common/src/inventory.rs` — `InventoryProvider` trait + `CoarseHostInventory` (today's
@@ -110,9 +115,11 @@ commit on branch `feat/agent-ops-evidence-integrity`.
 
 **ACTIVE — both PRs pushed and green (except the pre-existing secrets job); next is review + direction:**
 
-1. **PR #2 + PR #3 are up and `check`-green.** Merge order: **PR #2 first**, then PR #3 (it auto-retargets to
-   `main`). The `secrets`/gitleaks job is red on both but pre-existing and not merge-blocking (branch protection
-   is not enabled — WIRING W1); triage it separately (FOLLOWUPS) before turning protection on.
+1. **PR #2 + PR #3 are up and FULLY green** (check ×3 OS + audit + secrets, zero failures). Merge order:
+   **PR #2 first**, then PR #3 (it auto-retargets to `main`). The ci.yml fix appears as a commit on both
+   branches (identical content) — when PR #2 merges, git/GitHub dedupes the identical patch, so PR #3 stays
+   clean. CI hygiene nice-to-haves (double-trigger+concurrency, cargo-deny-action, SHA-pin+dependabot) are
+   deferred in FOLLOWUPS (no deadline). Branch protection still off (WIRING W1) — safe to enable now that CI is green.
 2. **Chris's input on RFC Q1–Q5** (`docs/integration-rfc-for-chris.md`) unblocks P3/P4. Have the owner review
    the RFC, then send it to Chris.
 3. **P1/P2 is the natural next build step** — AllMyStuff-side `inventory_to_config_keys()` de-id allowlist +
@@ -284,6 +291,17 @@ See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementati
 
 ## Handoff log (reverse-chronological)
 
+- **2026-06-15 02:30 UTC** — **Triaged + fixed the `secrets`/gitleaks CI job → both PRs fully green.** Scouted
+  the failure inline (the PR-event run errored "GITHUB_TOKEN is now required to scan pull requests"; the
+  push-event run passed clean), downloaded gitleaks 8.24.3 and scanned the FULL history (36 commits) + working
+  tree → `no leaks found`. Ran workflow `wf_60234519-881` (4 agents) to adversarially verify the exact fix
+  (permissions/fork-PR nuance), audit adjacent CI issues, and independently cross-check for real secrets
+  (10 methods, `all_clear`). Applied to `.github/workflows/ci.yml`: `GITHUB_TOKEN` env + `permissions` block +
+  `checkout@v4→v5` + `gitleaks-action@v2→v3` (the Node-20→24 cutover is 2026-06-16). Landed on both branches
+  no-force (PR #3 `53dd992`; PR #2 cherry-pick `951ae82` via a throwaway worktree, leaving the dirty tracking
+  files untouched). CI settled fully green on both PRs (check×3 + audit + secrets, 0 failures). Deferred CI
+  hygiene → FOLLOWUPS. **Lesson:** gitleaks-action@v2+ needs `GITHUB_TOKEN` in `env` for `pull_request` events
+  — a missing-token fail looks identical to a "secret found" red X; always read the job log before assuming a leak.
 - **2026-06-15 02:00 UTC** — **MyOwn integration P0 BUILT + fixed PR #2's red CI.** Owner greenlit (single-shot
   CLI, versioning = agent's call, the rest → an RFC for Chris). Implemented P0 on `feat/myown-integration-p0`:
   `common::InventoryProvider`/`CoarseHostInventory`/`ExternalInventory` (`inventory.rs`), CLI `--inventory-keys`
