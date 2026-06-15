@@ -1,5 +1,15 @@
 name: ci
 on: [push, pull_request]
+
+# Cancel superseded runs on the same ref (rapid pushes) to save CI time.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Third-party actions are pinned to a full commit SHA (immutable) with a version
+# comment; .github/dependabot.yml bumps them. First-party actions/checkout is
+# pinned too. dtolnay/rust-toolchain pins the `stable` branch HEAD (it still
+# installs the stable toolchain — the selector is baked into the action).
 jobs:
   check:
     strategy:
@@ -7,8 +17,8 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.0
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           components: rustfmt, clippy
       - run: cargo fmt --all -- --check
@@ -18,20 +28,19 @@ jobs:
   audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo install cargo-deny --locked
-      - run: cargo deny check
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.0
+      # Prebuilt cargo-deny (no compile-from-source every run); honors ./deny.toml.
+      - uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2
   secrets:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.0
         with:
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@v3
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3
         env:
           # gitleaks-action@v2+ requires GITHUB_TOKEN to scan pull_request events.
           # No GITLEAKS_LICENSE needed (this is an individual-user repo).
