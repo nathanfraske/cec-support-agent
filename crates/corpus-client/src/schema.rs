@@ -270,7 +270,13 @@ pub(crate) fn attestation_message(c: &Contribution) -> Vec<u8> {
         Some(v) => {
             let mut recurring: Vec<&str> = v.recurring.iter().map(|x| x.0.as_str()).collect();
             recurring.sort_unstable();
-            let _ = writeln!(s, "ver:{:?};class={:?};rec:{}", v.result, v.class, recurring.len());
+            let _ = writeln!(
+                s,
+                "ver:{:?};class={:?};rec:{}",
+                v.result,
+                v.class,
+                recurring.len()
+            );
             for r in &recurring {
                 lp(&mut s, "rec", r);
             }

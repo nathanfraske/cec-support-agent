@@ -478,7 +478,9 @@ impl CorpusStore for HttpCorpus {
 mod tests {
     use super::*;
     use crate::schema::{chain_hash, Outcome, OutcomeLabel, RowIntegrity, RowProvenance, SignOff};
-    use common::{FaultSignature, Plan, Symptom, Verification, VerificationClass, VerificationResult};
+    use common::{
+        FaultSignature, Plan, Symptom, Verification, VerificationClass, VerificationResult,
+    };
 
     fn config_class() -> ConfigClass {
         ConfigClass::from_inventory(["os:windows 11", "gpu:rtx-4070"])
@@ -1100,7 +1102,11 @@ mod tests {
                 .expect("reopen replay");
         }
         let hits = corpus.query(&sig, &config_class()).await.expect("query");
-        assert_eq!(hits.len(), 1, "two confirmations survive one replayed reopen");
+        assert_eq!(
+            hits.len(),
+            1,
+            "two confirmations survive one replayed reopen"
+        );
         assert_eq!(
             hits[0].confirmations, 1,
             "2 confirmations net exactly 1 distinct reopen run"
@@ -1152,8 +1158,10 @@ mod tests {
         // chain link" splice path — a tamper, not silent acceptance.
         let path = TempPath::new("mixed-chain");
         let legacy = contribution(OutcomeLabel::ResolvedConfirmed, SignOff::HumanConfirmed);
-        let mut chained =
-            contribution(OutcomeLabel::ResolvedProvisional, SignOff::VerifierConfirmed);
+        let mut chained = contribution(
+            OutcomeLabel::ResolvedProvisional,
+            SignOff::VerifierConfirmed,
+        );
         let hash = chain_hash("", &chained);
         chained.integrity = Some(RowIntegrity {
             prev: String::new(),
