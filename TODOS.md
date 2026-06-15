@@ -124,6 +124,16 @@ mesh-wiring "brain"), **MyOwnMesh** (MIT private mesh: identity/RPC/governance),
 - [x] [added 2026-06-15 02:35 UTC · done 2026-06-15 02:42 UTC] Track 2 — reconcile the stale FOLLOWUPS: verified each engine-gap item against the current code, tombstoned 5 fully-done (MH-1 wiring, canonicalization, MH-2 remainder, EI-03, MH-4/8/EI-06) + 3 partials (MH-6/A7, MH-5, sandbox-evidence) with the implementing PR #2 increment/commit; re-filed the 4 residuals. Section went ~12 open → 6 open / 11 closed.
 - [x] [added 2026-06-15 02:35 UTC · done 2026-06-15 03:10 UTC] Track 3 — finish CI hardening: added `concurrency` block, swapped audit → `EmbarkStudios/cargo-deny-action@v2` (honors `deny.toml`), SHA-pinned all third-party actions + `.github/dependabot.yml` (github-actions, weekly). Committed `673a381` (PR #3) / cherry-picked `b7ad864` (PR #2); CI re-verifying (background poll). Did NOT scope `on: push` to main (trade-off, outside chosen scope) → noted in FOLLOWUPS.
 
+### Corpus leak-prevention methodology (owner, 2026-06-15 03:11 UTC)
+
+Codify + enforce prevention of ALL corpus identity-leak vectors, incl. ones an agent could accidentally
+introduce (the D1 envelope leak this session was exactly that). Bar: a leak must be a compile-error / CI-fail /
+blocked commit — NOT discipline.
+
+- [x] [added 2026-06-15 03:12 UTC · done 2026-06-15 03:12 UTC] Recon existing de-id model + rails: "de-id by structured EXTRACTION not scrubbing" (extract_symptoms charset; de_identify_plan at the `Contribution::new` chokepoint); boundary rails (gitignore/pre-commit/gitleaks/BOUNDARY.md, hook DORMANT in fresh clones); authored-corpus `corpus-ingest` validate gate. Structural weakness: de-id is a chokepoint discipline, raw domain objects flow freely → any new sink bypasses it (D1).
+- [ ] [added 2026-06-15 03:12 UTC] Design workflow `wf_148ceb35-f02` (15 agents): map every leak vector (7 classes) → design layered codified enforcement (type-system chokepoint, poison-set property/fuzz harness, CI/lint/boundary gate, agent-policy) → red-team → synthesize `docs/corpus-leak-prevention.md` + phased plan.
+- [ ] [added 2026-06-15 03:12 UTC] Present the methodology + phased plan; implement the foundation (likely `DeIdentified<T>` chokepoint + the poison-set harness that would have caught D1 at compile/CI time).
+
 ## Done / obsolete (history)
 
 _(completed items stay above, in place, with their `· done` tombstone)_
