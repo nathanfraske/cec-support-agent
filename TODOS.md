@@ -91,6 +91,15 @@ the corpus service.
 - [x] [added 2026-06-15 01:01 UTC · done 2026-06-15 01:15 UTC] Paper-ready checklist tie-in: `docs/evidence-integrity-and-research-checklist.md` **A10** — curated ground truth is admissibility/de-id-gated reproducibly (seedless `corpus-ingest check` + CI) → every paper-backing entry is admissible + de-identified by construction. Public `271db03` (local; push to PR #2 pending owner OK).
 - [ ] [added 2026-06-15 00:50 UTC] Remaining (operator/deferred): W0 run `make keygen` (real passphrase); W1 install gitleaks + activate hooks + enable branch protection on the private remote (requires the validate-corpus check + a review); W2 private remote; W8 the HTTP service; W9 key rotation. Plus the LOW/accepted `/mnt/e/secrets` perms note.
 
+### MyOwn-family integration plan (owner, 2026-06-15 01:01 UTC)
+
+Wire cec-support-agent (AGPL engine) cleanly into the MyOwn family: **AllMyStuff** (MIT device-inventory +
+mesh-wiring "brain"), **MyOwnMesh** (MIT private mesh: identity/RPC/governance), **MyOwnLLM** (local inference).
+
+- [ ] [added 2026-06-15 01:01 UTC] Recon both repos' real APIs (AllMyStuff `allmystuff-inventory`/`-bridge`; MyOwnMesh `myownmesh-core` identity/rpc/governance) + the engine's trait seams + the AGPL↔MIT boundary
+- [ ] [added 2026-06-15 01:01 UTC] Design workflow → synthesized **integration plan** (seams: inventory→config_class; app embeds engine over a process/RPC boundary; corpus-over-mesh RPC service with device-identity attestation + owner-authorization sign-off; inference→MyOwnLLM). Land it in `docs/`
+- [ ] [added 2026-06-15 01:01 UTC] Adversarial review of the plan (license propagation, the standalone-engine invariant, no-leak across the mesh, dep-cycle avoidance) then present
+
 ## Done / obsolete (history)
 
 _(completed items stay above, in place, with their `· done` tombstone)_

@@ -15,22 +15,26 @@ Below "Pick up here", keep a reverse-chronological **handoff log** of dated entr
 
 ## Current state
 
-**As of 2026-06-14 ~23:40 UTC.** Two things are done this session: (1) the engine audit-fix (PR #2), and
-(2) the **private corpus** structure + ground-truth YAML format.
+**As of 2026-06-15 ~01:15 UTC.** Done this session: (1) the engine audit-fix (PR #2), (2) the **private
+corpus** structure + format + the `corpus-ingest` compiler + the seedless validation gate. Active next:
+(3) a clean **MyOwn-family integration** plan (AllMyStuff / MyOwnMesh) — see "Pick up here".
 
 - **(1) Engine audit-fix:** 14 findings FIXED + verified; **PR #2**
   (https://github.com/nathanfraske/cec-support-agent/pull/2), branch `feat/agent-ops-evidence-integrity` at
   `11f0609`; 159 tests green.
 - **(2) Private corpus:** a SEPARATE off-tree private git repo at **`/mnt/e/cec-corpus-private`** (HEAD
-  `400351d`) holds the YAML ground-truth fix-flow format (`cec-fix-flow/v1`), templates, lint, vocabulary,
+  `5c5d15c`) holds the YAML ground-truth fix-flow format (`cec-fix-flow/v1`), templates, lint, vocabulary,
   no-leak rails, AND the **`corpus-ingest` compiler (W4–W7, BUILT + verified end-to-end)**: `keygen` (seed
   age-encrypted at rest), `compile` (de-id → attest → gate → hash-chained JSONL), `verify`. Proven loop:
   author YAML → compile → the engine retrieves it retrieval-first (`CorpusPrimed`). An adversarial code review
-  found + fixed one CRITICAL symptom-leak. The PUBLIC repo's matching rails (`BOUNDARY.md`, hardened
-  `.gitignore`/pre-commit) are on **PR #2** (`920e22a`). Still deferred: W1 (gitleaks+activate hooks), W2
-  (private remote), W8 (HTTP service), W9 (rotation). **Operator's first step:** `make keygen` with a real
-  `CEC_SEED_PASSPHRASE`. **Open HIGH item:** `/mnt/e/secrets` world-readable PAT+sudo; `chmod` is a no-op on
-  DrvFs (FOLLOWUPS).
+  found + fixed one CRITICAL symptom-leak. **The seedless `corpus-ingest check` validation gate** (private
+  `5c5d15c`) + a CI merge-gate (`.github/workflows/validate.yml`) now mechanize **propose-then-authorize**: a
+  bot may push but cannot merge an inadmissible/leaky entry; paper-ready checklist item **A10** (public
+  `271db03`, local) records it. The PUBLIC repo's matching rails (`BOUNDARY.md`, hardened `.gitignore`/
+  pre-commit) are on **PR #2** (`920e22a`). Still deferred: W1 (gitleaks+activate hooks + branch protection),
+  W2 (private remote), W8 (HTTP/mesh service), W9 (rotation). **Operator's first step:** `make keygen` with a
+  real `CEC_SEED_PASSPHRASE`. **Secrets note (LOW, accepted):** `/mnt/e/secrets` perms recalibrated — the bot
+  PAT is a deliberate push-only control, the seed is encrypted at rest (FOLLOWUPS).
 
 - **Audit:** re-ran the `autodiagnoser-engine-audit` workflow (`wf_5c1c16b9-613`) — the previous agent's run
   had not persisted results and no live task survived. 23 agents, ~1M tokens: 18 findings verified →
@@ -72,11 +76,25 @@ commit on branch `feat/agent-ops-evidence-integrity`.
 ## Pick up here
 
 Branch `feat/agent-ops-evidence-integrity` is **presented for review as PR #2**
-(https://github.com/nathanfraske/cec-support-agent/pull/2). Nothing is blocking. Next steps are reactive:
-**(1)** address any PR review comments; **(2)** when the PR merges, the remaining work is all deferred in
-`FOLLOWUPS.md` — the 3 new audit residuals (key/anchor the keyless chain head; chain_hash canonical encoding;
-key-rotation × at-rest re-admission) plus the pre-existing engine GAP / Windows-CIM / real-VM-backend /
-research-tree items. Build loop: `. "$HOME/.cargo/env"` then `cargo build/test/clippy/fmt --workspace` (run
+(https://github.com/nathanfraske/cec-support-agent/pull/2).
+
+**ACTIVE NEXT TASK (2026-06-15): design the clean MyOwn-family integration.** cec-support-agent (AGPL) is "the
+engine behind the AllMyStuff brain." The family (org `mrjeeves`, dev `nathanfraske`): **AllMyStuff** (MIT,
+Tauri+Svelte+Rust device-inventory + mesh-wiring "brain"; crates incl. `allmystuff-inventory`,
+`allmystuff-bridge`, `allmystuff-graph`), **MyOwnMesh** (MIT, pure-Rust private mesh — `myownmesh-core` with
+`identity.rs` / `protocol/rpc.rs` / `protocol/governance.rs`, + STUN/TURN + Nostr signaling), **MyOwnLLM**
+(local inference). Integration seams identified: **(a)** AllMyStuff `allmystuff-inventory` → the engine's
+`host_inventory()`/`config_class` (closes the A7/MH-6 honest-config-class gap); **(b)** AllMyStuff embeds the
+engine as its diagnostic brain — but **AGPL→MIT forces a process/RPC boundary, NOT static linking** (license +
+clean-arch); **(c)** the private corpus served over a **MyOwnMesh RPC service** (W8 realized privately — no
+public endpoint) with mesh **device-identity → config_class/provenance attestation** and **owner-authorization
+→ the sign-off gate** (HumanConfirmed; "authorization not authentication" maps cleanly); **(d)** inference →
+MyOwnLLM. Clean-integration invariant: the engine stays standalone (cold-start, no mesh required) and exposes
+**trait seams** (it already has `host_inventory()`, `CorpusStore`, `SandboxValidator`); the MyOwn crates
+provide **adapters** — deps point app→engine→mesh, never a cycle. A design workflow is mapping the real APIs +
+synthesizing a phased plan (will land in `docs/`). **Reactive:** PR #2 review comments; the deferred
+`FOLLOWUPS.md` residuals (keyless-chain anchor, chain_hash canonical encoding, rotation registry, Windows-CIM,
+real-VM-backend, research-tree). Build loop: `. "$HOME/.cargo/env"` then `cargo build/test/clippy/fmt --workspace` (run
 cargo with `dangerouslyDisableSandbox`). Per-fix status is in `TODOS.md`; confirmed findings in
 `.claude/audit/confirmed-findings.txt`; the reusable audit is `.claude/wf-audit.js`.
 
@@ -186,8 +204,28 @@ See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementati
   (fingerprint, plan.title/description, attestation, integrity) is compiler-only and FORBIDDEN in YAML, and the
   gate's coupling rules are encoded in the JSON Schema so an inadmissible flow fails the lint, not the gate.
 
+- [2026-06-15 01:15 UTC] **The "MyOwn family" ecosystem (org `mrjeeves`, dev `nathanfraske`) — load-bearing
+  context for integration.** cec-support-agent (this engine, **AGPL-3.0**) is the diagnostic brain behind
+  **AllMyStuff** (`github.com/mrjeeves/AllMyStuff`, **MIT** — a Tauri+Svelte device-inventory + mesh-wiring app;
+  `allmystuff-inventory` is cross-platform hardware/device inventory = the real source the engine's
+  `host_inventory()` wants). Both run on **MyOwnMesh** (`github.com/mrjeeves/MyOwnMesh`, **MIT** — pure-Rust
+  private mesh: `myownmesh-core` = identity + RPC + protocol/governance, plus STUN/TURN + Nostr signaling).
+  **MyOwnLLM** is local inference. **License watch-out:** AGPL (engine) embedded into MIT apps makes the
+  combined work AGPL — so the clean pattern is the app driving the engine over a **process/RPC boundary**, not
+  static linking. The engine already exposes the right trait seams (`host_inventory`, `CorpusStore`,
+  `SandboxValidator`) for adapter-based integration without a dep cycle.
+
 ## Handoff log (reverse-chronological)
 
+- **2026-06-15 01:15 UTC** — **Seedless validation gate + MyOwn-family integration recon.** Added
+  `corpus-ingest check` (full admissibility + de-id validation, no seed — split `flow::compile` into
+  `validate`+`compile`), `make check`, a CI merge-gate (`.github/workflows/validate.yml`), and a local
+  pre-commit best-effort gate — mechanizing propose-then-authorize (bot pushes, can't merge an inadmissible/
+  leaky entry). Public checklist item **A10** records it as paper-ready (reproducible). Private `5c5d15c`,
+  public `271db03` (local, belongs on PR #2 — push pending owner OK). Then reconned the MyOwn family
+  (AllMyStuff/MyOwnMesh/MyOwnLLM) and identified the integration seams (see "Pick up here"); a design workflow
+  is producing the integration plan. **Lesson:** `cargo test` does not rebuild the `bin` — `cargo build`
+  before re-testing a CLI fix.
 - **2026-06-15 00:50 UTC** — **Built the `corpus-ingest` compiler (private repo W4–W7).** A pinned-git-dep
   Rust crate that compiles authored YAML flows → de-identified, ed25519-attested, gate-validated, hash-chained
   corpus rows; seed custody is **age passphrase encryption-at-rest** (the owner's choice; `chmod` is dead on
