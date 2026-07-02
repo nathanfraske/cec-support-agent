@@ -210,6 +210,42 @@ tested; the two guards proven red-on-revert. Not pushed (orchestrator opens the 
 - [x] [added 2026-07-02 22:05 UTC · done 2026-07-02 22:40 UTC] Tracking: TODOS/FOLLOWUPS/HANDOFFS updated;
   leak §3.1(b) tombstoned as built. 210 tests (was 205), clippy `-D warnings` + fmt clean (pinned 1.96.1).
 
+### Session 2026-07-02 — corpus cartography (leak-C10) threat model + non-mappability policy
+
+Owner-raised threat (2026-07-02): "Can a surface expose the internal corpus by mapping it out through
+trusted calls?" Analyzed as **corpus cartography** — a fourth corpus property orthogonal to
+admissibility/authenticity/access. Docs/policy/tracking pass to match the already-committed code change
+(`4cf9d8f`, this branch) that dropped the `source` membership label.
+
+- [x] [added 2026-07-02 18:54 UTC · done 2026-07-02 18:54 UTC] Corpus-cartography check (2-agent design +
+  verification pass grounded in the current diagnose/serve code) → `docs/corpus-cartography-threat.md`:
+  the honest-limit framing (§0), 7 concrete verified vectors V1-V7 (§2), a lettered control set A-G with
+  cost/gate mapping (§3), the NON-MAPPABILITY rule set (§3b), accepted residuals (§4), and the phased
+  sequence onto the existing F2→F3→B4→F1→E3 plan (§5).
+- [x] [added 2026-07-02 18:54 UTC · done 2026-07-02 18:54 UTC] leak-C10 defined in the taxonomy —
+  `docs/corpus-leak-prevention.md` §1.2 gained a C10 row (ranked below C9 as a distinct orthogonal axis: it
+  needs no identity to survive de-id, so it is not closable by a type) + a §3.1(4) cross-reference to the
+  threat doc's honest-limit + control-set sections.
+- [x] [added 2026-07-02 18:54 UTC · done 2026-07-02 18:54 UTC] `source` membership label dropped from the
+  `cec-diagnose/v1` candidate body (control D, partial — the label half; the latency/slate-count differential
+  half remains a documented residual). CODE already committed prior to this session (`4cf9d8f`
+  "feat(serve): drop the `source` membership label from cec-diagnose/v1 (leak-C10)"); this session's scope
+  was the docs/policy/tracking to match, not the code.
+- [x] [added 2026-07-02 18:54 UTC · done 2026-07-02 18:54 UTC] Non-mappability policy landed as binding
+  policy: the 7-rule set from the threat doc's §3b copied into `AGENTS.md` as a sibling block to the existing
+  §2.5 egress-sink checklist, same short imperative voice. `docs/corpus-cartography-threat.md` copied
+  verbatim into the tree.
+- [x] [added 2026-07-02 18:54 UTC · done 2026-07-02 18:54 UTC] Wire-contract docs corrected:
+  `docs/integration-rfc-for-chris.md` candidate body updated to `{plan_id, max_risk, actions[]}` + a removal
+  note (leak-C10) + the enum-grammar note corrected + real question **Q6** ("how much provenance does a
+  served row expose?") filed in the open-questions section, gated on B4;
+  `docs/api-extension-design.md` §5 decision log gained the dated `source`-drop entry.
+- [x] [added 2026-07-02 18:54 UTC · done 2026-07-02 18:54 UTC] Deferred controls filed to `FOLLOWUPS.md`,
+  each attributed to the threat doc: control D remainder (latency/slate equalization, E3-gated), control A
+  (per-identity query budget, E3/rung-2), control B (per-identity query audit log, E3/rung-2, MH-1's
+  query-side twin), control E (keyed/salted HMAC fingerprint, greenlightable, = existing leak-C7 item pulled
+  forward), control C (B4 provenance-graph minimization precondition), and the Q6-filed tombstone pointer.
+
 ## Done / obsolete (history)
 
 _(completed items stay above, in place, with their `· done` tombstone)_

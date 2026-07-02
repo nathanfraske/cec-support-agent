@@ -389,3 +389,15 @@ against the code that now enforces them.
 
 - **The §2.5 egress-sink checklist is binding policy** — copied into `AGENTS.md`; it must be satisfied in the
   same PR as any new response type.
+
+- **Dropped candidate `source` from `cec-diagnose/v1` (leak-C10 membership oracle); latency/slate
+  differentials remain a documented residual (`docs/corpus-cartography-threat.md`), gated to E3/owner
+  decision.** A candidate's `source` (cold_model vs corpus_primed) is a direct corpus-membership bit —
+  present iff the corpus holds a confirmed fix for the caller's exact `(fingerprint, config_class)` — so
+  emitting it turned every diagnose into a yes/no membership probe (corpus cartography, leak-C10; taxonomy:
+  `docs/corpus-leak-prevention.md` §1.2). The field is removed from the wire (`main.rs`, `diagnose_envelope`).
+  This closes the explicit label (vector V1) only: the retrieval-first hit/miss **latency** and
+  **slate-count** differentials (vector V3) are not equalized — that is a genuine owner trade-off (it costs
+  the retrieval-first speed win) and only bites once the surface serves a non-owner; deferred to the E3
+  mesh-serving gate (FOLLOWUPS.md). The non-mappability rule set enforcing this class of decision is now
+  binding in `AGENTS.md`, alongside the §2.5 egress-sink checklist.

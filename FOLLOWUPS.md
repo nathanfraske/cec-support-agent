@@ -169,3 +169,57 @@ The durability contract is complete as-is; these are optional tightenings.
 - [x] [added 2026-07-02 22:05 UTC · closed 2026-07-02 22:15 UTC → BUILT on `claude/repo-scope-work-plan-h93qx5` (`697e16d`); leak-doc §3.1 item 1(b) + Phase 4 item 14 annotated] **[leak §3.1(b) — `--endpoint` localhost-allowlist + `--allow-remote-inference`]** The pragmatic-minimum half of the C2 architectural decision is built: `validate_inference_endpoints` refuses a non-loopback `--endpoint`/`--fast-endpoint` on both the diagnose and serve paths unless `--allow-remote-inference` is passed; the refusal never echoes the URL and fails closed on an unparseable host. The `PromptPayload` chokepoint (§3.1 item 1(a)) remains the type-level follow-on — see the accepted-risk C2 items above and Phase 4.
 - [ ] [added 2026-07-02 22:30 UTC] **[leak §3.1(a) — `PromptPayload` chokepoint]** The type-level half of C2: a sealed `PromptPayload` whose constructor builds `ChatMessage` user/system content only from de-identified fields (vocabulary symptoms, enum tags, `case_brief()`), so raw `describe`/`event.message` cannot reach a prompt by construction. §3.1(b) (the endpoint allowlist, now built) makes remote egress an audited act; (a) is what makes the payload itself de-identified. — why deferred: needs the inference integration (MyOwnLLM, RFC Q2) designed first; ride it with the ToolOutcome.data / AgentStep.args typing (same C2 surface). Resume: `crates/inference` (`ChatMessage`), `crates/support-agent/src/main.rs` (ModelGenerator), leak methodology §3.1 / Phase 4.
 - [ ] [added 2026-07-02 22:30 UTC] **[corpus-over-API — the bar is now recorded, not the code]** `docs/api-extension-design.md` §5 fixes the posture for a future corpus endpoint: mesh rostered identity or loopback only, never token-auth public HTTP; per-row attestation on the served wire (the `HttpCorpus::query` FixMapping read-wire gap above / B4 must close FIRST); encrypted transport (mesh / TLS). No endpoint exists; the `router_surface_is_frozen` pin is the mechanical guard that one is not added without meeting this bar. Resume: gate on B4 + Q1 (mesh key registry) per api-extension-design §1.1.
+
+### Corpus cartography (leak-C10) — deferred controls (threat doc landed 2026-07-02)
+
+The owner-raised "can a surface expose the internal corpus by mapping it out through trusted calls?"
+question was analyzed in `docs/corpus-cartography-threat.md` (companion to `docs/corpus-leak-prevention.md`
+§1.2 leak-C10 and the `AGENTS.md` non-mappability rule set). The `source` membership label was dropped from
+`cec-diagnose/v1` the same session (control D, partial — see TODOS). These are the controls the threat doc
+recommends that are NOT yet built, each attributed to the threat doc's §3 control lettering.
+
+- [ ] [added 2026-07-02 18:53 UTC] **[Corpus cartography — control D remainder, latency/slate-count
+  equalization]** Retrieval-first hit/miss **latency** and **slate-count** differentials (vector V3) survive
+  the `source`-label removal: a hit skips model generation (faster) and the `corpus_primed` candidate count
+  discloses fix coverage even without the label. Equalizing timing costs the retrieval-first speed win — a
+  genuine owner trade-off, not a bug. — why deferred: only bites once the surface serves a non-owner (rung-0
+  loopback self-use is not a threat); decide before/at E3 (mesh serving). Resume:
+  `docs/corpus-cartography-threat.md` §2 V3, §3 control D; `crates/support-agent/src/serve.rs`
+  retrieval-first branch (`serve.rs:360,365`).
+- [ ] [added 2026-07-02 18:53 UTC] **[Corpus cartography — control A, per-identity query budget/rate-limit]**
+  No per-caller query budget exists today (`MAX_SESSIONS=256` is a pending-session memory bound, not a
+  throughput knob — `serve.rs:90-92`); a caller issuing sequential diagnoses (or letting sessions TTL-expire)
+  can enumerate the corpus for free. — why deferred: the full per-identity form needs the mesh `Identity`
+  (rung-2/E3); a coarse per-process cap is greenlightable sooner if wanted. Resume:
+  `docs/corpus-cartography-threat.md` §3 control A; `serve` middleware + `serve_corpus`; make it an E3
+  acceptance criterion alongside attested-rows-only + encrypted transport.
+- [ ] [added 2026-07-02 18:53 UTC] **[Corpus cartography — control B, per-identity query audit log]** No
+  audit log of diagnose queries exists — `handle_diagnose` logs nothing about the query itself, so bulk
+  enumeration is neither attributable nor detectable after the fact. Log the hashed key + caller id +
+  timestamp only, never `describe`. This is the query-side twin of the deferred MH-1 audit-log item
+  (FOLLOWUPS "[MH-1 — key rotation + audit log]" above). — why deferred: a real identity to attribute to
+  needs rung-2/E3; a hashed-key+timestamp skeleton is greenlightable now. Resume:
+  `docs/corpus-cartography-threat.md` §3 control B; `serve`/`serve_corpus`.
+- [ ] [added 2026-07-02 18:53 UTC] **[Corpus cartography — control E, keyed/salted HMAC fingerprint]** The
+  fingerprint and config-class key are unsalted FNV-1a — dictionary-reversible, and (per leak-C7) the exact
+  reason the cartography probe space is enumerable rather than opaque (a caller can compute-then-probe keys
+  offline against the planned `POST /v1/corpus/query`). This is the SAME item as the existing leak-C7
+  residual (`docs/corpus-leak-prevention.md` §3.1(2)) / Phase-4 F-track — greenlightable, pull it forward; it
+  is the non-mappability prerequisite that makes the probe space opaque. — why deferred: not yet scheduled;
+  no blocker. Resume: `crates/common/src/hash.rs` (`fingerprint_of`/`from_inventory` → keyed HMAC,
+  per-deployment salt); move retrieval keys out of logged/GET URLs into request bodies (`store.rs:434-439`).
+- [ ] [added 2026-07-02 18:53 UTC] **[Corpus cartography — control C, B4 provenance-graph minimization]** B4
+  proposes serving essentially the whole `Contribution` minus `integrity`, including `RowProvenance`
+  (`primed_from`, the priming graph) and possibly `confirmations` — both disclose corpus derivation/
+  confirmation structure beyond a single answer (leak-C10 vectors V5/V6). Resolve by shipping only the
+  minimal attested unit (attested `StoredOutcome` + attestation), never `primed_from` or raw `confirmations`,
+  unless a decision log entry explicitly authorizes it. — why deferred: B4 hasn't shipped; the fix is a field
+  choice, cheap NOW and expensive after B4 ships — decide it as a B4 wire-contract precondition, not after.
+  Resume: `docs/corpus-cartography-threat.md` §2 V5/V6, §3 control C; the B4 served-row type
+  (`docs/trusted-corpus-access-trajectory.md` §2.1).
+- [ ] [added 2026-07-02 18:53 UTC] **[Corpus cartography — Q6 filed against B4]** Filed the real question Q6
+  ("how much provenance does a served row expose?") in `docs/integration-rfc-for-chris.md`'s open-questions
+  section — the threat doc noted no Q6 existed anywhere in the tree (RFC had Q1-Q5 only). Resolution is
+  control C above (provenance-graph minimization); Q6 stays open until the B4 wire contract makes that call
+  explicit. — why deferred: gated on B4 shipping; owner/Chris decision. Resume:
+  `docs/integration-rfc-for-chris.md` Q6.
