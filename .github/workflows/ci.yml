@@ -20,6 +20,10 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.0
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
+          # Keep in lockstep with rust-toolchain.toml (the action does not read
+          # it): one exact version everywhere, so a stable-channel point release
+          # can never break fmt/clippy under CI's feet.
+          toolchain: 1.96.1
           components: rustfmt, clippy
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
