@@ -178,6 +178,38 @@ opens the PR).
 - [x] [added 2026-07-02 18:30 UTC · done 2026-07-02 18:50 UTC] **1f write-gate idempotence** (`22ec564`): `ensure_evidence_integrity` re-mints the stored plan (rehydrate → `de_identify_plan`) and refuses a row that is not its own de-id image — `GateError::RowNotDeIdentified`. Catches an out-of-vocab action, an inadmissible id, or a hand-edited title/description on any row (incl. off-constructor rows from disk / an embedder). Symptoms kept structurally typed (strict mint deferred to Phase 2 per the `<prefix>_<digits>` gotcha). Proven red-on-revert. 197 tests.
 - [x] [added 2026-07-02 18:50 UTC · done 2026-07-02 19:15 UTC] **trybuild compile-fail guards** (`9a9cd5b`): `trybuild` dev-dep (MIT OR Apache-2.0; subtree deny.toml-clean) + 3 pinned cases — `to_string(&candidate)` (E0277), struct-literal `Contribution {..}` (E0451 private fields), `format!("{}", prose)` (E0277 no Display) — `.stderr` pinned to 1.96.1 (trybuild-normalized paths → CI-portable). Proven red-on-revert (re-adding `Display for Prose` fails the harness). 198 tests total; clippy `-D warnings` + fmt clean; e2e CLI smoke green (clean `cec-diagnose/v1`, human trace renders).
 
+### Session 2026-07-02 — API-posture decisions (owner, remote session)
+
+Owner's 2026-07-02 API-posture decisions responding to `docs/api-extension-design.md`, on branch
+`claude/repo-scope-work-plan-h93qx5` (on top of leak Phase 2). Green sub-step commits, each compiled +
+tested; the two guards proven red-on-revert. Not pushed (orchestrator opens the PR).
+
+- [x] [added 2026-07-02 22:05 UTC · done 2026-07-02 22:15 UTC] **Trusted calls only (leak C2)** (`697e16d`):
+  `validate_inference_endpoints` refuses a non-loopback `--endpoint`/`--fast-endpoint` at startup on BOTH the
+  diagnose and serve paths unless `--allow-remote-inference` is passed (loopback = localhost / 127.0.0.0/8 /
+  [::1]); the refusal is a fixed message that never echoes the URL; `endpoint_is_loopback` fails closed on an
+  unparseable host. Builds leak-doc §3.1(b) (annotated there + Phase 4 item 14). +4 tests (loopback admitted /
+  non-loopback refused on both flags / flag admits); guard proven red-on-revert (neutering the guard fails the
+  refusal test). Live-smoked on both paths.
+- [x] [added 2026-07-02 22:05 UTC · done 2026-07-02 22:20 UTC] **Route-surface pinning** (`588f1ec`): the
+  frozen `route_surface` list (GET /v1/health, POST /v1/diagnose, POST /v1/execute) is folded into the router
+  by `build_router`, and `router_surface_is_frozen` pins the exact (method, path) set — adding ANY route is a
+  deliberate test edit. The never-routable invariant (attest, keygen, corpus WRITE) is stated in serve.rs's
+  module docs and added to SECURITY.md's invariant list (a violation is a reportable security issue). +1 test;
+  proven red-on-revert (a rogue /v1/attest route fails the pin).
+- [x] [added 2026-07-02 22:05 UTC · done 2026-07-02 22:25 UTC] **AGPL §13 notice + auth-ladder resolution**
+  (`64ffa48`): `--allow-remote` prints a one-line stderr network-service / §13 Corresponding-Source notice at
+  startup (live-smoked); same note in SECURITY.md (Network exposure and AGPL §13). Auth ladder resolved:
+  hard-loopback by default, remote = mesh-only, no bearer-token tier will be built. README has no serve section
+  → skipped.
+- [x] [added 2026-07-02 22:05 UTC · done 2026-07-02 22:30 UTC] **Docs — decision log + binding checklist**
+  (`878fd4d`): DECISION LOG (§5) in api-extension-design.md — corpus-over-API ships only over mesh rostered
+  identity or loopback, never token-auth public HTTP; served rows carry attestation (FixMapping gap closes
+  first); encrypted transport (mesh / TLS); no corpus endpoint exists yet, route-pin is the mechanical guard.
+  Copied the 6-rule §2.5 egress-sink checklist into AGENTS.md as binding policy (short, imperative).
+- [x] [added 2026-07-02 22:05 UTC · done 2026-07-02 22:40 UTC] Tracking: TODOS/FOLLOWUPS/HANDOFFS updated;
+  leak §3.1(b) tombstoned as built. 210 tests (was 205), clippy `-D warnings` + fmt clean (pinned 1.96.1).
+
 ## Done / obsolete (history)
 
 _(completed items stay above, in place, with their `· done` tombstone)_
