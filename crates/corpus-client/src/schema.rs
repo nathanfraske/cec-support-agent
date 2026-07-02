@@ -1,6 +1,8 @@
 use common::{ConfigClass, FaultSignature, Plan, Verification};
 use serde::{Deserialize, Serialize};
 
+use crate::stored::{StoredOutcome, StoredPlan, StoredSignature, StoredStep};
+
 /// Whether an outcome has cleared the sign-off gate.
 ///
 /// Ordered from weakest to strongest (`Unconfirmed` < `VerifierConfirmed` <
@@ -67,18 +69,28 @@ impl OutcomeLabel {
 }
 
 /// A fault-signature → plan mapping retrieved from the corpus.
+///
+/// Carries STORED (de-identified) payload types — the served plan is a
+/// [`StoredPlan`], never a raw in-flight `Plan` — so a served mapping cannot
+/// hand raw prose to the pipeline. Rehydrate the plan for the retrieval-first
+/// slate with [`StoredPlan::to_plan`] (Phase 2 adds `from_served`
+/// re-validation before that).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FixMapping {
     /// The fault this mapping addresses.
-    pub signature: FaultSignature,
-    /// The plan known to resolve it.
-    pub plan: Plan,
+    pub signature: StoredSignature,
+    /// The de-identified plan known to resolve it.
+    pub plan: StoredPlan,
     /// How many confirmed outcomes back this mapping.
     pub confirmations: u32,
 }
 
-/// The result of executing a plan against a fault.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// The result of executing a plan against a fault — the **in-flight** triple a
+/// caller assembles and hands to [`Contribution::new`]. It carries a raw
+/// [`Plan`] and deliberately has **no `Serialize`**: a raw outcome cannot reach
+/// a corpus row directly, only through `Contribution::new`, which de-identifies
+/// the plan into a [`StoredPlan`]. The stored form is [`StoredOutcome`].
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Outcome {
     /// The fault that was diagnosed.
     pub signature: FaultSignature,
@@ -91,7 +103,6 @@ pub struct Outcome {
     /// that justified it. `None` for outcomes with no machine verification
     /// (e.g. a withdrawn ticket, or a plan that never executed). The sign-off
     /// gate requires a *matching passing* verdict for any resolved label.
-    #[serde(default)]
     pub verification: Option<Verification>,
 }
 
@@ -153,30 +164,35 @@ pub struct RowProvenance {
 /// [`Contribution::new`] de-identifies the plan by structured extraction
 /// (see [`de_identify_plan`]) — free-text fields never reach a corpus row,
 /// in code, regardless of what the caller passes in.
+///
+/// The fields are **private**: [`Contribution::new`] is the sole constructor, so
+/// a struct-literal cannot bypass the de-id mint (pinned by a `trybuild`
+/// compile-fail test), and the stored `outcome` is a [`StoredOutcome`] — a raw
+/// `Outcome` can never sit on a row. Read the row through the accessors.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Contribution {
-    /// The outcome being contributed.
-    pub outcome: Outcome,
+    /// The de-identified outcome being contributed.
+    pub(crate) outcome: StoredOutcome,
     /// The comparability key: a contribution is only retrieved for tickets of
     /// the same config class.
-    pub config_class: ConfigClass,
+    pub(crate) config_class: ConfigClass,
     /// Sign-off state. Must be confirmed for [`crate::CorpusStore::submit`] to
     /// accept it.
-    pub sign_off: SignOff,
+    pub(crate) sign_off: SignOff,
     /// The sign-off authority's attestation over this row's canonical tuple.
     /// `None` at cold start (no authority configured). When a store carries an
     /// authority public key, this must be present and valid for a confirmed row.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub attestation: Option<SignOffAttestation>,
+    pub(crate) attestation: Option<SignOffAttestation>,
     /// Run-provenance: which run produced this row and how its plan was
     /// generated. `None` on legacy rows; when present, confirmation counting
     /// uses it to admit only independent confirmations.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provenance: Option<RowProvenance>,
+    pub(crate) provenance: Option<RowProvenance>,
     /// Tamper-evidence chain link, filled in by a [`crate::FileCorpus`] on write.
     /// Not part of the signed/attested tuple (the store adds it after admission).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub integrity: Option<RowIntegrity>,
+    pub(crate) integrity: Option<RowIntegrity>,
 }
 
 impl Contribution {
@@ -187,19 +203,54 @@ impl Contribution {
     /// (see [`de_identify_plan`]) instead of being copied through. The
     /// attestation is unset; attach one with [`Contribution::attested_by`].
     pub fn new(
-        mut outcome: Outcome,
+        outcome: Outcome,
         config_class: ConfigClass,
         sign_off: SignOff,
     ) -> Result<Self, deid::Reject> {
-        outcome.plan = de_identify_plan(&outcome.plan)?;
+        let stored = StoredOutcome {
+            signature: StoredSignature::from_signature(&outcome.signature),
+            plan: de_identify_plan(&outcome.plan)?,
+            label: outcome.label,
+            verification: outcome.verification,
+        };
         Ok(Self {
-            outcome,
+            outcome: stored,
             config_class,
             sign_off,
             attestation: None,
             provenance: None,
             integrity: None,
         })
+    }
+
+    /// The de-identified outcome on this row.
+    pub fn outcome(&self) -> &StoredOutcome {
+        &self.outcome
+    }
+
+    /// The comparability class this row is scoped to.
+    pub fn config_class(&self) -> &ConfigClass {
+        &self.config_class
+    }
+
+    /// The sign-off state of this row.
+    pub fn sign_off(&self) -> SignOff {
+        self.sign_off
+    }
+
+    /// The sign-off authority's attestation, if attached.
+    pub fn attestation(&self) -> Option<&SignOffAttestation> {
+        self.attestation.as_ref()
+    }
+
+    /// The run-provenance of this row, if recorded.
+    pub fn provenance(&self) -> Option<&RowProvenance> {
+        self.provenance.as_ref()
+    }
+
+    /// The tamper-evidence chain link, if the row has been persisted.
+    pub fn integrity(&self) -> Option<&RowIntegrity> {
+        self.integrity.as_ref()
     }
 
     /// Record how this row was produced (run id, retrieval-first, primed-from)
@@ -371,28 +422,19 @@ fn label_tag(label: &OutcomeLabel) -> String {
 /// Both were historically copied through verbatim — the keystone leak vector
 /// (C1) of `docs/corpus-leak-prevention.md` — so identity routed into either
 /// field now aborts the row instead of riding into it.
-pub fn de_identify_plan(plan: &Plan) -> Result<Plan, deid::Reject> {
+pub fn de_identify_plan(plan: &Plan) -> Result<StoredPlan, deid::Reject> {
     let id = deid::plan_id(&plan.id)?;
     let steps = plan
         .steps
         .iter()
         .map(|step| {
             let action = deid::action(&step.action)?;
-            Ok(common::PlanStep {
+            Ok(StoredStep {
                 description: action.clone(),
                 action,
                 risk: step.risk,
             })
         })
         .collect::<Result<Vec<_>, deid::Reject>>()?;
-    let mut row = Plan::new(
-        id,
-        steps
-            .iter()
-            .map(|step| step.action.as_str())
-            .collect::<Vec<_>>()
-            .join(" -> "),
-    );
-    row.steps = steps;
-    Ok(row)
+    Ok(StoredPlan::from_minted(id, steps))
 }

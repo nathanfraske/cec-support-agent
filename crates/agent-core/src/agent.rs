@@ -1,5 +1,4 @@
 use inference::{ChatCompletionRequest, ChatMessage, Completer};
-use serde::Serialize;
 
 use crate::consent::Consent;
 use crate::dispatch::Dispatcher;
@@ -146,7 +145,10 @@ impl<'a> Agent<'a> {
 }
 
 /// The result of an [`Agent::run`] loop.
-#[derive(Debug, Clone, Serialize)]
+///
+/// In-flight only: `answer` is model prose and each step carries raw tool
+/// args/output, so `AgentRun` has no `Serialize`.
+#[derive(Debug, Clone)]
 pub struct AgentRun {
     /// The model's final answer (empty if the step cap was hit first).
     pub answer: String,
@@ -157,7 +159,7 @@ pub struct AgentRun {
 }
 
 /// One tool call made during an [`Agent::run`] loop.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub struct AgentStep {
     /// The tool that was dispatched.
     pub tool: String,

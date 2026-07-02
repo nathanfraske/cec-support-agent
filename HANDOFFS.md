@@ -15,6 +15,34 @@ Below "Pick up here", keep a reverse-chronological **handoff log** of dated entr
 
 ## Current state
 
+**As of 2026-07-02 ~19:15 UTC.** **Corpus leak-prevention Phase 1 is DONE** on branch
+**`claude/repo-scope-work-plan-h93qx5`** (which started == origin/main @ `a31198e`; now +5 commits,
+**committed locally, NOT pushed** — the orchestrator opens the PR). Phase 1 is the C1/C3 compile-error
+hard stops, landed in 4 green sub-steps, each proven and committed:
+
+- **1a type split** (`a347878`): `crates/corpus-client/src/stored.rs` holds `StoredPlan`/`StoredStep`/
+  `StoredSymptom`/`StoredSignature`/`StoredOutcome` — the ONLY corpus-serializable payload. `de_identify_plan`
+  mints a `StoredPlan`; `Contribution`.outcome + `FixMapping` carry stored types. Removed `Serialize`
+  (+ dead `Deserialize`) from raw `Plan`/`PlanStep`/`Candidate`/`Outcome`/`DiagnosticEvent`/`StepResult`/
+  `ExecutionResult`/`ToolOutcome`/`AgentRun`/`AgentStep`/`provenance::SignedPlan`. `Contribution` fields →
+  `pub(crate)` + accessors; retrieval-first rehydrates via `StoredPlan::to_plan`.
+- **1b Prose + 1d sealed Debug** (`3790dbd`): `common::Prose` (private field, no Serialize/Display,
+  redacting Debug) for `title`/`description`/`rationale`/`message`/`summary`; containers keep a derived
+  Debug that is auto-sealed. `render_consent`/human-trace/`provenance::canonical` read via `as_str()`.
+- **1f write-gate idempotence** (`22ec564`): `ensure_evidence_integrity` re-mints the stored plan and
+  refuses a non-de-identified row — `GateError::RowNotDeIdentified`.
+- **trybuild** (`9a9cd5b`): `to_string(&candidate)`, struct-literal `Contribution{..}`, `format!("{}",prose)`
+  all fail to compile (pinned `.stderr` @ 1.96.1). Plus a runtime Debug-no-leak test.
+
+**Wire/on-disk shape is byte-identical** — a canned pre-split corpus row still deserializes, round-trips
+identically (so `chain_hash` is stable), verifies its chain at open, and gate-passes. `cec-diagnose/v1` +
+`cec-execute/v1` envelopes unchanged (pinning tests green). **198 tests** (was 189), clippy `-D warnings`
+clean, fmt clean, CLI e2e smoke green. Both write-gate (1f) and one trybuild case proven red-on-revert.
+**Next: Phase 2** (read-side `from_served`/`#[serde(try_from)]` + frozen stop-code/module dictionaries +
+ban `serde_json::Value`) — see FOLLOWUPS + `docs/corpus-leak-prevention.md` §4.
+
+--- previous (superseded) ---
+
 **As of 2026-07-02 ~15:50 UTC.** The 2.5-week-stalled handoff was picked up (remote Claude session,
 owner-directed): the full repo/branch scope is consolidated in **`docs/consolidated-work-plan.md`** (read it
 first — it is the plan of record), and the first wave is executed:
@@ -172,7 +200,29 @@ commit on branch `feat/agent-ops-evidence-integrity`.
 > recommended order (small, unblocks app-side work; Phase 1 must then include the API module in its
 > egress-sink inventory).
 
-### PRIMARY — Corpus leak-prevention Phases 1–2 (owner chose Phases 0–2; Phase 0 DONE)
+### PRIMARY — Corpus leak-prevention Phase 2 (Phase 0 + Phase 1 DONE)
+
+**Update 2026-07-02 ~19:15 UTC:** **Phase 1 is DONE** (the type barrier — see Current state) on
+`claude/repo-scope-work-plan-h93qx5`, committed locally (`a347878`/`3790dbd`/`22ec564`/`9a9cd5b`), not
+pushed. Only **Phase 2** remains. Phase-2 scope + the precise design is `docs/corpus-leak-prevention.md`
+§4 Phase 2 + §2 Layer 1 (1c/1e) + Layer 2 (2c/2d). **Read it first.** Concretely:
+1. **Read-side re-de-id (1e):** a `from_served(FixMapping) -> Result` that re-validates every served row, and
+   `#[serde(try_from = "String")]` on `StoredSymptom` (and a new `ActionToken`) so a non-vocabulary WIRE value
+   fails to *deserialize*. Today `HttpCorpus::query` already re-validates the served PLAN via `de_identify_plan`
+   equality (good), but `StoredSymptom`/`StoredStep` still deserialize any string — that is what Phase 2 closes.
+   The poison harness must drive an **adversary-seeded** served row (2d).
+2. **Wire the strict symptom mint (the Phase-1 residual):** `deid::symptom` rejects a legit `<prefix>_<digits>`
+   symptom, so it was NOT wired into the write path. Phase 2 replaces the `is_stop_code_name`/`module_name`
+   SHAPE heuristics in `common/src/extract.rs` with FROZEN dictionaries and a closed grammar
+   (`VOCABULARY ∪ 0x-hex ∪ <known-prefix>_<digits> ∪ stop-code dict ∪ module allowlist`), then wires the
+   symptom mint into `de_identify_plan` + the 1f gate. Migrate `Verification.recurring` to `StoredSymptom`.
+3. **Ban `serde_json::Value` on boundary types** (`ToolOutcome.data`, `AgentStep.args`) → typed summaries (2c).
+
+**GOTCHA carried forward:** the strict symptom round-trip mint rejects a two-token-derived `<prefix>_<digits>`
+symptom — the closed-grammar mint (step 2) is what makes it admissible. Don't wire the naive round-trip mint
+into the write path.
+
+--- superseded (Phase 1, now DONE) ---
 
 **Branch:** `feat/corpus-leak-prevention` on origin at `cf95d1c` (= the P0 tip `673a381` + the methodology
 doc + Phase 0). The `/tmp/cec-leak` worktree was removed (ephemeral); **resume by re-adding it:**
@@ -284,6 +334,38 @@ license-checks clean. Build loop: `. "$HOME/.cargo/env"` then `cargo build/test/
 See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementation status.
 
 ## Lessons learned (append-only)
+
+- **(2026-07-02) Typing the leaf prose makes sealed `Debug` (1d) fall out for free — no manual impls.** The
+  methodology's 1d said "manual redacting `Debug` on each raw type." But once the prose is a `Prose` newtype
+  (1b) whose OWN `Debug` redacts, every containing struct keeps a *derived* `Debug` that is automatically
+  sealed — `format!("{:?}", outcome)` can't spill request text because the text lives only in `Prose` leaves.
+  This is strictly better than manual impls (a manual impl can forget a field; a new `Prose` field is sealed
+  by construction). Do 1b before 1d and 1d is a no-op. Proven by a runtime test that plants identity in a
+  plan title/description and greps the Outcome's Debug.
+
+- **(2026-07-02) Put the STORED types where their non-`common` deps already live (corpus-client), not the
+  `deid` crate the doc named.** `StoredOutcome` needs `OutcomeLabel`/`SignOff`, which live in
+  `corpus-client::schema`, and `de_identify_plan`/`Contribution` are there too. Placing `StoredPlan`/… in
+  `deid` would have forced `OutcomeLabel` to move or split the stored types across two crates. `deid` stays
+  the home of the validating MINTS (the doc's actual security point); the stored DATA types belong next to
+  the row. Make the fields `pub(crate)` (+ `pub` accessors + `to_plan`/`to_signature` rehydration for
+  embedders): in-crate de-id/gate code reads them with unchanged syntax, an external struct-literal fails,
+  and there's no cross-crate accessor plumbing.
+
+- **(2026-07-02) A byte-identical wire split needs a canned pre-change fixture test, and provenance/self-
+  priming can make a "should retrieve" fixture return 0.** The type split must not change the serde image
+  (existing `chain_hash` + at-rest JSONL). Capture a real row from the pre-split code (run it through
+  `FileCorpus::submit`, read the file), hard-code it, and assert: deserializes + re-serializes
+  byte-identically + `FileCorpus::open` re-verifies the chain + gate-passes. Gotcha: my first fixture set
+  `retrieval_first:true, primed_from:[<its own plan id>]` — that is the CIRCULAR/self-primed case, so it
+  legitimately contributes 0 confirmations and `query` returned empty. Regenerate the fixture with a
+  de-novo provenance (`retrieval_first:false, primed_from:[]`) so it actually backs a mapping.
+
+- **(2026-07-02) `.into()` that adapts across a same-turn field-type change trips clippy::useless_conversion
+  in the interim step.** `StoredPlan::to_plan` does `title: self.title.clone().into()` — String→Prose once
+  1b lands, but String→String (a no-op `.into()`) in the split-only step before it. Since each sub-step is
+  committed and clippy-gated separately, write the split step with a direct assignment and switch to `.into()`
+  in the Prose step, or clippy `-D warnings` fails the intermediate commit.
 
 - **(2026-07-02) A "DONE + verified" claim is about a LOCAL tree until the pushed tip is rebuilt.** The
   session-end mirror captured the tracking files but not the code worktree: the Phase-0 keystone edit died
@@ -422,6 +504,23 @@ See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementati
   PREDICATE, not the type tag.
 
 ## Handoff log (reverse-chronological)
+
+- **2026-07-02 19:15 UTC** — **Corpus leak-prevention Phase 1 built (the C1/C3 type barrier).** On
+  `claude/repo-scope-work-plan-h93qx5` (started == origin/main `a31198e`), 4 green sub-steps, committed +
+  proven, NOT pushed: **1a** type split (`a347878`) — `crates/corpus-client/src/stored.rs` stored payload
+  types are the only serde corpus types; `de_identify_plan → StoredPlan`; `Serialize` removed from all raw
+  domain types (Plan/PlanStep/Candidate/Outcome/DiagnosticEvent/StepResult/ExecutionResult/ToolOutcome/
+  AgentRun/AgentStep/SignedPlan); `Contribution` fields `pub(crate)` + accessors + rehydration. **1b/1d**
+  (`3790dbd`) — `common::Prose` (no Serialize/Display, redacting Debug) for the 5 prose leaves; containers
+  keep an auto-sealed derived Debug. **1f** (`22ec564`) — write gate re-mints the stored plan
+  (`GateError::RowNotDeIdentified`), red-on-revert proven. **trybuild** (`9a9cd5b`) — 3 compile-fail cases
+  + runtime Debug-no-leak, red-on-revert proven. Wire shape byte-identical (canned pre-split row fixture);
+  `cec-diagnose/v1`+`cec-execute/v1` unchanged. 189→198 tests, clippy/fmt clean, CLI e2e smoke green.
+  Design decisions (justified, see lessons): stored types live in **corpus-client** not the `deid` crate
+  (OutcomeLabel/SignOff live there); 1d achieved via **Prose's redacting Debug + derived container Debug**
+  (not per-struct manual impls); `Contribution` fields **pub(crate)** (external struct-literal still fails);
+  symptoms kept **structurally typed** (strict mint deferred to Phase 2 per the `<prefix>_<digits>` gotcha).
+  **Next: Phase 2** (read-side `from_served`/`try_from` + frozen dictionaries + ban `serde_json::Value`).
 
 - **2026-07-02 16:20 UTC** — **Wave 2: PRs #5/#6 merged; the engine's API face is built (B3/B4/H4).**
   Both PRs went red on a NEW upstream RustSec advisory (anyhow 1.0.102 downcast_mut UB) — lockfile-bumped on

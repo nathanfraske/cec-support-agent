@@ -292,8 +292,10 @@ async fn handle_diagnose(
     let mut candidates: Vec<Candidate> = known
         .iter()
         .map(|mapping| {
+            // Rehydrate the served (de-identified) StoredPlan into an in-flight
+            // plan for the judge/consent/execute pipeline.
             Candidate::new(
-                mapping.plan.clone(),
+                mapping.plan.to_plan(),
                 format!(
                     "Corpus precedent: resolved this signature at this config class \
                      ({} confirmation(s))",
@@ -394,7 +396,7 @@ async fn handle_diagnose(
                 escalation,
                 reproducibility: case.reproducibility,
                 retrieval_first,
-                primed_from: known.iter().map(|m| m.plan.id.clone()).collect(),
+                primed_from: known.iter().map(|m| m.plan.id().to_string()).collect(),
                 created: Instant::now(),
             },
         );

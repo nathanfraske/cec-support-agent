@@ -9,6 +9,7 @@ use crate::gate::{ensure_attested, ensure_evidence_integrity, GateError};
 use crate::schema::{
     chain_hash, de_identify_plan, Contribution, FixMapping, OutcomeLabel, RowIntegrity,
 };
+use crate::stored::{StoredPlan, StoredSignature};
 
 /// Run the full admission gate for a store: the evidence-integrity checks
 /// always, plus the sign-off **attestation** check when an authority is
@@ -72,8 +73,8 @@ fn fix_mappings(
     use std::collections::HashMap;
 
     struct Acc {
-        signature: FaultSignature,
-        plan: common::Plan,
+        signature: StoredSignature,
+        plan: StoredPlan,
         contributors: HashSet<String>,
         // Reopens are deduplicated by the SAME independence key as confirmations
         // (a set, not a counter), so a single reopen run replayed N times cancels
@@ -463,7 +464,7 @@ impl CorpusStore for HttpCorpus {
         // mappings aggregate carries none; that lands with the corpus-service
         // wire contract (see FOLLOWUPS).
         for mapping in &mappings {
-            match de_identify_plan(&mapping.plan) {
+            match de_identify_plan(&mapping.plan.to_plan()) {
                 Ok(sanitized) if sanitized == mapping.plan => {}
                 _ => return Err(GateError::ServedPlanInadmissible.into()),
             }
@@ -497,6 +498,7 @@ impl CorpusStore for HttpCorpus {
 mod tests {
     use super::*;
     use crate::schema::{chain_hash, Outcome, OutcomeLabel, RowIntegrity, RowProvenance, SignOff};
+    use crate::stored::StoredStep;
     use common::{
         FaultSignature, Plan, Symptom, Verification, VerificationClass, VerificationResult,
     };
@@ -553,7 +555,7 @@ mod tests {
         corpus.submit(&confirmed).await.expect("confirmed accepted");
         assert_eq!(corpus.len(), 1);
         let hits = corpus
-            .query(&confirmed.outcome.signature, &config_class())
+            .query(&confirmed.outcome.signature.to_signature(), &config_class())
             .await
             .expect("query");
         assert_eq!(hits.len(), 1);
@@ -582,7 +584,7 @@ mod tests {
         corpus.submit(&negative).await.expect("labeled and signed");
         assert_eq!(corpus.len(), 1, "the failure is kept as a hard negative");
         let hits = corpus
-            .query(&negative.outcome.signature, &config_class())
+            .query(&negative.outcome.signature.to_signature(), &config_class())
             .await
             .expect("query");
         assert!(hits.is_empty(), "a failure must not be offered as a fix");
@@ -625,7 +627,7 @@ mod tests {
         assert_eq!(reopened.len(), 1);
         let row = contribution(OutcomeLabel::ResolvedConfirmed, SignOff::HumanConfirmed);
         let hits = reopened
-            .query(&row.outcome.signature, &config_class())
+            .query(&row.outcome.signature.to_signature(), &config_class())
             .await
             .expect("query");
         assert_eq!(hits.len(), 1);
@@ -657,7 +659,7 @@ mod tests {
         corpus.submit(&row).await.expect("first");
         corpus.submit(&row).await.expect("second");
         let hits = corpus
-            .query(&row.outcome.signature, &config_class())
+            .query(&row.outcome.signature.to_signature(), &config_class())
             .await
             .expect("query");
         assert_eq!(hits.len(), 1, "same plan aggregates into one mapping");
@@ -686,7 +688,7 @@ mod tests {
         corpus.submit(&r1).await.expect("first");
         corpus.submit(&r2).await.expect("second (same run)");
         let hits = corpus
-            .query(&base.outcome.signature, &config_class())
+            .query(&base.outcome.signature.to_signature(), &config_class())
             .await
             .expect("query");
         assert_eq!(hits[0].confirmations, 1, "one run = one confirmation");
@@ -713,7 +715,7 @@ mod tests {
             .await
             .expect("B");
         let hits = corpus
-            .query(&base.outcome.signature, &config_class())
+            .query(&base.outcome.signature.to_signature(), &config_class())
             .await
             .expect("query");
         assert_eq!(hits[0].confirmations, 2, "two independent runs = two");
@@ -744,7 +746,7 @@ mod tests {
             .await
             .expect("self-primed");
         let hits = corpus
-            .query(&base.outcome.signature, &config_class())
+            .query(&base.outcome.signature.to_signature(), &config_class())
             .await
             .expect("query");
         assert_eq!(
@@ -955,7 +957,7 @@ mod tests {
         corpus.submit(&row).await.expect("accepted");
         let other_class = ConfigClass::from_inventory(["os:windows 10"]);
         let hits = corpus
-            .query(&row.outcome.signature, &other_class)
+            .query(&row.outcome.signature.to_signature(), &other_class)
             .await
             .expect("query");
         assert!(hits.is_empty(), "a ticket matches only like configs");
@@ -1226,17 +1228,24 @@ mod tests {
 
     #[tokio::test]
     async fn http_query_refuses_a_served_plan_that_fails_read_side_de_id() {
-        // A compromised (or buggy) corpus server feeds a mapping whose plan
-        // carries request prose in the action and free text in the title —
-        // the read path must refuse it, not hand it to retrieval-first.
-        let mut plan = Plan::new("p1", "Fix DESKTOP-NATHAN01 for nathan");
-        plan.steps.push(common::PlanStep {
-            description: "run powershell on DESKTOP-NATHAN01".into(),
-            action: "powershell -c Get-CimInstance on DESKTOP-NATHAN01".into(),
-            risk: common::Risk::ReadOnly,
-        });
+        // A compromised (or buggy) corpus server feeds a mapping whose stored
+        // plan carries request prose in the action and free text in the title.
+        // Built as a struct literal (only possible in-crate) to simulate wire
+        // bytes a mint would never have produced; the read path must refuse it,
+        // not hand it to retrieval-first.
+        let plan = StoredPlan {
+            id: "p1".into(),
+            title: "Fix DESKTOP-NATHAN01 for nathan".into(),
+            steps: vec![StoredStep {
+                description: "run powershell on DESKTOP-NATHAN01".into(),
+                action: "powershell -c Get-CimInstance on DESKTOP-NATHAN01".into(),
+                risk: common::Risk::ReadOnly,
+            }],
+        };
         let mapping = FixMapping {
-            signature: FaultSignature::from_symptoms(vec![Symptom("boot_loop".into())]),
+            signature: StoredSignature::from_signature(&FaultSignature::from_symptoms(vec![
+                Symptom("boot_loop".into()),
+            ])),
             plan,
             confirmations: 3,
         };
@@ -1265,7 +1274,9 @@ mod tests {
         });
         let clean = de_identify_plan(&raw).expect("a clean-action plan de-identifies");
         let mapping = FixMapping {
-            signature: FaultSignature::from_symptoms(vec![Symptom("boot_loop".into())]),
+            signature: StoredSignature::from_signature(&FaultSignature::from_symptoms(vec![
+                Symptom("boot_loop".into()),
+            ])),
             plan: clean.clone(),
             confirmations: 1,
         };
@@ -1280,5 +1291,52 @@ mod tests {
             .expect("a clean de-identified mapping is admitted");
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].plan, clean);
+    }
+
+    // --- On-disk/wire compatibility: the StoredPlan/StoredSymptom type split is
+    //     a type-level change, NOT a format change. A corpus row captured from the
+    //     PRE-split code must still (a) deserialize, (b) round-trip byte-identically
+    //     (so `chain_hash` over the serde image is unchanged), (c) verify its
+    //     tamper-evidence chain at open, and (d) pass the evidence-integrity gate. ---
+
+    /// A canonical row serialized by the code as it stood BEFORE the split
+    /// (captured verbatim from `FileCorpus::submit`). If any of the assertions
+    /// below break, the wire shape drifted and existing JSONL corpora + hash
+    /// chains would fail to load — a hard-constraint regression.
+    const CANNED_PRE_SPLIT_ROW: &str = r#"{"outcome":{"signature":{"fingerprint":"acfebcbe984c7cd1","symptoms":["0x1234","event_41","explorer.exe"]},"plan":{"id":"heuristic-1","title":"cim_query -> registry_set","steps":[{"description":"cim_query","action":"cim_query","risk":"read_only"},{"description":"registry_set","action":"registry_set","risk":"reversible"}]},"label":"resolved_confirmed","verification":{"result":"pass"}},"config_class":{"derived_hash":"edc9373418556993"},"sign_off":"human_confirmed","provenance":{"run_id":"run-fixture","retrieval_first":false},"integrity":{"prev":"","hash":"74415a1e1785a230eb1eaa159607812e45c616fe08956a821b2092c7bde0fc2d"}}"#;
+
+    #[test]
+    fn a_pre_split_row_deserializes_and_round_trips_byte_identically() {
+        let row: Contribution =
+            serde_json::from_str(CANNED_PRE_SPLIT_ROW).expect("pre-split row still deserializes");
+        // Byte-identity of the serde image is what keeps `chain_hash` stable.
+        let reserialized = serde_json::to_string(&row).expect("serializes");
+        assert_eq!(
+            reserialized, CANNED_PRE_SPLIT_ROW,
+            "the corpus-row wire shape changed — existing hash chains would break"
+        );
+        // The row is still admissible truth (resolved+confirmed+passing verdict).
+        assert!(ensure_evidence_integrity(&row).is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_pre_split_file_still_opens_verifies_and_serves() {
+        let path = TempPath::new("pre-split-load");
+        std::fs::write(&path.0, format!("{CANNED_PRE_SPLIT_ROW}\n")).expect("write canned row");
+        // open() runs `verify_chain`: the pre-split integrity hash must still match
+        // the recomputed chain over the (unchanged) serde image.
+        let corpus = FileCorpus::open(&path.0).expect("pre-split chain still verifies at open");
+        assert_eq!(corpus.len(), 1);
+        // And it is retrievable as a fix at its own signature + config class.
+        let row: Contribution = serde_json::from_str(CANNED_PRE_SPLIT_ROW).expect("deserialize");
+        let hits = corpus
+            .query(
+                &row.outcome.signature.to_signature(),
+                &row.config_class.clone(),
+            )
+            .await
+            .expect("query");
+        assert_eq!(hits.len(), 1, "the pre-split row still backs a fix mapping");
+        assert_eq!(hits[0].plan.id(), "heuristic-1");
     }
 }

@@ -2,7 +2,7 @@ use common::{Risk, VerificationResult};
 use provenance::{SignOffPublicKey, SignOffSignature};
 use thiserror::Error;
 
-use crate::schema::{attestation_message, Contribution, OutcomeLabel, SignOff};
+use crate::schema::{attestation_message, de_identify_plan, Contribution, OutcomeLabel, SignOff};
 
 /// Why a contribution was refused at the evidence-integrity gate.
 ///
@@ -43,6 +43,14 @@ pub enum GateError {
     /// into the retrieval-first slate. The read path refuses the response.
     #[error("refused: a served plan failed read-side de-identification re-validation")]
     ServedPlanInadmissible,
+    /// The row's stored plan is not its own de-identified image: an
+    /// out-of-vocabulary action, an inadmissible id, or a title/description the
+    /// de-id mint would never have produced (e.g. a hand-edited at-rest row).
+    /// The write gate re-runs the de-id mint over the stored row and refuses
+    /// anything whose content is not already extraction-clean — the only
+    /// CONTENT check standing on the runtime corpus-write path.
+    #[error("refused: the row's stored plan is not its own de-identified image")]
+    RowNotDeIdentified,
 }
 
 /// The evidence-integrity gate: the single checkpoint that admits a row into the
@@ -51,9 +59,13 @@ pub enum GateError {
 /// fixes) — its truth claim is bound to its evidence:
 ///
 /// 1. **Sign-off confirmed** (invariant 6): verifier or human.
-/// 2. **Resolved ⇒ passing verdict** that *matches* the label: `ResolvedConfirmed`
+/// 2. **De-identified image** (1f): the stored plan equals its own
+///    `de_identify_plan` re-mint — a content check that refuses an
+///    out-of-vocabulary action, an inadmissible id, or a hand-edited
+///    title/description on any row, including one loaded from disk.
+/// 3. **Resolved ⇒ passing verdict** that *matches* the label: `ResolvedConfirmed`
 ///    needs a `Pass`, `ResolvedProvisional` a `ProvisionalPass`.
-/// 3. **Destructive resolved fix ⇒ human sign-off.**
+/// 4. **Destructive resolved fix ⇒ human sign-off.**
 ///
 /// Hard negatives (non-resolved labels) are admitted regardless — a failure is
 /// truth too, and an unlabeled ticket is corpus poison — they just never back a
@@ -65,6 +77,22 @@ pub fn ensure_evidence_integrity(contribution: &Contribution) -> Result<(), Gate
     // (1) Sign-off must clear the gate.
     if !contribution.sign_off.is_confirmed() {
         return Err(GateError::Unconfirmed);
+    }
+
+    // (1b / 1f) The stored plan must be its OWN de-identified image. Re-run the
+    // de-id mint over the row (rehydrate → re-mint) and require an exact match:
+    // an out-of-vocabulary action or inadmissible id fails the mint, and a
+    // hand-edited title/description the mint would never have produced fails the
+    // idempotence equality. `Contribution::new` guarantees this for a freshly
+    // built row, but a row loaded from disk or handed in by an embedder has NOT
+    // been through the constructor — and this is the only content check on the
+    // runtime `/mnt/e` corpus-write path, which no git/CI/CODEOWNERS layer sees.
+    // (Symptoms stay structurally typed in Phase 1: the strict round-trip mint
+    // rejects a legitimate `<prefix>_<digits>` symptom, so it is deliberately
+    // not wired into the write path yet — see the methodology §4 / Phase 2.)
+    match de_identify_plan(&contribution.outcome.plan.to_plan()) {
+        Ok(reminted) if reminted == contribution.outcome.plan => {}
+        _ => return Err(GateError::RowNotDeIdentified),
     }
 
     let outcome = &contribution.outcome;
@@ -316,5 +344,79 @@ mod tests {
             None,
         );
         assert!(ensure_evidence_integrity(&negative).is_ok());
+    }
+
+    // --- 1f write-gate idempotence: the stored plan must be its own de-id image.
+    //     `Contribution::new` guarantees this, but a row loaded from /mnt/e or
+    //     handed in by an embedder bypasses the constructor — the gate re-runs the
+    //     mint and refuses content that is not already extraction-clean. These
+    //     forge the stored plan by struct literal (only possible in-crate) to
+    //     simulate exactly that off-constructor path. Proven red-on-revert.
+
+    use crate::stored::{StoredPlan, StoredStep};
+
+    #[test]
+    fn a_row_with_an_out_of_vocab_action_is_refused_by_the_write_gate() {
+        // A hand-edited at-rest row whose stored step action is request prose the
+        // action mint would never emit. de_identify_plan returns Err → refused.
+        let mut c = contribution(
+            OutcomeLabel::ResolvedConfirmed,
+            SignOff::HumanConfirmed,
+            Risk::Reversible,
+            Some(Verification::pass()),
+        );
+        c.outcome.plan = StoredPlan {
+            id: "p1".into(),
+            title: "cim_query".into(),
+            steps: vec![StoredStep {
+                description: "powershell on DESKTOP-NATHAN01".into(),
+                action: "powershell -c whoami on DESKTOP-NATHAN01".into(),
+                risk: Risk::ReadOnly,
+            }],
+        };
+        assert_eq!(
+            ensure_evidence_integrity(&c),
+            Err(GateError::RowNotDeIdentified)
+        );
+    }
+
+    #[test]
+    fn a_row_with_a_hand_edited_title_fails_the_idempotence_check() {
+        // Every action is clean vocabulary, but the stored title is prose the
+        // mint would never produce (the mint reconstructs it as the joined
+        // actions). The re-mint succeeds yet does not EQUAL the stored plan, so
+        // the idempotence equality — not the mint — catches the tamper.
+        let mut c = contribution(
+            OutcomeLabel::ResolvedConfirmed,
+            SignOff::HumanConfirmed,
+            Risk::Reversible,
+            Some(Verification::pass()),
+        );
+        c.outcome.plan = StoredPlan {
+            id: "p1".into(),
+            title: "Fix DESKTOP-NATHAN01 for nathan".into(), // != "cim_query"
+            steps: vec![StoredStep {
+                description: "cim_query".into(),
+                action: "cim_query".into(),
+                risk: Risk::ReadOnly,
+            }],
+        };
+        assert_eq!(
+            ensure_evidence_integrity(&c),
+            Err(GateError::RowNotDeIdentified)
+        );
+    }
+
+    #[test]
+    fn a_genuinely_de_identified_row_passes_the_idempotence_check() {
+        // The positive control: a row built through Contribution::new IS its own
+        // de-id image, so the new content check does not regress admission.
+        let c = contribution(
+            OutcomeLabel::ResolvedConfirmed,
+            SignOff::HumanConfirmed,
+            Risk::Reversible,
+            Some(Verification::pass()),
+        );
+        assert!(ensure_evidence_integrity(&c).is_ok());
     }
 }

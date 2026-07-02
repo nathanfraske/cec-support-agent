@@ -21,3 +21,7 @@ sha2 = { workspace = true }
 [dev-dependencies]
 tokio = { workspace = true }
 leakguard = { path = "../leakguard" }
+# Compile-fail tests pinning the leak-prevention type barrier: to_string(&candidate),
+# a struct-literal Contribution, and format!("{}", prose) must NOT compile.
+# License: MIT OR Apache-2.0 (both already allowed by deny.toml).
+trybuild = "1"

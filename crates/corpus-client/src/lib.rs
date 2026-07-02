@@ -25,6 +25,7 @@
 mod gate;
 mod schema;
 mod store;
+mod stored;
 
 pub use gate::{ensure_attested, ensure_evidence_integrity, ensure_signed_off, GateError};
 pub use schema::{
@@ -32,6 +33,7 @@ pub use schema::{
     SignOff, SignOffAttestation,
 };
 pub use store::{CorpusError, CorpusStore, FileCorpus, HttpCorpus, LocalCorpus};
+pub use stored::{StoredOutcome, StoredPlan, StoredSignature, StoredStep, StoredSymptom};
 
 // The sign-off authority types live in `provenance`; re-export them so a caller
 // configuring a store with `.with_authority(...)` (and attesting via
@@ -65,7 +67,7 @@ mod leakage_tests {
 
         let mut plan = Plan::new("model-1", format!("Fix {describe}"));
         plan.steps.push(PlanStep {
-            description: format!("On {describe}, roll back the display driver"),
+            description: format!("On {describe}, roll back the display driver").into(),
             action: "driver_rollback".into(),
             risk: Risk::Reversible,
         });
@@ -175,9 +177,45 @@ mod leakage_tests {
             risk: Risk::Reversible,
         });
         let row = de_identify_plan(&plan).expect("clean actions de-identify");
-        assert_eq!(row.id, "p");
-        assert_eq!(row.title, "cim_query -> registry_set");
+        assert_eq!(row.id(), "p");
+        assert_eq!(row.title(), "cim_query -> registry_set");
         assert_eq!(row.risk(), Risk::Reversible);
-        assert_eq!(row.steps.len(), 2);
+        assert_eq!(row.steps().len(), 2);
+    }
+
+    // --- 1d sealed Debug: `format!("{:?}", outcome)` must never spill request
+    //     prose. The raw Outcome holds a Plan whose title/description are Prose,
+    //     so a stray `dbg!(outcome)` / `tracing::info!(?outcome)` is redacted by
+    //     construction — no manual per-struct Debug impl needed.
+
+    #[test]
+    fn debug_of_a_raw_outcome_never_leaks_planted_prose() {
+        let host = "ZZHOSTZZ";
+        let user = "ZZUSERZZ";
+        let mut plan = Plan::new("heuristic-1", format!("fix for {host}"));
+        plan.steps.push(PlanStep {
+            description: format!("act against {user}").into(),
+            action: "cim_query".into(),
+            risk: Risk::ReadOnly,
+        });
+        let outcome = Outcome {
+            signature: FaultSignature::from_symptoms(extract_symptoms("explorer.exe 0x1234")),
+            plan,
+            label: OutcomeLabel::ResolvedConfirmed,
+            verification: Some(common::Verification::pass()),
+        };
+        let shown = format!("{outcome:?}");
+        assert!(
+            !shown.contains(host),
+            "Debug leaked the planted host: {shown}"
+        );
+        assert!(
+            !shown.contains(user),
+            "Debug leaked the planted user: {shown}"
+        );
+        // Still structurally useful: the redaction marker and the clean action
+        // vocabulary survive, so Debug remains diagnostic, just not leaky.
+        assert!(shown.contains("redacted"));
+        assert!(shown.contains("cim_query"));
     }
 }

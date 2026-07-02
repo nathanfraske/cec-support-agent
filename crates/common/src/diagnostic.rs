@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::Prose;
+
 /// Severity of a diagnostic event, ordered from least to most urgent.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
@@ -29,15 +31,23 @@ pub enum EventKind {
     EventLog,
 }
 
-/// A single de-identified diagnostic observation gathered from a machine.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// A single diagnostic observation gathered from a machine.
+///
+/// An **in-flight** type: `message` is the raw observation body (request text in
+/// the bootstrap), so `DiagnosticEvent` has no `Serialize` — it is reduced to a
+/// [`crate::FaultSignature`] by `extract_symptoms` before anything is stored or
+/// emitted.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiagnosticEvent {
     /// What kind of source produced this event.
     pub kind: EventKind,
     /// Origin of the event (component, provider, or subsystem name).
     pub source: String,
-    /// The de-identified message body.
-    pub message: String,
+    /// The raw observation body. Free-text prose (request text in the
+    /// bootstrap), so it is [`Prose`]: it is reduced to a
+    /// [`FaultSignature`](crate::FaultSignature) by `extract_symptoms` before
+    /// anything is stored or emitted, and cannot reach a sink directly.
+    pub message: Prose,
     /// Severity of the event.
     pub severity: Severity,
     /// Milliseconds since the Unix epoch, as observed at collection time.
@@ -49,7 +59,7 @@ impl DiagnosticEvent {
     pub fn new(
         kind: EventKind,
         source: impl Into<String>,
-        message: impl Into<String>,
+        message: impl Into<Prose>,
         severity: Severity,
         timestamp_ms: u64,
     ) -> Self {

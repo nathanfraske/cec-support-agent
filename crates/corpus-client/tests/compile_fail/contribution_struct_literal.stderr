@@ -1,0 +1,20 @@
+warning: unreachable expression
+ --> tests/compile_fail/contribution_struct_literal.rs:6:19
+  |
+6 |       let _bypass = corpus_client::Contribution {
+  |  ___________________^
+7 | |         sign_off: corpus_client::SignOff::HumanConfirmed,
+8 | |         ..unimplemented!()
+  | |           ---------------- any code following this expression is unreachable
+9 | |     };
+  | |_____^ unreachable expression
+  |
+  = note: `#[warn(unreachable_code)]` (part of `#[warn(unused)]`) on by default
+
+error[E0451]: fields `outcome`, `config_class`, `sign_off`, `attestation`, `provenance` and `integrity` of struct `Contribution` are private
+ --> tests/compile_fail/contribution_struct_literal.rs:7:9
+  |
+7 |         sign_off: corpus_client::SignOff::HumanConfirmed,
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ private field
+8 |         ..unimplemented!()
+  |           ^^^^^^^^^^^^^^^^ fields `outcome`, `config_class`, `attestation`, `provenance` and `integrity` are private

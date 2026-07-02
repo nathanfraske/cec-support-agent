@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::plan::Plan;
+use crate::Prose;
 
 /// Where a candidate plan came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
@@ -16,19 +17,26 @@ pub enum CandidateSource {
 }
 
 /// A proposed remediation produced for the judge panel to score.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// An **in-flight** type: `rationale` is free-text prose (a model often echoes
+/// the request into it), so `Candidate` has no `Serialize` — `to_string(&cand)`
+/// or `json!({"why": c.rationale})` is a compile error. Only the de-identified
+/// action vocabulary of its plan reaches a sink (see `diagnose_envelope`).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Candidate {
     /// The plan to evaluate.
     pub plan: Plan,
-    /// Why the generator believes this plan addresses the fault.
-    pub rationale: String,
+    /// Why the generator believes this plan addresses the fault. Free-text
+    /// prose (a model often echoes the request into it), so it is [`Prose`]:
+    /// no `Serialize`/`Display`, and it never reaches the `--json`/API envelope.
+    pub rationale: Prose,
     /// Provenance of the candidate.
     pub source: CandidateSource,
 }
 
 impl Candidate {
     /// Wrap a plan with its rationale and source.
-    pub fn new(plan: Plan, rationale: impl Into<String>, source: CandidateSource) -> Self {
+    pub fn new(plan: Plan, rationale: impl Into<Prose>, source: CandidateSource) -> Self {
         Self {
             plan,
             rationale: rationale.into(),

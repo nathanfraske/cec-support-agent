@@ -1,7 +1,11 @@
-use serde::{Deserialize, Serialize};
+use crate::Prose;
 
 /// The outcome of running a single plan step through a tool.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// An **in-flight** type: `summary` is tool/dispatch prose (it can carry machine
+/// identity), typed [`Prose`] so it has neither `Serialize` nor `Display`. The
+/// API/execute envelope emits only the action name and ok flag, never it.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StepResult {
     /// 1-based index of the step within the plan.
     pub step: usize,
@@ -10,12 +14,13 @@ pub struct StepResult {
     /// Whether the step succeeded.
     pub ok: bool,
     /// One-line summary: the tool's own summary, or the dispatch/error message.
-    pub summary: String,
+    pub summary: Prose,
 }
 
 /// The outcome of executing a whole [`Plan`](crate::Plan): a per-step record
-/// plus whether the plan ran to completion.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+/// plus whether the plan ran to completion. In-flight only (its steps carry
+/// prose summaries), so it has no `Serialize`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ExecutionResult {
     /// The id of the plan that was executed.
     pub plan_id: String,
