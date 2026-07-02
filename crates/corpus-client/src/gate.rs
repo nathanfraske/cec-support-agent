@@ -51,6 +51,13 @@ pub enum GateError {
     /// CONTENT check standing on the runtime corpus-write path.
     #[error("refused: the row's stored plan is not its own de-identified image")]
     RowNotDeIdentified,
+    /// A stored symptom on the row (in the fault signature or a verification's
+    /// recurring set) is not a member of the closed de-id grammar — an
+    /// identity-shaped token an embedder or a hand-edited row could carry. The
+    /// write gate re-runs the symptom mint over every stored symptom; the read
+    /// path additionally refuses it at deserialize (`#[serde(try_from)]`).
+    #[error("refused: a stored symptom is not a member of the de-id grammar")]
+    SymptomNotDeIdentified,
 }
 
 /// The evidence-integrity gate: the single checkpoint that admits a row into the
@@ -87,15 +94,31 @@ pub fn ensure_evidence_integrity(contribution: &Contribution) -> Result<(), Gate
     // built row, but a row loaded from disk or handed in by an embedder has NOT
     // been through the constructor — and this is the only content check on the
     // runtime `/mnt/e` corpus-write path, which no git/CI/CODEOWNERS layer sees.
-    // (Symptoms stay structurally typed in Phase 1: the strict round-trip mint
-    // rejects a legitimate `<prefix>_<digits>` symptom, so it is deliberately
-    // not wired into the write path yet — see the methodology §4 / Phase 2.)
     match de_identify_plan(&contribution.outcome.plan.to_plan()) {
         Ok(reminted) if reminted == contribution.outcome.plan => {}
         _ => return Err(GateError::RowNotDeIdentified),
     }
 
+    // (1c/C5) Every stored symptom must be a member of the closed de-id grammar.
+    // Phase 2 wired the symptom mint (now that the closed grammar admits a
+    // legitimate `<prefix>_<digits>` token like `event_41`, which the earlier
+    // round-trip form rejected). This catches an embedder-built or hand-edited
+    // row whose signature — or a verification's recurring set — carries an
+    // identity-shaped "symptom" that never came from the extractor.
     let outcome = &contribution.outcome;
+    for symptom in outcome.signature.symptoms() {
+        if !common::is_symptom_token(symptom.as_str()) {
+            return Err(GateError::SymptomNotDeIdentified);
+        }
+    }
+    if let Some(verification) = outcome.verification() {
+        for symptom in &verification.recurring {
+            if !common::is_symptom_token(&symptom.0) {
+                return Err(GateError::SymptomNotDeIdentified);
+            }
+        }
+    }
+
     if outcome.label.is_resolved() {
         // (2) A resolved label must be backed by a matching passing verdict.
         match (
@@ -182,7 +205,7 @@ mod tests {
     ) -> Contribution {
         Contribution::new(
             Outcome {
-                signature: FaultSignature::from_symptoms(vec![Symptom("boot_loop".into())]),
+                signature: FaultSignature::from_symptoms(vec![Symptom("event_41".into())]),
                 plan: plan_with(risk),
                 label,
                 verification,

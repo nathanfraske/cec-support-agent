@@ -1,7 +1,9 @@
 use common::{ConfigClass, FaultSignature, Plan, Verification};
 use serde::{Deserialize, Serialize};
 
-use crate::stored::{StoredOutcome, StoredPlan, StoredSignature, StoredStep};
+use crate::stored::{
+    StoredAction, StoredOutcome, StoredPlan, StoredPlanId, StoredSignature, StoredStep,
+};
 
 /// Whether an outcome has cleared the sign-off gate.
 ///
@@ -309,10 +311,10 @@ pub(crate) fn attestation_message(c: &Contribution) -> Vec<u8> {
         lp(&mut s, "sym", sym);
     }
     // Plan: id + each step (action length-prefixed, risk by discriminant).
-    lp(&mut s, "plan", &o.plan.id);
+    lp(&mut s, "plan", o.plan.id.as_str());
     let _ = writeln!(s, "steps:{}", o.plan.steps.len());
     for step in &o.plan.steps {
-        lp(&mut s, "act", &step.action);
+        lp(&mut s, "act", step.action.as_str());
         let _ = writeln!(s, "risk:{:?}", step.risk);
     }
     // Label (length-prefixed tag — covers the EscalatedHardware part_class).
@@ -423,12 +425,12 @@ fn label_tag(label: &OutcomeLabel) -> String {
 /// (C1) of `docs/corpus-leak-prevention.md` — so identity routed into either
 /// field now aborts the row instead of riding into it.
 pub fn de_identify_plan(plan: &Plan) -> Result<StoredPlan, deid::Reject> {
-    let id = deid::plan_id(&plan.id)?;
+    let id = StoredPlanId(deid::plan_id(&plan.id)?);
     let steps = plan
         .steps
         .iter()
         .map(|step| {
-            let action = deid::action(&step.action)?;
+            let action = StoredAction(deid::action(&step.action)?);
             Ok(StoredStep {
                 description: action.clone(),
                 action,

@@ -28,12 +28,16 @@ use crate::schema::OutcomeLabel;
 /// A de-identified symptom as stored on a corpus row. Serializes transparently
 /// as a bare string, byte-identical to [`common::Symptom`]'s wire form.
 ///
-/// Phase 1 keeps symptoms *structurally* typed: the mint is lenient (it wraps a
-/// symptom the extractor already produced) because the strict round-trip
-/// validator rejects a legitimately-extracted `<prefix>_<digits>` symptom
-/// (produced from two input tokens). The strict closed-grammar mint and a
-/// `#[serde(try_from)]` read-side guard are Phase 2 (see the methodology §4).
+/// Deserialization is VALIDATING (`#[serde(try_from)]`, Layer-1e/C4): a symptom
+/// read from the wire ([`crate::HttpCorpus::query`]) or disk
+/// ([`crate::FileCorpus::open`]) must be a member of the closed de-id grammar
+/// ([`common::is_symptom_token`]), so a served or at-rest row whose signature
+/// carries an identity-shaped token fails to *deserialize* — the wire/file path
+/// is now identical to the construction path, and `serde` no longer bypasses the
+/// grammar. In-crate construction ([`StoredSymptom::from_symptom`]) wraps a token
+/// the extractor already produced; the write gate re-validates it.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String")]
 pub struct StoredSymptom(pub(crate) String);
 
 impl StoredSymptom {
@@ -50,6 +54,83 @@ impl StoredSymptom {
     /// Consume into the owned token.
     pub fn into_inner(self) -> String {
         self.0
+    }
+}
+
+impl TryFrom<String> for StoredSymptom {
+    type Error = deid::Reject;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        deid::symptom(&value).map(|s| Self(s.0))
+    }
+}
+
+/// A de-identified plan-step action as stored on a corpus row — the "ActionToken"
+/// of `docs/corpus-leak-prevention.md` §2 Layer 1c/1e. Serializes transparently
+/// as a bare string; deserialization is VALIDATING (`#[serde(try_from)]`): a wire
+/// or at-rest action must be a member of the frozen [`deid::ACTION_VOCABULARY`],
+/// so an out-of-vocabulary action (request prose a compromised server or a
+/// hand-edited file could carry) fails to *deserialize*.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String")]
+pub struct StoredAction(pub(crate) String);
+
+impl StoredAction {
+    /// The de-identified action (tool-vocabulary) token.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for StoredAction {
+    type Error = deid::Reject;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        deid::action(&value).map(Self)
+    }
+}
+
+// Test-only unchecked constructor: the adversarial gate/read-path tests FORGE a
+// stored step whose action is request prose the mint would never emit (a struct
+// literal is the only way to build an inadmissible stored value), then assert the
+// gate or the deserializer refuses it. Not available outside the crate's tests.
+#[cfg(test)]
+impl From<&str> for StoredAction {
+    fn from(value: &str) -> Self {
+        Self(value.to_string())
+    }
+}
+
+/// A de-identified plan id as stored on a corpus row. Serializes transparently
+/// as a bare string; deserialization is VALIDATING (`#[serde(try_from)]`): a wire
+/// or at-rest id must be a clean bounded slug ([`deid::plan_id`]), so a
+/// path/host/email string that a server or hand-edited file routed into the id
+/// fails to *deserialize*.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String")]
+pub struct StoredPlanId(pub(crate) String);
+
+impl StoredPlanId {
+    /// The plan id slug.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for StoredPlanId {
+    type Error = deid::Reject;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        deid::plan_id(&value).map(Self)
+    }
+}
+
+// Test-only unchecked constructor (see [`StoredAction`]'s): forges a stored plan
+// id for the adversarial gate/read-path tests. Not available outside tests.
+#[cfg(test)]
+impl From<&str> for StoredPlanId {
+    fn from(value: &str) -> Self {
+        Self(value.to_string())
     }
 }
 
@@ -100,22 +181,25 @@ impl StoredSignature {
 
 /// A single de-identified plan step as stored on a corpus row. Same field names
 /// and order as [`common::PlanStep`]; every field is a minted/validated token.
+/// `description` equals `action` for a stored row (the de-id mint sets it so), so
+/// both are the validating [`StoredAction`] type — a served/at-rest step whose
+/// action OR description is out-of-vocabulary fails to deserialize.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StoredStep {
-    pub(crate) description: String,
-    pub(crate) action: String,
+    pub(crate) description: StoredAction,
+    pub(crate) action: StoredAction,
     pub(crate) risk: Risk,
 }
 
 impl StoredStep {
     /// The de-identified action (tool-vocabulary) token.
     pub fn action(&self) -> &str {
-        &self.action
+        self.action.as_str()
     }
 
     /// The de-identified step description (equal to the action for a stored row).
     pub fn description(&self) -> &str {
-        &self.description
+        self.description.as_str()
     }
 
     /// The step's risk classification.
@@ -131,7 +215,7 @@ impl StoredStep {
 /// [`common::Plan`], so the JSON is byte-identical.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StoredPlan {
-    pub(crate) id: String,
+    pub(crate) id: StoredPlanId,
     pub(crate) title: String,
     pub(crate) steps: Vec<StoredStep>,
 }
@@ -139,7 +223,7 @@ pub struct StoredPlan {
 impl StoredPlan {
     /// Construct a stored plan from already-minted pieces. Crate-internal so the
     /// only path to a `StoredPlan` outside the crate is `de_identify_plan`.
-    pub(crate) fn from_minted(id: String, steps: Vec<StoredStep>) -> Self {
+    pub(crate) fn from_minted(id: StoredPlanId, steps: Vec<StoredStep>) -> Self {
         let title = steps
             .iter()
             .map(|step| step.action.as_str())
@@ -150,7 +234,7 @@ impl StoredPlan {
 
     /// The plan id (a validated slug).
     pub fn id(&self) -> &str {
-        &self.id
+        self.id.as_str()
     }
 
     /// The de-identified title (the joined action vocabulary).
@@ -179,14 +263,14 @@ impl StoredPlan {
     /// hardens the served path with `from_served` re-validation before this.
     pub fn to_plan(&self) -> Plan {
         Plan {
-            id: self.id.clone(),
+            id: self.id.0.clone(),
             title: self.title.clone().into(),
             steps: self
                 .steps
                 .iter()
                 .map(|step| PlanStep {
-                    description: step.description.clone().into(),
-                    action: step.action.clone(),
+                    description: step.description.0.clone().into(),
+                    action: step.action.0.clone(),
                     risk: step.risk,
                 })
                 .collect(),
