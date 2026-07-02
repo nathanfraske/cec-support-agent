@@ -223,3 +223,15 @@ recommends that are NOT yet built, each attributed to the threat doc's §3 contr
   control C above (provenance-graph minimization); Q6 stays open until the B4 wire contract makes that call
   explicit. — why deferred: gated on B4 shipping; owner/Chris decision. Resume:
   `docs/integration-rfc-for-chris.md` Q6.
+- [ ] [added 2026-07-02 19:28 UTC] **[Crypto-dep major bumps — dependabot #8/#9/#10, deferred for one
+  deliberate coordinated upgrade]** getrandom 0.2→0.3 (#8), hmac 0.12→0.13 (#9), sha2 0.10→0.11 (#10) each
+  break the `provenance` crate at build: getrandom 0.3 renamed `getrandom::getrandom(&mut buf)` →
+  `getrandom::fill(&mut buf)` (`crates/provenance/src/lib.rs:57,167`); sha2 0.11 bumps the `digest` trait
+  version so `hmac::HmacCore<sha2::Sha256>: hmac::Mac` no longer holds (9 errors), and hmac 0.13 is the
+  matching RustCrypto major (27 errors) — **#9 and #10 are COUPLED and must bump together** with `digest`.
+  — why deferred: these are the signing/hashing/entropy primitives (HMAC-SHA256 plan provenance, sha256
+  `chain_hash`/`content_hash`/attestation, OS entropy for keys and run_ids); a 36-error auto-patch by the
+  merge babysitter is not safe. Do a deliberate, tested upgrade that bumps hmac+sha2+digest together,
+  migrates the `Mac` API, and verifies `attestation_message` / `chain_hash` / `content_hash` / plan-signature
+  outputs are byte-unchanged (the wire-compat + attestation tests must stay green). Resume:
+  `crates/provenance/src/lib.rs` + the workspace `Cargo.toml` dep versions; dependabot PRs #8/#9/#10 left open.
