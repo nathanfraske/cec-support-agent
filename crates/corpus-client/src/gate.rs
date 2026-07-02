@@ -37,6 +37,12 @@ pub enum GateError {
     /// wrong key, a tampered tuple, or a malformed signature.
     #[error("refused: the sign-off attestation does not verify against the configured authority")]
     AttestationInvalid,
+    /// A plan served by a remote corpus failed read-side de-identification
+    /// re-validation: an out-of-vocabulary action, an inadmissible id, or
+    /// free-text fields — content a compromised or buggy server could feed
+    /// into the retrieval-first slate. The read path refuses the response.
+    #[error("refused: a served plan failed read-side de-identification re-validation")]
+    ServedPlanInadmissible,
 }
 
 /// The evidence-integrity gate: the single checkpoint that admits a row into the

@@ -6,7 +6,9 @@ use provenance::SignOffPublicKey;
 use thiserror::Error;
 
 use crate::gate::{ensure_attested, ensure_evidence_integrity, GateError};
-use crate::schema::{chain_hash, Contribution, FixMapping, OutcomeLabel, RowIntegrity};
+use crate::schema::{
+    chain_hash, de_identify_plan, Contribution, FixMapping, OutcomeLabel, RowIntegrity,
+};
 
 /// Run the full admission gate for a store: the evidence-integrity checks
 /// always, plus the sign-off **attestation** check when an authority is
@@ -446,10 +448,27 @@ impl CorpusStore for HttpCorpus {
                 response.status()
             )));
         }
-        response
+        let mappings: Vec<FixMapping> = response
             .json()
             .await
-            .map_err(|e| CorpusError::Transport(e.to_string()))
+            .map_err(|e| CorpusError::Transport(e.to_string()))?;
+        // Read-side re-validation: a served plan is admitted only if it is
+        // exactly its own de-identified image — the validating mints reject an
+        // out-of-vocabulary action or inadmissible id, and the equality check
+        // rejects free-text title/description a compromised or buggy server
+        // could feed into the retrieval-first slate. Fails closed: one bad
+        // mapping refuses the whole response (a poisoned server is not a
+        // partially-trustworthy one). Cryptographic re-verification of row
+        // attestations on this path needs attested rows on the wire — the
+        // mappings aggregate carries none; that lands with the corpus-service
+        // wire contract (see FOLLOWUPS).
+        for mapping in &mappings {
+            match de_identify_plan(&mapping.plan) {
+                Ok(sanitized) if sanitized == mapping.plan => {}
+                _ => return Err(GateError::ServedPlanInadmissible.into()),
+            }
+        }
+        Ok(mappings)
     }
 
     async fn submit(&self, contribution: &Contribution) -> Result<(), CorpusError> {
@@ -1179,5 +1198,87 @@ mod tests {
             matches!(FileCorpus::open(&path.0), Err(CorpusError::Storage(_))),
             "a file mixing chained and unchained rows is refused"
         );
+    }
+
+    // --- The query READ path re-validates served plans ------------------------
+
+    /// One-shot HTTP responder: accepts a single loopback connection and
+    /// answers any request with the given JSON body.
+    fn serve_one_json(body: String) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf);
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n\
+                     content-length: {}\r\nconnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    #[tokio::test]
+    async fn http_query_refuses_a_served_plan_that_fails_read_side_de_id() {
+        // A compromised (or buggy) corpus server feeds a mapping whose plan
+        // carries request prose in the action and free text in the title —
+        // the read path must refuse it, not hand it to retrieval-first.
+        let mut plan = Plan::new("p1", "Fix DESKTOP-NATHAN01 for nathan");
+        plan.steps.push(common::PlanStep {
+            description: "run powershell on DESKTOP-NATHAN01".into(),
+            action: "powershell -c Get-CimInstance on DESKTOP-NATHAN01".into(),
+            risk: common::Risk::ReadOnly,
+        });
+        let mapping = FixMapping {
+            signature: FaultSignature::from_symptoms(vec![Symptom("boot_loop".into())]),
+            plan,
+            confirmations: 3,
+        };
+        let base = serve_one_json(serde_json::to_string(&vec![mapping]).expect("serialize"));
+        let corpus = HttpCorpus::new(base);
+        let error = corpus
+            .query(
+                &FaultSignature::from_symptoms(vec![Symptom("boot_loop".into())]),
+                &config_class(),
+            )
+            .await
+            .expect_err("a poisoned served plan must be refused");
+        assert!(matches!(
+            error,
+            CorpusError::Gate(GateError::ServedPlanInadmissible)
+        ));
+    }
+
+    #[tokio::test]
+    async fn http_query_admits_a_clean_de_identified_mapping() {
+        let mut raw = Plan::new("heuristic-1", "free text title");
+        raw.steps.push(common::PlanStep {
+            description: "prose description".into(),
+            action: "cim_query".into(),
+            risk: common::Risk::ReadOnly,
+        });
+        let clean = de_identify_plan(&raw).expect("a clean-action plan de-identifies");
+        let mapping = FixMapping {
+            signature: FaultSignature::from_symptoms(vec![Symptom("boot_loop".into())]),
+            plan: clean.clone(),
+            confirmations: 1,
+        };
+        let base = serve_one_json(serde_json::to_string(&vec![mapping]).expect("serialize"));
+        let corpus = HttpCorpus::new(base);
+        let got = corpus
+            .query(
+                &FaultSignature::from_symptoms(vec![Symptom("boot_loop".into())]),
+                &config_class(),
+            )
+            .await
+            .expect("a clean de-identified mapping is admitted");
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].plan, clean);
     }
 }
