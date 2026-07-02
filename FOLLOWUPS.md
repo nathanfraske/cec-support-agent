@@ -235,3 +235,13 @@ recommends that are NOT yet built, each attributed to the threat doc's §3 contr
   migrates the `Mac` API, and verifies `attestation_message` / `chain_hash` / `content_hash` / plan-signature
   outputs are byte-unchanged (the wire-compat + attestation tests must stay green). Resume:
   `crates/provenance/src/lib.rs` + the workspace `Cargo.toml` dep versions; dependabot PRs #8/#9/#10 left open.
+- [ ] [added 2026-07-02 22:42 UTC] **[AGENTIC ADDENDUM — mechanical backstops not yet built]**
+  `docs/AGENTIC_ADDENDUM.md` is landed as the spec, but three enforcement pieces it proposes are not
+  implemented: (a) a `PreToolUse` invariant guard (§2b) that blocks a corpus/weights/seed write or a re-added
+  `source` membership field / `Serialize`-on-a-raw-type / new `route_surface()` entry BEFORE the write —
+  promotes the dormant `scripts/githooks/pre-commit` exfil block to a hard pre-write deny; (b) folding the
+  verification suite + a tracking-freshness check into the Stop gate (§2d) so a turn cannot end with a red
+  tree or stale HANDOFFS/TODOS; (c) the `projectops` MCP server (§3) + the review panels (§4). — why
+  deferred: the spec + the reachability wiring (AGENTS.md reference + the `addendum-context.sh` SessionStart
+  hook) are done; building the mechanical enforcement is a separate increment and the owner's call. Resume:
+  `docs/AGENTIC_ADDENDUM.md` §2b/§2d/§3-§4; `.claude/hooks/` + `.claude/settings.json`.

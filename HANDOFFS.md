@@ -653,6 +653,23 @@ See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementati
 
 ## Handoff log (reverse-chronological)
 
+- **2026-07-02 22:42 UTC** — **PR #12 merged (all session work now on `main`); AGENTIC ADDENDUM authored +
+  wired.** Merged PR #12 after resolving a `ci.yml` conflict (PR #4's `actions/checkout` bump vs the gitleaks
+  OSS-binary rewrite — kept the OSS binary, took main's newer checkout SHA); the merge carried the
+  full-stack audit fixes (escalation bypass, confirmation replay, registry-backup clobber, part_class/run_id
+  validators, 3 LOW), the CI gitleaks fix, and the dependabot-deferral note. Branch restarted from the new
+  main; babysitter crons retired. Then, per the owner's request, authored **`docs/AGENTIC_ADDENDUM.md`** — a
+  cec-support-agent agentic-infrastructure spec modeled on `AGENTIC_ADDENDUM_1.md`: §1 the four tracking
+  files + memory mirror, §2 the real hooks (SessionStart 4-script chain, `session-end.sh` durability push,
+  the user-level Stop git-check) + the proposed PreToolUse invariant guard / Stop verify-gate, §3-§6 the
+  `projectops`/panels surface + lifecycle, and **§7 the fully-blind audit** adapted to our crypto/de-id
+  kernels with the frozen constants as "reserved values," grounded in this session's audit catching the
+  escalation bypass + replay hole. Grounded in a 4-agent read-only ground-truth extract (`wf_44941c16-6d7`).
+  Made it "reachable + hooked": referenced from AGENTS.md, and surfaced by a new `addendum-context.sh`
+  SessionStart hook (wired in settings.json; validated JSON + 5 SessionStart hooks). **Pick up here:** the
+  addendum's §2b/§2d proposals (a PreToolUse exfil/oracle guard; folding `verify` + a tracking-freshness
+  check into the Stop gate) and §3 (`projectops` server) are not yet implemented — build them if the owner
+  wants the mechanical backstop, not just the spec.
 - **2026-07-02 18:54 UTC** — **Corpus cartography (leak-C10) threat model + non-mappability policy landed
   (docs/policy only — no `.rs` touched).** Owner-raised threat ("can a surface expose the internal corpus by
   mapping it out through trusted calls?") analyzed by a 2-agent check; produced `docs/corpus-cartography-
