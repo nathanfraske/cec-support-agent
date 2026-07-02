@@ -432,6 +432,17 @@ See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementati
 
 ## Lessons learned (append-only)
 
+- **(2026-07-02) A content-matching hook must not contain the patterns it matches, and must key on a
+  distinctive VALUE, not structural keywords.** When the Tier-1 PostToolUse guard (`invariant-check.sh`)
+  went live (the harness picks up `.claude/settings.json` mid-session), it self-flagged twice: once because
+  the addendum documented the corpus-row shape `"outcome":{"signature":{"fingerprint"…}` as prose, and once
+  because the hook's own source held the literal `-----BEGIN AGE ENCRYPTED FILE-----` marker. Fixes: (1) key
+  the corpus-row check on the 16-hex fingerprint VALUE (`"fingerprint":"[0-9a-f]{16}"`) so a real row matches
+  but a prose/ellipsis description does not; (2) assemble the seed/key markers from concatenated fragments so
+  the contiguous literal never appears in the hook's source. General rule: a grep-heuristic guard is only safe
+  if its pattern cannot occur in legitimate documentation OR in the guard's own text — prefer a distinctive
+  value over a structural keyword, and hard-block only on the near-zero-false-positive signal (here, the
+  exfil PATH), leaving fuzzier structural checks to a typed tool (`projectops invariants`), not a grep.
 - **(2026-07-02) Pin a route surface by making the router and the pin read ONE list.** axum's `Router`
   does not expose its routes for inspection, so a "freeze the endpoints" test cannot introspect the built
   router. The working pattern: a `route_surface() -> Vec<(method, path, MethodRouter<Arc<AppState>>)>` is the
@@ -653,6 +664,19 @@ See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementati
 
 ## Handoff log (reverse-chronological)
 
+- **2026-07-02 23:56 UTC** — **AGENTIC ADDENDUM Tier-1 enforcement built (on PR #13's branch).** Turned the
+  addendum's proposed guards into working hooks: `invariant-guard.sh` (PreToolUse — hard-blocks a
+  corpus/weights/seed PATH write, the near-zero-false-positive signal; content-level oracle/Serialize checks
+  deliberately left to the future `projectops invariants` tool, not a fragile grep-block), `invariant-check.sh`
+  (PostToolUse — surfaces conflict markers / serialized-corpus-rows / seed-key blocks; made self-safe after it
+  dogfood-flagged the addendum's own prose and its own source — see the new Lessons entry), `tracking-freshness.sh`
+  (Stop — nudges if crates/ changed without a HANDOFFS/TODOS update; the full cargo suite stays out of Stop as
+  impractical), and `ops/provision.sh` (Tier-0 activator: `core.hooksPath`, chmod, suite). All wired in
+  `.claude/settings.json` (now PreToolUse+PostToolUse+Stop) and validated (block/allow/surface/self-reference).
+  Addendum §2 updated to built-not-proposed. **Pick up here:** the `projectops` MCP server (§3) is the next
+  keystone — it gives the panels and a Stop verify-gate their structured data, and is the proper structural
+  home for the re-added-`source`/`Serialize`/route checks the PreToolUse guard intentionally skips. This rides
+  PR #13 (now "spec + Tier-1 enforcement"); merge when green.
 - **2026-07-02 22:42 UTC** — **PR #12 merged (all session work now on `main`); AGENTIC ADDENDUM authored +
   wired.** Merged PR #12 after resolving a `ci.yml` conflict (PR #4's `actions/checkout` bump vs the gitleaks
   OSS-binary rewrite — kept the OSS binary, took main's newer checkout SHA); the merge carried the

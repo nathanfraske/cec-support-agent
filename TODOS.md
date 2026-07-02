@@ -225,9 +225,20 @@ tested; the two guards proven red-on-revert. Not pushed (orchestrator opens the 
 - [x] [added 2026-07-02 22:42 UTC · done 2026-07-02 22:42 UTC] Make it reachable + hooked: reference from
   AGENTS.md + a new `addendum-context.sh` SessionStart hook wired in `.claude/settings.json` (validated JSON;
   5 SessionStart hooks; hook emits well-formed additionalContext).
-- [ ] [added 2026-07-02 22:42 UTC] Implement the addendum's mechanical backstops (not yet built): a
-  `PreToolUse` exfil/oracle guard (§2b), a Stop verify + tracking-freshness gate (§2d), and the `projectops`
-  MCP server + panels (§3-§4). — deferred: the spec is landed; building the enforcement is the owner's call.
+- [~] [added 2026-07-02 22:42 UTC · obsolete 2026-07-02 23:56 UTC → split into the two lines below] Implement
+  the addendum's mechanical backstops (not yet built): a `PreToolUse` exfil/oracle guard (§2b), a Stop verify
+  + tracking-freshness gate (§2d), and the `projectops` MCP server + panels (§3-§4).
+- [x] [added 2026-07-02 23:56 UTC · done 2026-07-02 23:56 UTC] **Tier-1 guards built + wired + validated**
+  (PR #13): `invariant-guard.sh` (PreToolUse hard-block on corpus/weights/seed PATHS), `invariant-check.sh`
+  (PostToolUse surface: conflict markers, serialized-corpus-row, seed/key blocks — self-safe after two
+  dogfooded false positives, see HANDOFFS lesson), `tracking-freshness.sh` (Stop nudge if crates/ changed
+  without a HANDOFFS/TODOS update), and `ops/provision.sh` (Tier-0 activator). Wired in `.claude/settings.json`
+  (PreToolUse/PostToolUse/Stop); validated block/allow/surface/self-reference; addendum §2b/2c/2d/2f updated
+  to reflect built-not-proposed.
+- [ ] [added 2026-07-02 23:56 UTC] Remaining addendum standup (deferred, owner's call): the `projectops` MCP
+  server (§3, the structured-data keystone — incl. the proper structural home for the re-added-Serialize/
+  `source`/route checks the PreToolUse guard deliberately does not attempt), the review panels (§4), and
+  folding the cargo `verify` suite into the Stop gate via `projectops verify`. See FOLLOWUPS.
 
 ### Session 2026-07-02 — corpus cartography (leak-C10) threat model + non-mappability policy
 
