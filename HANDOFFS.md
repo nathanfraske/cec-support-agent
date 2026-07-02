@@ -15,6 +15,34 @@ Below "Pick up here", keep a reverse-chronological **handoff log** of dated entr
 
 ## Current state
 
+**As of 2026-07-02 ~22:40 UTC.** **The owner's 2026-07-02 API-posture decisions are IMPLEMENTED** on branch
+**`claude/repo-scope-work-plan-h93qx5`** (on top of leak Phase 2; +5 commits, **committed locally, NOT
+pushed** — the orchestrator opens the PR). Responding to `docs/api-extension-design.md` (§1.6/§2.5/§3), in
+green sub-step commits:
+
+- **Trusted calls only (leak C2)** (`697e16d`): `validate_inference_endpoints` refuses a non-loopback
+  `--endpoint`/`--fast-endpoint` at startup on BOTH the diagnose and serve paths unless
+  `--allow-remote-inference` is passed (loopback = localhost / 127.0.0.0/8 / [::1]); fixed error, never echoes
+  the URL; fails closed on an unparseable host. Builds leak-doc §3.1(b). Proven red-on-revert; live-smoked.
+- **Route-surface pinning** (`588f1ec`): the frozen `route_surface` list (GET /v1/health, POST /v1/diagnose,
+  POST /v1/execute) is folded into the router by `build_router`, and `router_surface_is_frozen` pins the exact
+  (method, path) set — adding ANY route is a deliberate test edit. Never-routable invariant (attest, keygen,
+  corpus WRITE) in serve.rs module docs + SECURITY.md (a violation is a reportable security issue). Proven
+  red-on-revert (a rogue /v1/attest route fails the pin).
+- **AGPL §13 notice** (`64ffa48`): `--allow-remote` prints a one-line stderr network-service / §13
+  Corresponding-Source notice at startup; same note in SECURITY.md. Auth ladder resolved: hard-loopback by
+  default, remote = mesh-only, NO bearer-token tier will be built.
+- **Docs** (`878fd4d`): DECISION LOG (§5) in api-extension-design.md (corpus-over-API = mesh-rostered/loopback
+  only, never token-auth public HTTP; attested rows, encrypted transport; doc-level, route-pin is the guard);
+  the 6-rule §2.5 egress-sink checklist copied into AGENTS.md as binding policy.
+
+**210 tests** (was 205: +4 endpoint-loopback, +1 route-pin), clippy `-D warnings` clean, fmt clean (pinned
+1.96.1). The §13 notice and both C2 refusals were live-smoked on the real binary. No corpus endpoint was
+built — decision 2 is doc-level plus the mechanical route-pin guard. Remaining: the `PromptPayload` chokepoint
+(leak §3.1(a)) and the corpus-endpoint build (gated on B4 + Q1) — both FOLLOWUPS, none blocking.
+
+--- previous (superseded by the API-posture state above) ---
+
 **As of 2026-07-02 ~21:30 UTC.** **Corpus leak-prevention Phase 2 is DONE** on branch
 **`claude/repo-scope-work-plan-h93qx5`** (started == origin/main @ `86e24cf`, which already carried Phase 1;
 now +3 commits, **committed locally, NOT pushed** — the orchestrator opens the PR). Phase 2 is the C4/C5
@@ -365,6 +393,23 @@ license-checks clean. Build loop: `. "$HOME/.cargo/env"` then `cargo build/test/
 See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementation status.
 
 ## Lessons learned (append-only)
+
+- **(2026-07-02) Pin a route surface by making the router and the pin read ONE list.** axum's `Router`
+  does not expose its routes for inspection, so a "freeze the endpoints" test cannot introspect the built
+  router. The working pattern: a `route_surface() -> Vec<(method, path, MethodRouter<Arc<AppState>>)>` is the
+  single source of truth; `build_router` folds it into the axum `Router`, and the pinning test maps it to the
+  `(method, path)` set and asserts equality. Because both the live router and the test read the same list they
+  cannot drift, and adding a route changes the set the test checks → a deliberate test edit is forced. The
+  handler in each tuple must be generic over the state (`get(health)`/`post(diagnose)` both unify to
+  `MethodRouter<Arc<AppState>>`), and the test only sorts/compares the `(&str,&str)` pair, never the
+  MethodRouter.
+
+- **(2026-07-02) Parse an endpoint's host by hand for the loopback check — no `url` crate is a dep, and
+  fail closed.** `endpoint_is_loopback` strips the scheme, takes the authority up to the first `/`/`?`/`#`,
+  drops userinfo before `@`, and splits host from port — special-casing a bracketed IPv6 literal (`[::1]`)
+  whose colons are part of the host. `localhost` matches directly; everything else goes through
+  `IpAddr::parse().is_loopback()` (covers 127.0.0.0/8 and ::1). An unparseable host is treated as
+  NON-loopback (refused) — the C2 egress guard must fail closed, never admit on a parse miss.
 
 - **(2026-07-02) `#[serde(try_from)]` read-side validation only bites where the type is DESERIALIZED —
   and the corpus row's symptoms are two DIFFERENT types.** The signature symptoms are `StoredSymptom`
