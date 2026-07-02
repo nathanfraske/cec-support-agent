@@ -7,7 +7,8 @@ use thiserror::Error;
 
 use crate::gate::{ensure_attested, ensure_evidence_integrity, GateError};
 use crate::schema::{
-    chain_hash, de_identify_plan, Contribution, FixMapping, OutcomeLabel, RowIntegrity,
+    attestation_message, chain_hash, de_identify_plan, Contribution, FixMapping, OutcomeLabel,
+    RowIntegrity,
 };
 use crate::stored::{StoredPlan, StoredSignature};
 
@@ -45,15 +46,36 @@ pub enum CorpusError {
 /// EI-03/A5: a confirmation counts only if it came from an independent run.
 /// A row whose plan was corpus-primed *from the very mapping it would confirm*
 /// is circular and contributes nothing. Otherwise rows are deduplicated by
-/// `run_id`, so re-submitting the same run cannot inflate confidence. A legacy
-/// row with no provenance is counted once per row (the prior behavior), since
-/// its independence cannot be established.
-fn confirmation_key(row: &Contribution, plan_id: &str, index: usize) -> Option<String> {
+/// `run_id`, so re-submitting the same run cannot inflate confidence. A row with
+/// no provenance is deduplicated by a CONTENT HASH of its canonical bytes, so
+/// byte-identical no-provenance submissions collapse to a single key — a verbatim
+/// replay is one observation, not N. (The prior positional `row:{index}` counted
+/// every resubmission as distinct, so a replayed no-provenance row inflated
+/// confirmations, and its Reopened mirror over-demoted a multiply-confirmed fix.)
+fn confirmation_key(row: &Contribution, plan_id: &str) -> Option<String> {
     match &row.provenance {
         Some(p) if p.retrieval_first && p.primed_from.iter().any(|id| id == plan_id) => None,
         Some(p) => Some(format!("run:{}", p.run_id)),
-        None => Some(format!("row:{index}")),
+        None => Some(format!("content:{}", content_hash(row))),
     }
+}
+
+/// A stable content hash of a row's canonical bytes, used as the independence key
+/// for a row that carries no run provenance. It reuses the attestation
+/// canonicalization — covering the signature, plan, label, verification,
+/// sign-off, and config class (everything that makes two rows the *same*
+/// observation) and excluding the attestation and the tamper-evidence link — so
+/// two byte-identical no-provenance rows hash equal and count once.
+fn content_hash(row: &Contribution) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(b"cec-corpus-confirmation-content-v1\n");
+    hasher.update(attestation_message(row));
+    hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 /// Derive the fix mappings for a signature at a config class from a set of
@@ -87,7 +109,7 @@ fn fix_mappings(
     let mut order: Vec<String> = Vec::new();
     let mut accs: HashMap<String, Acc> = HashMap::new();
 
-    for (index, row) in rows.iter().enumerate() {
+    for row in rows {
         if row.outcome.signature.fingerprint != signature.fingerprint
             || row.config_class != *config_class
         {
@@ -98,7 +120,7 @@ fn fix_mappings(
         if !resolved && !reopened {
             continue; // a plain hard negative affects no mapping
         }
-        let plan_id = row.outcome.plan.id.clone();
+        let plan_id = row.outcome.plan.id().to_string();
         let acc = accs.entry(plan_id.clone()).or_insert_with(|| {
             order.push(plan_id.clone());
             Acc {
@@ -112,7 +134,7 @@ fn fix_mappings(
         // re-submissions of one run collapse, and a circular (self-primed) row
         // contributes to neither — symmetric, so a reopen can never out-weigh a
         // confirmation through replay alone.
-        if let Some(key) = confirmation_key(row, &plan_id, index) {
+        if let Some(key) = confirmation_key(row, &plan_id) {
             if resolved {
                 acc.contributors.insert(key);
             } else {
@@ -298,6 +320,25 @@ impl FileCorpus {
             }
         };
         let head = verify_chain(&rows)?;
+        // De-id image check at the disk boundary (Layer-1f), matching
+        // `HttpCorpus::query`. Every stored LEAF validates at deserialize
+        // (`#[serde(try_from)]`), but `StoredPlan.title` is a plain string with no
+        // read-side guard, so a hand-edited row with valid-vocabulary leaves but an
+        // identity-bearing title deserializes clean. Enforce here — independent of
+        // whether an authority is configured — that every at-rest plan is its own
+        // de-identified image, so a cold-start open never serves such a title into
+        // the human trace or the consent screen.
+        for (i, row) in rows.iter().enumerate() {
+            match de_identify_plan(&row.outcome.plan.to_plan()) {
+                Ok(reminted) if reminted == row.outcome.plan => {}
+                _ => {
+                    return Err(CorpusError::Storage(format!(
+                        "corpus integrity: at-rest row {i}'s stored plan is not its own \
+                         de-identified image (a title or leaf the de-id mint would never emit)"
+                    )))
+                }
+            }
+        }
         Ok(Self {
             path,
             rows: std::sync::Mutex::new(rows),
@@ -449,16 +490,27 @@ impl CorpusStore for HttpCorpus {
                 response.status()
             )));
         }
-        let mappings: Vec<FixMapping> = response
-            .json()
+        // Read-side re-validation, in two layers (Layer-1e/C4). Read the raw body
+        // as a TRANSPORT concern, then DESERIALIZE it as an ADMISSION concern.
+        //
+        // Layer 1 — leaf validation at the wire boundary. The stored leaf types
+        // validate on deserialize (`#[serde(try_from)]`): a served action or
+        // description not in the frozen vocabulary, an inadmissible plan id, or a
+        // symptom outside the closed grammar makes `from_str` FAIL — so the
+        // wire/file path is identical to the construction path and `serde` no
+        // longer bypasses the mints. A parse failure on the mappings endpoint is
+        // therefore a de-identification refusal, not a transport fault.
+        let body = response
+            .text()
             .await
             .map_err(|e| CorpusError::Transport(e.to_string()))?;
-        // Read-side re-validation: a served plan is admitted only if it is
-        // exactly its own de-identified image — the validating mints reject an
-        // out-of-vocabulary action or inadmissible id, and the equality check
-        // rejects free-text title/description a compromised or buggy server
-        // could feed into the retrieval-first slate. Fails closed: one bad
-        // mapping refuses the whole response (a poisoned server is not a
+        let mappings: Vec<FixMapping> =
+            serde_json::from_str(&body).map_err(|_| GateError::ServedPlanInadmissible)?;
+        // Layer 2 — the plan's DERIVED `title` is a plain string (not leaf-typed),
+        // so re-validate that the served plan is exactly its own de-identified
+        // image: a hand-edited title a mint would never produce is refused even
+        // though its actions/id/symptoms parsed. Fails closed: one bad mapping
+        // refuses the whole response (a poisoned server is not a
         // partially-trustworthy one). Cryptographic re-verification of row
         // attestations on this path needs attested rows on the wire — the
         // mappings aggregate carries none; that lands with the corpus-service
@@ -518,7 +570,7 @@ mod tests {
     }
 
     fn contribution(label: OutcomeLabel, sign_off: SignOff) -> Contribution {
-        let signature = FaultSignature::from_symptoms(vec![Symptom("boot_loop".into())]);
+        let signature = FaultSignature::from_symptoms(vec![Symptom("event_41".into())]);
         let plan = Plan::new("p1", "restart service");
         let verification = verification_for(&label);
         Contribution::new(
@@ -653,17 +705,58 @@ mod tests {
 
     #[tokio::test]
     async fn confirmations_aggregate_per_plan() {
-        // Legacy rows (no provenance): each submission counts once, as before.
+        // Rows for the same plan aggregate into ONE mapping. Two byte-identical
+        // no-provenance submissions are one observation, not two: keyed on a
+        // content hash of the row's canonical bytes, a verbatim replay collapses
+        // to a single confirmation (the #2 replay-inflation fix). Independence
+        // between distinct runs is established by provenance, not by resubmission.
         let corpus = LocalCorpus::new();
         let row = contribution(OutcomeLabel::ResolvedConfirmed, SignOff::HumanConfirmed);
         corpus.submit(&row).await.expect("first");
-        corpus.submit(&row).await.expect("second");
+        corpus.submit(&row).await.expect("second (verbatim replay)");
         let hits = corpus
             .query(&row.outcome.signature.to_signature(), &config_class())
             .await
             .expect("query");
         assert_eq!(hits.len(), 1, "same plan aggregates into one mapping");
-        assert_eq!(hits[0].confirmations, 2);
+        assert_eq!(
+            hits[0].confirmations, 1,
+            "byte-identical no-provenance rows collapse to one confirmation"
+        );
+    }
+
+    #[tokio::test]
+    async fn verbatim_no_provenance_resubmissions_do_not_inflate_or_over_demote() {
+        // #2 regression (replay integrity): a no-provenance attested row's
+        // confirmation key is a CONTENT HASH of its canonical bytes, so N verbatim
+        // resubmissions of a ResolvedConfirmed row yield exactly ONE confirmation —
+        // the replay the Some(p) run-dedup branch stops but the None branch used to
+        // skip. Symmetrically, N verbatim Reopened replays demote by ONE, not N, so
+        // a duplicated Reopened line cannot bury a multiply-confirmed fix.
+        let corpus = LocalCorpus::new();
+        let sig = FaultSignature::from_symptoms(vec![Symptom("event_41".into())]);
+        let confirmed = contribution(OutcomeLabel::ResolvedConfirmed, SignOff::HumanConfirmed);
+        for _ in 0..5 {
+            corpus.submit(&confirmed).await.expect("verbatim confirm");
+        }
+        let hits = corpus.query(&sig, &config_class()).await.expect("query");
+        assert_eq!(hits.len(), 1, "same plan → one mapping");
+        assert_eq!(
+            hits[0].confirmations, 1,
+            "5 byte-identical no-provenance confirmations are ONE independent confirmation"
+        );
+
+        // Five verbatim Reopened replays cancel exactly one confirmation (net
+        // zero), not five — otherwise a single duplicated reopen buries the fix.
+        let reopened = contribution(OutcomeLabel::Reopened, SignOff::HumanConfirmed);
+        for _ in 0..5 {
+            corpus.submit(&reopened).await.expect("verbatim reopen");
+        }
+        let demoted = corpus.query(&sig, &config_class()).await.expect("query");
+        assert!(
+            demoted.is_empty(),
+            "one confirmation net one distinct reopen is zero — demoted out of retrieval"
+        );
     }
 
     fn provenance(run_id: &str, retrieval_first: bool, primed_from: &[&str]) -> RowProvenance {
@@ -861,14 +954,90 @@ mod tests {
                 .await
                 .expect("write a chained row");
         }
-        // Hand-edit the persisted row's evidence; the chain no longer verifies.
+        // Hand-edit the persisted row's evidence to ANOTHER grammar-valid symptom
+        // (so it still deserializes) — the chain no longer verifies.
         let text = std::fs::read_to_string(&path.0).expect("read");
-        let tampered = text.replace("boot_loop", "tampered_symptom");
+        let tampered = text.replace("event_41", "xid_79");
         assert_ne!(text, tampered, "the edit must actually change the file");
         std::fs::write(&path.0, tampered).expect("write");
         assert!(
             matches!(FileCorpus::open(&path.0), Err(CorpusError::Storage(_))),
             "a hand-edited row must be caught as a storage (integrity) error"
+        );
+    }
+
+    // --- The disk boundary (`FileCorpus::open`) re-de-ids leaf tokens (C4) -----
+    //     A row on disk was never through the constructor, and open() alone (no
+    //     authority) runs no per-row content gate — so the leaf `#[serde(try_from)]`
+    //     guards are what refuse an out-of-vocab action / non-grammar symptom that
+    //     an editor with file-write access (the keyless chain is recomputable)
+    //     could craft. The refusal is a parse (Storage) error at open.
+
+    #[tokio::test]
+    async fn file_corpus_open_refuses_an_out_of_vocab_action_on_disk() {
+        let path = TempPath::new("disk-poison-action");
+        let row = r#"{"outcome":{"signature":{"fingerprint":"x","symptoms":["event_41"]},"plan":{"id":"p1","title":"cim_query","steps":[{"description":"cim_query","action":"powershell -c whoami on DESKTOP-NATHAN01","risk":"read_only"}]},"label":"resolved_confirmed","verification":{"result":"pass"}},"config_class":{"derived_hash":"x"},"sign_off":"human_confirmed"}"#;
+        std::fs::write(&path.0, format!("{row}\n")).expect("write crafted row");
+        assert!(
+            matches!(FileCorpus::open(&path.0), Err(CorpusError::Storage(_))),
+            "an out-of-vocab action on disk must fail to deserialize at open"
+        );
+    }
+
+    #[tokio::test]
+    async fn file_corpus_open_refuses_a_non_grammar_symptom_on_disk() {
+        let path = TempPath::new("disk-poison-symptom");
+        let row = r#"{"outcome":{"signature":{"fingerprint":"x","symptoms":["desktop-nathan01"]},"plan":{"id":"p1","title":"cim_query","steps":[{"description":"cim_query","action":"cim_query","risk":"read_only"}]},"label":"resolved_confirmed","verification":{"result":"pass"}},"config_class":{"derived_hash":"x"},"sign_off":"human_confirmed"}"#;
+        std::fs::write(&path.0, format!("{row}\n")).expect("write crafted row");
+        assert!(
+            matches!(FileCorpus::open(&path.0), Err(CorpusError::Storage(_))),
+            "a non-grammar symptom on disk must fail to deserialize at open"
+        );
+    }
+
+    #[tokio::test]
+    async fn file_corpus_open_refuses_a_poisoned_part_class_on_disk() {
+        // #4: the label's part_class rides onto the row unmodified and egresses to
+        // the API wire via `wire_label`. A hand-edited hardware label whose
+        // part_class carries identity must fail to DESERIALIZE at open, matching
+        // the other stored leaves.
+        let path = TempPath::new("disk-poison-part-class");
+        let row = r#"{"outcome":{"signature":{"fingerprint":"x","symptoms":["event_41"]},"plan":{"id":"p1","title":"cim_query","steps":[{"description":"cim_query","action":"cim_query","risk":"read_only"}]},"label":{"escalated_hardware":{"part_class":"psu on DESKTOP-NATHAN01"}}},"config_class":{"derived_hash":"x"},"sign_off":"human_confirmed"}"#;
+        std::fs::write(&path.0, format!("{row}\n")).expect("write crafted row");
+        assert!(
+            matches!(FileCorpus::open(&path.0), Err(CorpusError::Storage(_))),
+            "an identity-bearing part_class on disk must fail to deserialize at open"
+        );
+    }
+
+    #[tokio::test]
+    async fn file_corpus_open_refuses_a_poisoned_run_id_on_disk() {
+        // #4: the provenance run_id rides onto the row unmodified. A hand-edited
+        // row whose run_id is a smuggled path/email must fail to deserialize.
+        let path = TempPath::new("disk-poison-run-id");
+        let row = r#"{"outcome":{"signature":{"fingerprint":"x","symptoms":["event_41"]},"plan":{"id":"p1","title":"cim_query","steps":[{"description":"cim_query","action":"cim_query","risk":"read_only"}]},"label":"escalated_human_unresolved"},"config_class":{"derived_hash":"x"},"sign_off":"human_confirmed","provenance":{"run_id":"nathan@cec.direct","retrieval_first":false}}"#;
+        std::fs::write(&path.0, format!("{row}\n")).expect("write crafted row");
+        assert!(
+            matches!(FileCorpus::open(&path.0), Err(CorpusError::Storage(_))),
+            "an identity-bearing run_id on disk must fail to deserialize at open"
+        );
+    }
+
+    #[tokio::test]
+    async fn file_corpus_open_refuses_an_identity_bearing_title_on_disk() {
+        // #5: StoredPlan.title is the one stored leaf with no deserialize-time
+        // try_from. Every LEAF here is admissible (valid id, vocabulary
+        // action/symptom) so the row deserializes clean, but the title carries
+        // identity the mint would never produce (the mint reconstructs it as the
+        // joined actions, "cim_query"). The de_identify_plan image check at open
+        // must refuse it — a cold-start open (no authority) must not serve an
+        // identity-bearing title into the human trace or consent screen.
+        let path = TempPath::new("disk-poison-title");
+        let row = r#"{"outcome":{"signature":{"fingerprint":"x","symptoms":["event_41"]},"plan":{"id":"p1","title":"DESKTOP-NATHAN01 nathan 192.168.1.20","steps":[{"description":"cim_query","action":"cim_query","risk":"read_only"}]},"label":"resolved_confirmed","verification":{"result":"pass"}},"config_class":{"derived_hash":"x"},"sign_off":"human_confirmed"}"#;
+        std::fs::write(&path.0, format!("{row}\n")).expect("write crafted row");
+        assert!(
+            matches!(FileCorpus::open(&path.0), Err(CorpusError::Storage(_))),
+            "an identity-bearing plan title on disk must be refused at cold-start open"
         );
     }
 
@@ -904,7 +1073,7 @@ mod tests {
             .expect("row admitted");
         let hits = corpus
             .query(
-                &FaultSignature::from_symptoms(vec![Symptom("boot_loop".into())]),
+                &FaultSignature::from_symptoms(vec![Symptom("event_41".into())]),
                 &config_class(),
             )
             .await
@@ -915,7 +1084,7 @@ mod tests {
     #[tokio::test]
     async fn a_reopened_outcome_demotes_the_fix() {
         let corpus = LocalCorpus::new();
-        let sig = FaultSignature::from_symptoms(vec![Symptom("boot_loop".into())]);
+        let sig = FaultSignature::from_symptoms(vec![Symptom("event_41".into())]);
         // One confirmation, then a reopen for the same plan: net zero → not offered.
         corpus
             .submit(
@@ -974,7 +1143,7 @@ mod tests {
         let corpus = LocalCorpus::new().with_authority(authority.public_key());
         let mut row = Contribution::new(
             Outcome {
-                signature: FaultSignature::from_symptoms(vec![Symptom("boot_loop".into())]),
+                signature: FaultSignature::from_symptoms(vec![Symptom("event_41".into())]),
                 plan: Plan::new("p1", "restart service"),
                 label: OutcomeLabel::ResolvedConfirmed,
                 verification: Some(Verification::pass()),
@@ -1105,7 +1274,7 @@ mod tests {
         // submitted twice. A replayed reopen must cancel ONE confirmation, not
         // two — otherwise duplicating a single Reopened line buries the fix.
         let corpus = LocalCorpus::new();
-        let sig = FaultSignature::from_symptoms(vec![Symptom("boot_loop".into())]);
+        let sig = FaultSignature::from_symptoms(vec![Symptom("event_41".into())]);
         for run in ["run-A", "run-C"] {
             corpus
                 .submit(
@@ -1227,15 +1396,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn http_query_refuses_a_served_plan_that_fails_read_side_de_id() {
-        // A compromised (or buggy) corpus server feeds a mapping whose stored
-        // plan carries request prose in the action and free text in the title.
-        // Built as a struct literal (only possible in-crate) to simulate wire
-        // bytes a mint would never have produced; the read path must refuse it,
-        // not hand it to retrieval-first.
+    async fn http_query_refuses_a_served_out_of_vocab_action_at_the_wire() {
+        // Layer 1 (leaf validation): a compromised (or buggy) corpus server feeds
+        // a mapping whose stored step action is request prose the mint would never
+        // emit. Built as a struct literal (only possible in-crate) to simulate
+        // wire bytes; on the READ path `StoredAction`'s `try_from` makes the body
+        // FAIL to deserialize, so the poisoned row never reaches retrieval-first.
         let plan = StoredPlan {
             id: "p1".into(),
-            title: "Fix DESKTOP-NATHAN01 for nathan".into(),
+            title: "cim_query".into(),
             steps: vec![StoredStep {
                 description: "run powershell on DESKTOP-NATHAN01".into(),
                 action: "powershell -c Get-CimInstance on DESKTOP-NATHAN01".into(),
@@ -1244,7 +1413,7 @@ mod tests {
         };
         let mapping = FixMapping {
             signature: StoredSignature::from_signature(&FaultSignature::from_symptoms(vec![
-                Symptom("boot_loop".into()),
+                Symptom("event_41".into()),
             ])),
             plan,
             confirmations: 3,
@@ -1253,15 +1422,99 @@ mod tests {
         let corpus = HttpCorpus::new(base);
         let error = corpus
             .query(
-                &FaultSignature::from_symptoms(vec![Symptom("boot_loop".into())]),
+                &FaultSignature::from_symptoms(vec![Symptom("event_41".into())]),
                 &config_class(),
             )
             .await
-            .expect_err("a poisoned served plan must be refused");
+            .expect_err("a served out-of-vocab action must be refused");
         assert!(matches!(
             error,
             CorpusError::Gate(GateError::ServedPlanInadmissible)
         ));
+    }
+
+    #[tokio::test]
+    async fn http_query_refuses_a_hand_edited_title_via_the_image_check() {
+        // Layer 2 (de-identified image): every LEAF is admissible — valid id,
+        // vocabulary action/description — so the body deserializes cleanly, but
+        // the derived `title` (a plain string, not leaf-typed) carries identity
+        // the mint would never produce. The `de_identify_plan` equality check
+        // reconstructs the title as the joined actions and refuses the mismatch.
+        let plan = StoredPlan {
+            id: "p1".into(),
+            title: "Fix DESKTOP-NATHAN01 for nathan".into(), // != "cim_query"
+            steps: vec![StoredStep {
+                description: "cim_query".into(),
+                action: "cim_query".into(),
+                risk: common::Risk::ReadOnly,
+            }],
+        };
+        let mapping = FixMapping {
+            signature: StoredSignature::from_signature(&FaultSignature::from_symptoms(vec![
+                Symptom("event_41".into()),
+            ])),
+            plan,
+            confirmations: 3,
+        };
+        let base = serve_one_json(serde_json::to_string(&vec![mapping]).expect("serialize"));
+        let corpus = HttpCorpus::new(base);
+        let error = corpus
+            .query(
+                &FaultSignature::from_symptoms(vec![Symptom("event_41".into())]),
+                &config_class(),
+            )
+            .await
+            .expect_err("a hand-edited title must be refused");
+        assert!(matches!(
+            error,
+            CorpusError::Gate(GateError::ServedPlanInadmissible)
+        ));
+    }
+
+    #[tokio::test]
+    async fn http_query_refuses_an_adversary_seeded_served_symptom() {
+        // 2d — the read-path poison harness. The adversary controls the SERVED
+        // bytes: every canonical `leakguard::POISON` token is planted into a
+        // served signature symptom. A clean action/id keeps the plan admissible,
+        // so ONLY the symptom guard can catch it — `StoredSymptom`'s `try_from`
+        // makes each poisoned body fail to deserialize (the closed grammar
+        // refuses a hostname/asset/MAC/serial shape), so the poisoned mapping is
+        // never handed to retrieval-first.
+        let mut raw = Plan::new("heuristic-1", "title");
+        raw.steps.push(common::PlanStep {
+            description: "d".into(),
+            action: "cim_query".into(),
+            risk: common::Risk::ReadOnly,
+        });
+        let clean_plan = de_identify_plan(&raw).expect("clean plan de-identifies");
+        for poison in leakguard::POISON {
+            // Build the served signature with the poison token as a "symptom".
+            // `from_symptom` wraps without validating (the construction path);
+            // the leak is caught on the READ, at deserialize.
+            let signature = StoredSignature::from_signature(&FaultSignature::from_symptoms(vec![
+                Symptom::from(*poison),
+            ]));
+            let mapping = FixMapping {
+                signature,
+                plan: clean_plan.clone(),
+                confirmations: 5,
+            };
+            let base = serve_one_json(serde_json::to_string(&vec![mapping]).expect("serialize"));
+            let corpus = HttpCorpus::new(base);
+            let result = corpus
+                .query(
+                    &FaultSignature::from_symptoms(vec![Symptom::from(*poison)]),
+                    &config_class(),
+                )
+                .await;
+            assert!(
+                matches!(
+                    result,
+                    Err(CorpusError::Gate(GateError::ServedPlanInadmissible))
+                ),
+                "adversary-seeded symptom {poison:?} must be refused on read, got {result:?}"
+            );
+        }
     }
 
     #[tokio::test]
@@ -1275,7 +1528,7 @@ mod tests {
         let clean = de_identify_plan(&raw).expect("a clean-action plan de-identifies");
         let mapping = FixMapping {
             signature: StoredSignature::from_signature(&FaultSignature::from_symptoms(vec![
-                Symptom("boot_loop".into()),
+                Symptom("event_41".into()),
             ])),
             plan: clean.clone(),
             confirmations: 1,
@@ -1284,7 +1537,7 @@ mod tests {
         let corpus = HttpCorpus::new(base);
         let got = corpus
             .query(
-                &FaultSignature::from_symptoms(vec![Symptom("boot_loop".into())]),
+                &FaultSignature::from_symptoms(vec![Symptom("event_41".into())]),
                 &config_class(),
             )
             .await

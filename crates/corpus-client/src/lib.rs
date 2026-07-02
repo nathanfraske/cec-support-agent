@@ -33,7 +33,10 @@ pub use schema::{
     SignOff, SignOffAttestation,
 };
 pub use store::{CorpusError, CorpusStore, FileCorpus, HttpCorpus, LocalCorpus};
-pub use stored::{StoredOutcome, StoredPlan, StoredSignature, StoredStep, StoredSymptom};
+pub use stored::{
+    StoredAction, StoredOutcome, StoredPlan, StoredPlanId, StoredSignature, StoredStep,
+    StoredSymptom,
+};
 
 // The sign-off authority types live in `provenance`; re-export them so a caller
 // configuring a store with `.with_authority(...)` (and attesting via
@@ -102,8 +105,8 @@ mod leakage_tests {
             .collect();
         assert!(symptoms.contains(&"explorer.exe"));
         assert!(symptoms.contains(&"0x1234"));
-        assert_eq!(row.outcome.plan.steps[0].action, "driver_rollback");
-        assert_eq!(row.outcome.plan.steps[0].description, "driver_rollback");
+        assert_eq!(row.outcome.plan.steps[0].action(), "driver_rollback");
+        assert_eq!(row.outcome.plan.steps[0].description(), "driver_rollback");
     }
 
     // --- The C1 regression guards: the two fields `de_identify_plan` historically

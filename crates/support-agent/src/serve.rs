@@ -24,6 +24,20 @@
 //! API is a new egress sink, exactly the class of surface the leak-prevention
 //! methodology warns about, so its responses carry vocabulary tokens and
 //! pinned enum strings, never candidate/step free text or tool output prose.
+//!
+//! Never-routable invariant (a security boundary, not a convenience): three
+//! capabilities MUST NEVER be reachable over this socket — sign-off ATTESTATION
+//! and KEY GENERATION (`gen-signoff-key`), and corpus WRITE (submit). The
+//! evidence-integrity keystone is the asymmetric split: the human/verifier
+//! authority holds the ed25519 seed and the engine embeds only the public key,
+//! so an `attest`/keygen endpoint would put the seed — or a network-reachable
+//! signing oracle — inside the serve process and let anyone who reaches the
+//! socket mint `HumanConfirmed` rows (precisely the forgery the gate exists to
+//! refuse). Corpus write is rung-2 (rostered identity + owner authority), never
+//! a rung-0 loopback capability. The exact route set is frozen by
+//! [`route_surface`] and the `router_surface_is_frozen` test: adding ANY route
+//! is a deliberate test edit, and a route that exposed attest, keygen, or corpus
+//! write is a reportable security issue (see `SECURITY.md`).
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -32,7 +46,7 @@ use std::time::{Duration, Instant};
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{get, post, MethodRouter};
 use axum::{Json, Router};
 use serde::Deserialize;
 
@@ -43,7 +57,7 @@ use common::{
 };
 use corpus_client::{CorpusStore, FileCorpus, LocalCorpus, OutcomeLabel, RowProvenance, SignOff};
 use intake::{Interview, Reproducibility};
-use panel::{best_of_n, required_escalation, route_for, Escalation, HeuristicJudge, Route};
+use panel::{best_of_n, required_escalation, route_for, Escalation, HeuristicJudge, Judge, Route};
 use provenance::SigningKey;
 use swarm::{Generator, Swarm};
 use tools_windows::windows_tools;
@@ -61,7 +75,6 @@ struct Session {
     route: Route,
     candidates: Vec<Candidate>,
     selected: usize,
-    escalation: Escalation,
     reproducibility: Reproducibility,
     retrieval_first: bool,
     primed_from: Vec<String>,
@@ -175,6 +188,23 @@ pub(crate) async fn serve(args: crate::Args) -> anyhow::Result<()> {
         .parse()
         .map_err(|e| anyhow::anyhow!("--bind {:?} is not a socket address: {e}", args.bind))?;
     validate_bind(&addr, args.allow_remote)?;
+    // Trusted calls only: the same loopback discipline the CLI applies to the
+    // model-inference egress (leak class C2) — a non-loopback endpoint carries
+    // raw request prose off the box only under an explicit, audited opt-in.
+    crate::validate_inference_endpoints(&args)?;
+
+    // AGPL §13: the auth posture and the source-offer duty move together. The API
+    // stays hard-loopback by default and remote exposure is mesh-only (no
+    // bearer-token tier is built). When the operator opts into `--allow-remote`,
+    // binding beyond loopback makes this a network service, which arms the §13
+    // obligation — say so, once, at startup.
+    if args.allow_remote {
+        eprintln!(
+            "serve: NOTICE — --allow-remote binds this engine beyond loopback, making it a \
+             network service. Under AGPL-3.0 §13 you must offer this service's users the \
+             Corresponding Source of the engine they interact with."
+        );
+    }
 
     // Same attestation posture as the CLI: enforce when a pubkey is present,
     // self-attest when the seed is held, derive enforcement from the seed so
@@ -213,16 +243,37 @@ pub(crate) async fn serve(args: crate::Args) -> anyhow::Result<()> {
         sessions: Mutex::new(HashMap::new()),
     });
 
-    let router = Router::new()
-        .route("/v1/health", get(health))
-        .route("/v1/diagnose", post(diagnose))
-        .route("/v1/execute", post(execute))
-        .with_state(state);
+    let router = build_router(state);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     eprintln!("serve: listening on http://{addr} (cec-diagnose/v1, cec-execute/v1)");
     axum::serve(listener, router).await?;
     Ok(())
+}
+
+/// The engine's ENTIRE network-reachable route surface, as `(method, path,
+/// handler)`. This list is the single source of truth for what `serve` exposes:
+/// [`build_router`] folds it into the axum router, and the `router_surface_is_frozen`
+/// test pins the `(method, path)` set — so ADDING A ROUTE is a deliberate edit to
+/// that test, never a silent new surface. The never-routable invariant in the
+/// module docs (attest, keygen, corpus write) is the standing reason this list
+/// must not grow without a security decision.
+fn route_surface() -> Vec<(&'static str, &'static str, MethodRouter<Arc<AppState>>)> {
+    vec![
+        ("GET", "/v1/health", get(health)),
+        ("POST", "/v1/diagnose", post(diagnose)),
+        ("POST", "/v1/execute", post(execute)),
+    ]
+}
+
+/// Fold the frozen [`route_surface`] into the axum router. The pinned surface and
+/// the live router are built from one list, so they cannot drift.
+fn build_router(state: Arc<AppState>) -> Router {
+    let mut router = Router::new();
+    for (_method, path, handler) in route_surface() {
+        router = router.route(path, handler);
+    }
+    router.with_state(state)
 }
 
 async fn health() -> Json<serde_json::Value> {
@@ -393,7 +444,6 @@ async fn handle_diagnose(
                 route,
                 candidates,
                 selected,
-                escalation,
                 reproducibility: case.reproducibility,
                 retrieval_first,
                 primed_from: known.iter().map(|m| m.plan.id().to_string()).collect(),
@@ -477,9 +527,24 @@ async fn handle_execute(
         }));
     }
 
-    // The sign-off must meet the judge's required escalation — a verifier
-    // cannot authorize a run the panel routed to a human.
-    if session.escalation == Escalation::HumanConfirm && sign_off != SignOff::HumanConfirmed {
+    // The sign-off must meet the required escalation of the CANDIDATE ACTUALLY
+    // SELECTED — never the judge's winner. The caller can pick any slate
+    // candidate by plan_id (the app-side retry), and `session.escalation` was
+    // computed once at diagnose time for the winner only. Binding the gate to it
+    // let a verifier sign-off run a Reversible sibling the panel independently
+    // routes to HumanConfirm whenever the winner happened to be lower-escalation
+    // (e.g. a ReadOnly corpus precedent → Auto). Recompute the panel's escalation
+    // for THIS candidate — re-running the sandbox check and the judge score — and
+    // gate on that.
+    let judge = HeuristicJudge;
+    let candidate_sandbox_validated = sandbox_validated_for(None, candidate, true).await;
+    let candidate_escalation = required_escalation(
+        &session.route,
+        candidate_sandbox_validated,
+        candidate,
+        &judge.score(candidate),
+    );
+    if candidate_escalation == Escalation::HumanConfirm && sign_off != SignOff::HumanConfirmed {
         return Err(ApiError::new(
             StatusCode::CONFLICT,
             "sign_off_below_required_escalation",
@@ -560,7 +625,7 @@ async fn handle_execute(
             .collect::<Vec<_>>(),
         "verification": wire_verdict(&verdict),
         "label": wire_label(&label),
-        "escalation_required": wire_escalation(&session.escalation),
+        "escalation_required": wire_escalation(&candidate_escalation),
     }))
 }
 
@@ -585,6 +650,7 @@ mod tests {
                 serve: true,
                 bind: "127.0.0.1:0".into(),
                 allow_remote: false,
+                allow_remote_inference: false,
             },
             corpus: Box::new(LocalCorpus::new()),
             authority: None,
@@ -711,6 +777,82 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn execute_gate_binds_to_the_selected_candidate_not_the_winner() {
+        // Regression for the escalation-downgrade defect: the execute gate must
+        // bind to the required escalation of the candidate ACTUALLY selected by
+        // plan_id, not the judge's winner. Build a session whose winner is a
+        // ReadOnly plan (escalation Auto) but which also carries a Reversible
+        // sibling the panel independently routes to HumanConfirm (reversible +
+        // unvalidated). A verifier sign-off that selects that sibling must be
+        // refused (409 sign_off_below_required_escalation) even though the
+        // winner's escalation — the value stored on the session — is only Auto.
+        use common::{Plan, PlanStep, Symptom};
+
+        let state = offline_state();
+
+        let mut read_only = Plan::new("winner-readonly", "cim_query");
+        read_only.steps.push(PlanStep {
+            description: "cim_query".into(),
+            action: "cim_query".into(),
+            risk: Risk::ReadOnly,
+        });
+        let winner = Candidate::new(
+            read_only,
+            "read-only precedent",
+            CandidateSource::CorpusPrimed,
+        );
+
+        let mut reversible = Plan::new("sibling-reversible", "registry_set");
+        reversible.steps.push(PlanStep {
+            description: "registry_set".into(),
+            action: "registry_set".into(),
+            risk: Risk::Reversible,
+        });
+        let sibling = Candidate::new(reversible, "reversible sibling", CandidateSource::ColdModel);
+
+        let session_id = "escalation-downgrade-regression".to_string();
+        {
+            let mut sessions = state.sessions.lock().expect("sessions lock");
+            sessions.insert(
+                session_id.clone(),
+                Session {
+                    signature: FaultSignature::from_symptoms(vec![Symptom("event_41".into())]),
+                    config_class: ConfigClass::from_inventory(["os:windows 11"]),
+                    route: Route::SoftwareState,
+                    candidates: vec![winner, sibling],
+                    // Select the ReadOnly winner: at diagnose time the panel would
+                    // record its escalation as Auto — the very value the old gate
+                    // trusted.
+                    selected: 0,
+                    reproducibility: Reproducibility::Unknown,
+                    retrieval_first: true,
+                    primed_from: vec![],
+                    created: Instant::now(),
+                },
+            );
+        }
+
+        // Select the Reversible sibling with only a verifier sign-off. The panel
+        // would route that plan to HumanConfirm, so the gate must refuse it — the
+        // stored Auto escalation of the winner must not authorize it.
+        let refused = handle_execute(
+            &state,
+            ExecuteRequest {
+                session_id,
+                consented: true,
+                sign_off: "verifier".into(),
+                plan_id: Some("sibling-reversible".into()),
+            },
+        )
+        .await;
+        let error = refused.expect_err(
+            "a verifier sign-off must not run a Reversible candidate the panel routes to HumanConfirm",
+        );
+        assert_eq!(error.status, StatusCode::CONFLICT);
+        assert_eq!(error.reason, "sign_off_below_required_escalation");
+    }
+
+    #[tokio::test]
     async fn execute_with_human_sign_off_returns_the_post_execution_envelope() {
         let state = offline_state();
         let envelope = handle_diagnose(
@@ -748,12 +890,50 @@ mod tests {
             label.starts_with("escalated_") || label == "reopened",
             "off-Windows execution must not claim resolution, got {label:?}"
         );
-        // The post-execution envelope is de-identified: no request prose.
+        // The post-execution envelope is de-identified: NONE of the planted
+        // identifier tokens may survive into it. Assert all five, case-insensitively
+        // (both sides lowercased), the same helper the diagnose-response test uses —
+        // the earlier form checked only 2 of 5 and the serial check was
+        // case-sensitive.
         let serialized = serde_json::to_string(&result).expect("serializes");
-        assert!(
-            !serialized.to_lowercase().contains("desktop-nathan01")
-                && !serialized.contains("SN12345678"),
-            "planted identity leaked into the API execute response"
+        for token in [
+            "DESKTOP-NATHAN01",
+            "nathan",
+            "00:1A:2B:3C:4D:5E",
+            "SN12345678",
+            "192.168.1.20",
+        ] {
+            assert!(
+                !serialized.to_lowercase().contains(&token.to_lowercase()),
+                "planted identity {token:?} leaked into the API execute response"
+            );
+        }
+    }
+
+    #[test]
+    fn router_surface_is_frozen() {
+        // The engine's route surface is FROZEN. Adding, removing, or renaming a
+        // route is a deliberate security decision, so it must be an explicit edit
+        // HERE — never a silent new network-reachable surface. In particular
+        // attest, keygen, and corpus WRITE must NEVER be routable (see the module
+        // invariant + SECURITY.md); a route that exposed one is a reportable
+        // security issue.
+        let mut surface: Vec<(&str, &str)> = route_surface()
+            .iter()
+            .map(|(method, path, _)| (*method, *path))
+            .collect();
+        surface.sort_unstable();
+        assert_eq!(
+            surface,
+            vec![
+                ("GET", "/v1/health"),
+                ("POST", "/v1/diagnose"),
+                ("POST", "/v1/execute"),
+            ],
+            "the engine's route surface changed. Adding/removing/renaming a route \
+             is a deliberate decision: attest, keygen, and corpus WRITE must NEVER \
+             be network-reachable. If this change is intended, edit this test AND \
+             confirm the new route honors the §2.5 egress-sink checklist."
         );
     }
 

@@ -86,6 +86,18 @@ the corpus is served over the mesh, a **consuming peer** needs that anchor too (
 serving node could silently truncate). **Decision:** distribute the anchor as part of the
 mesh corpus handshake, or is the rostered-owner trust model enough?
 
+**Q6. How much provenance does a served row expose?** B4 proposes serving essentially the
+whole `Contribution` minus `integrity` — including `RowProvenance` (`run_id`,
+`retrieval_first`, and `primed_from`, the plan-ids of the precedents that primed a run) —
+so the consumer can run `ensure_attested` itself. Shipping `primed_from` on the read wire
+exposes the corpus's internal **priming graph** (which fixes were derived from which) —
+structure far beyond any single answer, and a corpus-cartography vector (leak-C10; see
+`docs/corpus-cartography-threat.md` §2 V6). **Lean:** resolve by **provenance-graph
+minimization** — the B4 served-row type ships only the minimal attested unit a consumer
+needs to verify and use a row (attested `StoredOutcome` + attestation), never `primed_from`
+or raw `confirmations`, unless a decision log entry explicitly authorizes it. **Decision:**
+confirm this bar before B4's wire contract ships; gated on B4.
+
 ## What's already built (P0 — no decisions needed, additive + cold-start-safe)
 
 - `common::InventoryProvider` trait + `CoarseHostInventory` (today's os/arch/family
@@ -105,19 +117,31 @@ consent level, and escalation. Fields:
 `{schema_version, fault:{fingerprint,symptoms[]}, config_class, route, candidates[],
 selected, consent_required, escalation, executed}` (+ additive `part_class` beside `route`
 when it is `hardware_evidenced`), where each **candidate** carries ONLY
-`{plan_id, source, max_risk, actions[]}` — the `actions` are tool-name vocabulary (e.g.
+`{plan_id, max_risk, actions[]}` — the `actions` are tool-name vocabulary (e.g.
 `cim_query`, `create_restore_point`) that **AllMyStuff maps to its own human-readable
 labels**. The envelope deliberately omits a candidate's free-text `title`/`rationale` and
 a step's `description`, because those can carry the raw request prose (hostname/user/IP/
 serial); this is enforced by a de-id regression test + a process-level stdout-contract
-test. Per D2, within `v1` new fields are additive-only; a breaking change bumps the major
-and the consumer errors on an unknown one. **Enum wire grammar (pinned 2026-07-02, before
-any consumer exists):** the enum-valued fields carry frozen snake_case tokens — `route`:
-`software_state | hardware_evidenced | ambiguous`; candidate `source`:
-`cold_model | corpus_primed | human`; `max_risk`: `read_only | reversible | destructive`;
-`consent_required`: `read_only_only | allow_reversible | allow_destructive`; `escalation`:
+test. **`source` (cold_model vs corpus_primed) was deliberately removed (2026-07-02,
+leak-C10)** — a candidate exists with `source: corpus_primed` iff the corpus holds a
+confirmed fix for exactly this `(fingerprint, config_class)`, so emitting the label turned
+every diagnose into a yes/no corpus-membership oracle (corpus cartography — see
+`docs/corpus-cartography-threat.md`). AllMyStuff never needed it: it maps `actions[]` to
+its own human-readable labels and renders `max_risk`/`consent_required`/`escalation`;
+it does not need to know whether the plan came from the corpus or a cold model, and it
+gets no corpus provenance on the wire. (Honest residual: the retrieval-first hit/miss
+latency and slate-count differentials are not yet equalized — tracked in FOLLOWUPS.md and
+the threat doc's §3 control D.) Per D2, within `v1` new fields are additive-only; a
+breaking change bumps the major and the consumer errors on an unknown one. **Enum wire
+grammar (pinned 2026-07-02, before any consumer exists):** the enum-valued fields carry
+frozen snake_case tokens — `route`: `software_state | hardware_evidenced | ambiguous`;
+`max_risk`: `read_only | reversible | destructive`; `consent_required`:
+`read_only_only | allow_reversible | allow_destructive`; `escalation`:
 `auto | verifier_confirm | human_confirm` — mapped explicitly in code (never `Debug`
 formatting, which a Rust rename could silently change) and frozen by a pinning test.
+Candidate `source: cold_model | corpus_primed | human` was part of this grammar but the
+**field itself was removed** from the wire (see above) — the enum values are retained here
+only as the historical record of what was pinned before the removal.
 
 Next: P1 (AllMyStuff-side de-id allowlist + the serde-only `diagnose` contract) — which is
 where AllMyStuff first touches the engine, and where Q1–Q5 start to bite.

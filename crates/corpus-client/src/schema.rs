@@ -1,7 +1,9 @@
 use common::{ConfigClass, FaultSignature, Plan, Verification};
 use serde::{Deserialize, Serialize};
 
-use crate::stored::{StoredOutcome, StoredPlan, StoredSignature, StoredStep};
+use crate::stored::{
+    StoredAction, StoredOutcome, StoredPlan, StoredPlanId, StoredSignature, StoredStep,
+};
 
 /// Whether an outcome has cleared the sign-off gate.
 ///
@@ -47,7 +49,12 @@ pub enum OutcomeLabel {
     /// or bench action. An evidence-backed hardware verdict is a successful
     /// outcome, not a failed one.
     EscalatedHardware {
-        /// The implicated part class (e.g. "psu", "storage", "memory").
+        /// The implicated part class (e.g. "psu", "storage", "memory"). Comes
+        /// from the frozen HARDWARE_MARKERS taxonomy, so it is a bounded lowercase
+        /// slug; deserialization is VALIDATING ([`deserialize_part_class`]) — a
+        /// wire or at-rest row whose part_class carries identity/prose fails to
+        /// deserialize, matching the other stored leaves.
+        #[serde(deserialize_with = "deserialize_part_class")]
         part_class: String,
     },
     /// Escalated to a human and not resolved by the pipeline.
@@ -145,7 +152,12 @@ pub struct SignOffAttestation {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RowProvenance {
     /// Opaque id of the run that produced this outcome. Distinct runs are
-    /// independent confirmations; the same id is a single observation.
+    /// independent confirmations; the same id is a single observation. Production
+    /// run ids are 32 hex chars from OS entropy; deserialization is VALIDATING
+    /// ([`deserialize_run_id`]) — a wire or at-rest row whose run_id is not a
+    /// bounded opaque token (a smuggled path/email/prose on the provenance pin)
+    /// fails to deserialize.
+    #[serde(deserialize_with = "deserialize_run_id")]
     pub run_id: String,
     /// Whether the plan came from a corpus precedent (retrieval-first) rather
     /// than de-novo generation.
@@ -195,18 +207,89 @@ pub struct Contribution {
     pub(crate) integrity: Option<RowIntegrity>,
 }
 
+/// Whether a `part_class` is an admissible taxonomy token: a bounded lowercase
+/// slug `[a-z0-9_-]{1,32}`, the shape the frozen `panel::HARDWARE_MARKERS` table
+/// emits (psu, storage, memory, cooling, platform, gpu). Rejects the identity a
+/// hand-edited row could route into the label (spaces, uppercase, `@`, `.`, `/`)
+/// — e.g. `"psu on DESKTOP-NATHAN01 for nathan@cec.direct"`.
+pub(crate) fn is_part_class_token(value: &str) -> bool {
+    (1..=32).contains(&value.len())
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+}
+
+/// Whether a `run_id` is an admissible opaque token: a bounded
+/// `[A-Za-z0-9_-]{1,64}` string. Production run ids are 32 hex chars from OS
+/// entropy; this bounds length and charset so a hand-edited or embedder-built row
+/// cannot smuggle a path, email, or free-text prose through the provenance pin.
+pub(crate) fn is_run_id_token(value: &str) -> bool {
+    (1..=64).contains(&value.len())
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+/// Read-side validating deserializer for `OutcomeLabel::EscalatedHardware`'s
+/// `part_class`: an at-rest/wire value outside the bounded taxonomy slug fails to
+/// deserialize, so a hand-edited row is refused at `FileCorpus::open` rather than
+/// riding onto the API wire via `wire_label`.
+fn deserialize_part_class<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    if is_part_class_token(&value) {
+        Ok(value)
+    } else {
+        Err(serde::de::Error::custom(
+            "part_class is not a bounded taxonomy slug [a-z0-9_-]{1,32}",
+        ))
+    }
+}
+
+/// Read-side validating deserializer for `RowProvenance::run_id`: an
+/// at-rest/wire value that is not a bounded opaque token fails to deserialize.
+fn deserialize_run_id<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    if is_run_id_token(&value) {
+        Ok(value)
+    } else {
+        Err(serde::de::Error::custom(
+            "run_id is not a bounded opaque token [A-Za-z0-9_-]{1,64}",
+        ))
+    }
+}
+
 impl Contribution {
     /// Build a contribution from an outcome, its config class, and its
     /// sign-off state. The outcome's plan is de-identified here, so a raw
     /// plan cannot enter a contribution at all — and the de-id is validating:
     /// an out-of-vocabulary action or a prose-bearing plan id refuses the row
-    /// (see [`de_identify_plan`]) instead of being copied through. The
-    /// attestation is unset; attach one with [`Contribution::attested_by`].
+    /// (see [`de_identify_plan`]) instead of being copied through. A hardware
+    /// label's `part_class` is validated to the taxonomy slug on the same
+    /// boundary. The attestation is unset; attach one with
+    /// [`Contribution::attested_by`].
     pub fn new(
         outcome: Outcome,
         config_class: ConfigClass,
         sign_off: SignOff,
     ) -> Result<Self, deid::Reject> {
+        // Validate the one free-text field the label carries onto the row: a
+        // hardware part_class. It rides onto the serialized row unmodified and
+        // egresses to the API wire via `wire_label`, so it is minted here, not
+        // copied through — matching the plan's de-id discipline.
+        if let OutcomeLabel::EscalatedHardware { part_class } = &outcome.label {
+            if !is_part_class_token(part_class) {
+                return Err(deid::Reject {
+                    field: "part_class",
+                    reason: "not a bounded taxonomy slug [a-z0-9_-]{1,32}",
+                });
+            }
+        }
         let stored = StoredOutcome {
             signature: StoredSignature::from_signature(&outcome.signature),
             plan: de_identify_plan(&outcome.plan)?,
@@ -309,10 +392,10 @@ pub(crate) fn attestation_message(c: &Contribution) -> Vec<u8> {
         lp(&mut s, "sym", sym);
     }
     // Plan: id + each step (action length-prefixed, risk by discriminant).
-    lp(&mut s, "plan", &o.plan.id);
+    lp(&mut s, "plan", o.plan.id.as_str());
     let _ = writeln!(s, "steps:{}", o.plan.steps.len());
     for step in &o.plan.steps {
-        lp(&mut s, "act", &step.action);
+        lp(&mut s, "act", step.action.as_str());
         let _ = writeln!(s, "risk:{:?}", step.risk);
     }
     // Label (length-prefixed tag — covers the EscalatedHardware part_class).
@@ -423,12 +506,12 @@ fn label_tag(label: &OutcomeLabel) -> String {
 /// (C1) of `docs/corpus-leak-prevention.md` — so identity routed into either
 /// field now aborts the row instead of riding into it.
 pub fn de_identify_plan(plan: &Plan) -> Result<StoredPlan, deid::Reject> {
-    let id = deid::plan_id(&plan.id)?;
+    let id = StoredPlanId(deid::plan_id(&plan.id)?);
     let steps = plan
         .steps
         .iter()
         .map(|step| {
-            let action = deid::action(&step.action)?;
+            let action = StoredAction(deid::action(&step.action)?);
             Ok(StoredStep {
                 description: action.clone(),
                 action,

@@ -159,6 +159,42 @@ impl Tool for EventLogQuery {
     }
 }
 
+/// A unique restore-point path for a `reg export`, in the system temp dir:
+/// `cec_registry_backup_<keyhash>_<pid>_<nanos>_<seq>.reg`. Keyed to the target
+/// key path (a stable FNV-1a discriminator, so two different keys can never share
+/// one file) AND to this invocation (process id + a high-resolution timestamp + a
+/// process-monotonic counter, so a same-key retry or a concurrent execution each
+/// get their own file). This is what makes the Reversible guarantee real: every
+/// registry write keeps a distinct, restorable export instead of clobbering the
+/// last one's backup under a single fixed filename.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn unique_backup_path(key: &str) -> std::path::PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    // Process-monotonic sequence: distinguishes two backups minted in the same
+    // nanosecond (a same-key retry loop) within one process.
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    // Non-cryptographic FNV-1a over the key path — carries no identity, just a
+    // short fixed-width discriminator so distinct keys never collide on one file.
+    let mut key_hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in key.as_bytes() {
+        key_hash ^= u64::from(*byte);
+        key_hash = key_hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "cec_registry_backup_{key_hash:016x}_{}_{nanos}_{seq}.reg",
+        std::process::id()
+    ))
+}
+
 /// Set a registry value, first exporting the key as a restore point. This is a
 /// reversible change: the backup is written before the value is touched, and
 /// the tool aborts if the backup fails.
@@ -191,11 +227,28 @@ impl Tool for RegistrySet {
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| ToolError::Execution("missing 'value'".to_string()))?;
 
-            // 1. Capture a restore point: export the key before any change.
-            let backup = std::env::temp_dir().join("cec_registry_backup.reg");
-            let backup = backup.to_string_lossy().into_owned();
+            // 1. Capture a restore point: export the key to a UNIQUE backup file
+            //    before any change. A single fixed filename let a second write (a
+            //    two-key plan, a same-key retry, or two concurrent serve
+            //    executions) clobber the first change's restore point while still
+            //    reporting success — the Reversible guarantee was silently false
+            //    for every write but the last. The name is keyed to this key path
+            //    and this invocation, and we refuse to reuse an existing file
+            //    rather than overwrite it, so each write keeps its own export.
+            let backup_path = unique_backup_path(key);
+            if backup_path.exists() {
+                return Err(ToolError::Execution(format!(
+                    "registry backup path already exists ({}); refusing to overwrite an \
+                     existing restore point",
+                    backup_path.display()
+                )));
+            }
+            let backup = backup_path.to_string_lossy().into_owned();
+            // No `/y`: with a unique, non-existent target there is nothing to
+            // overwrite, and dropping the force flag makes an accidental clobber
+            // impossible rather than merely unlikely.
             let exported = std::process::Command::new("reg")
-                .args(["export", key, backup.as_str(), "/y"])
+                .args(["export", key, backup.as_str()])
                 .status()
                 .map_err(|e| ToolError::Execution(format!("failed to run reg export: {e}")))?;
             if !exported.success() {
@@ -464,6 +517,44 @@ mod tests {
     fn board_info_is_read_only_and_download_is_reversible() {
         assert_eq!(BoardInfo.risk(), Risk::ReadOnly);
         assert_eq!(DownloadFile.risk(), Risk::Reversible);
+    }
+
+    #[test]
+    fn registry_backup_paths_are_unique_per_key_and_invocation() {
+        // The Reversible guarantee requires each registry write to keep its OWN
+        // restore point: a single fixed filename let a second write clobber the
+        // first's backup while still reporting success. Two exports of the same
+        // key must land on DISTINCT files, and different keys must not share one.
+        let a = unique_backup_path(r"HKLM\Software\CEC\Foo");
+        let b = unique_backup_path(r"HKLM\Software\CEC\Foo");
+        assert_ne!(
+            a, b,
+            "a same-key retry must not reuse the first write's backup file"
+        );
+
+        let c = unique_backup_path(r"HKLM\Software\CEC\Bar");
+        assert_ne!(a, c, "distinct keys must not collide on one backup file");
+
+        // Each backup lands under the tool's prefix, keeps the .reg extension a
+        // re-import needs, and is never the old fixed name that caused the clobber.
+        for path in [&a, &b, &c] {
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .expect("backup has a file name");
+            assert!(
+                name.starts_with("cec_registry_backup_"),
+                "unexpected backup name: {name}"
+            );
+            assert!(
+                name.ends_with(".reg"),
+                "backup must be a .reg export: {name}"
+            );
+            assert_ne!(
+                name, "cec_registry_backup.reg",
+                "must not use the old single fixed filename"
+            );
+        }
     }
 
     #[test]

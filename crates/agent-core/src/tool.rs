@@ -14,7 +14,19 @@ pub struct ToolOutcome {
     pub ok: bool,
     /// One-line human-readable summary of what happened.
     pub summary: String,
-    /// Optional structured payload (tool-specific).
+    /// Optional structured payload (tool-specific), raw CIM among it.
+    ///
+    /// This is the untyped `serde_json::Value` the methodology (§2 Layer 2c)
+    /// flags as the highest-fidelity raw field. It stays `Value` deliberately:
+    /// Phase 1 removed `Serialize` from `ToolOutcome`, so `data` **has no path
+    /// to a serialize/print sink** (a corpus row, the `--json` envelope, or a
+    /// socket) — the 2c serialization boundary is already closed by the type
+    /// split, so typing it into an allowlisted summary buys nothing there.
+    /// Its residual exposure is the agent-loop / inference egress (leak class
+    /// C2 — a model prompt built from tool output), the accepted-risk boundary
+    /// handled by §3.1 / Phase 4 (`PromptPayload` + `--allow-remote-inference`),
+    /// not the corpus/print sinks Phase 2 seals. `data` is consumed in-flight
+    /// (parsed, e.g. `BoardIdentity::from_tool_data`), never re-emitted.
     #[serde(default)]
     pub data: serde_json::Value,
 }

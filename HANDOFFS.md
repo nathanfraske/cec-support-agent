@@ -15,6 +15,103 @@ Below "Pick up here", keep a reverse-chronological **handoff log** of dated entr
 
 ## Current state
 
+**As of 2026-07-02 ~18:54 UTC.** **Corpus cartography (leak-C10) is now the fourth enforced corpus
+property** — after **admissibility** (the sign-off/attestation gate), **authenticity** (de-id + the leak
+Phase 0-2 type barrier), and **access** (the auth ladder + loopback/mesh posture) — **non-mappability /
+query-oracle resistance** is now a stated, tracked property of the corpus surface, on branch
+**`claude/repo-scope-work-plan-h93qx5`** (on top of the API-posture state below).
+
+- **The threat model landed:** `docs/corpus-cartography-threat.md` (owner-raised: "can a surface expose the
+  internal corpus by mapping it out through trusted calls?") — the honest limit (§0: a rostered caller *is*
+  permitted to learn its own answers; the goal is minimize-not-eliminate), 7 concrete verified vectors
+  V1-V7, a lettered control set A-G, the NON-MAPPABILITY rule set (§3b), and the phased sequence onto
+  F2→F3→B4→F1→E3.
+- **leak-C10 defined in the taxonomy:** `docs/corpus-leak-prevention.md` §1.2 gained a C10 row (ranked below
+  C9 as a distinct orthogonal axis — it needs no identity to survive de-id, so no `DeIdentified<T>` closes
+  it) + a §3.1(4) cross-reference.
+- **The `source` membership label drop SHIPPED** — `4cf9d8f` (code, committed prior to this docs/policy
+  pass): `cec-diagnose/v1` candidates now carry only `{plan_id, max_risk, actions[]}`; `source`
+  (cold_model/corpus_primed/human) and the dead `wire_source` are removed, with a negative pin so it cannot
+  be silently re-added. This closes control D's label half (vector V1) only.
+- **Non-mappability policy is now BINDING in `AGENTS.md`** — the threat doc's §3b 7-rule set, copied in as a
+  sibling block to the existing §2.5 egress-sink checklist, same short imperative voice.
+- **Wire-contract docs corrected to match the shipped code:** `docs/integration-rfc-for-chris.md`'s candidate
+  body is now `{plan_id, max_risk, actions[]}` with a removal note + the enum-grammar note corrected; real
+  question **Q6** ("how much provenance does a served row expose?") is now filed in the RFC's open-questions
+  section, gated on B4. `docs/api-extension-design.md` §5 decision log gained the dated `source`-drop entry.
+- **Deferred to `FOLLOWUPS.md`, each attributed to the threat doc:** control D's remainder (retrieval-first
+  latency + slate-count differential equalization — a genuine owner trade-off, costs the retrieval-first
+  speed win, only bites once a non-owner is served, decide before/at E3), control A (per-identity query
+  budget, E3/rung-2), control B (per-identity query audit log, the query-side twin of the deferred MH-1
+  audit-log item, E3/rung-2), control E (keyed/salted HMAC fingerprint — greenlightable, pulls forward the
+  existing leak-C7 residual), and control C (B4 served-row provenance-graph minimization — decide as a B4
+  precondition, cheap now / expensive after B4 ships).
+
+**No `.rs` code changed this pass** — the code drop was already committed (`4cf9d8f`); this was the
+docs/policy/tracking pass to match it. 210 tests (unchanged from the API-posture state below — no engine
+code touched).
+
+--- previous (superseded by the corpus-cartography state above) ---
+
+**As of 2026-07-02 ~22:40 UTC.** **The owner's 2026-07-02 API-posture decisions are IMPLEMENTED** on branch
+**`claude/repo-scope-work-plan-h93qx5`** (on top of leak Phase 2; +5 commits, **committed locally, NOT
+pushed** — the orchestrator opens the PR). Responding to `docs/api-extension-design.md` (§1.6/§2.5/§3), in
+green sub-step commits:
+
+- **Trusted calls only (leak C2)** (`697e16d`): `validate_inference_endpoints` refuses a non-loopback
+  `--endpoint`/`--fast-endpoint` at startup on BOTH the diagnose and serve paths unless
+  `--allow-remote-inference` is passed (loopback = localhost / 127.0.0.0/8 / [::1]); fixed error, never echoes
+  the URL; fails closed on an unparseable host. Builds leak-doc §3.1(b). Proven red-on-revert; live-smoked.
+- **Route-surface pinning** (`588f1ec`): the frozen `route_surface` list (GET /v1/health, POST /v1/diagnose,
+  POST /v1/execute) is folded into the router by `build_router`, and `router_surface_is_frozen` pins the exact
+  (method, path) set — adding ANY route is a deliberate test edit. Never-routable invariant (attest, keygen,
+  corpus WRITE) in serve.rs module docs + SECURITY.md (a violation is a reportable security issue). Proven
+  red-on-revert (a rogue /v1/attest route fails the pin).
+- **AGPL §13 notice** (`64ffa48`): `--allow-remote` prints a one-line stderr network-service / §13
+  Corresponding-Source notice at startup; same note in SECURITY.md. Auth ladder resolved: hard-loopback by
+  default, remote = mesh-only, NO bearer-token tier will be built.
+- **Docs** (`878fd4d`): DECISION LOG (§5) in api-extension-design.md (corpus-over-API = mesh-rostered/loopback
+  only, never token-auth public HTTP; attested rows, encrypted transport; doc-level, route-pin is the guard);
+  the 6-rule §2.5 egress-sink checklist copied into AGENTS.md as binding policy.
+
+**210 tests** (was 205: +4 endpoint-loopback, +1 route-pin), clippy `-D warnings` clean, fmt clean (pinned
+1.96.1). The §13 notice and both C2 refusals were live-smoked on the real binary. No corpus endpoint was
+built — decision 2 is doc-level plus the mechanical route-pin guard. Remaining: the `PromptPayload` chokepoint
+(leak §3.1(a)) and the corpus-endpoint build (gated on B4 + Q1) — both FOLLOWUPS, none blocking.
+
+--- previous (superseded by the API-posture state above) ---
+
+**As of 2026-07-02 ~21:30 UTC.** **Corpus leak-prevention Phase 2 is DONE** on branch
+**`claude/repo-scope-work-plan-h93qx5`** (started == origin/main @ `86e24cf`, which already carried Phase 1;
+now +3 commits, **committed locally, NOT pushed** — the orchestrator opens the PR). Phase 2 is the C4/C5
+hard stops, landed in 3 green sub-steps, each proven and committed:
+
+- **C5 frozen dictionaries** (`a0818bc`): `common::extract` replaces the `is_stop_code_name`/`module_name`
+  SHAPE heuristics with FROZEN `STOP_CODE_NAMES` (Microsoft bugchecks) + `MODULE_NAMES` (OS/driver
+  allowlist), sorted for binary search. New public closed-grammar `is_symptom_token` (`VOCABULARY ∪ 0x-hex
+  ∪ <prefix>_<digits> ∪ STOP_CODE_NAMES ∪ MODULE_NAMES`); `deid::symptom` wired to it — closes the Phase-1
+  `<prefix>_<digits>` blocker (`event_41` is admitted directly, no round-trip). Asset tags / custom binaries
+  / hostnames now refused; explorer.exe/event_41/xid_79/0x1234/real bugchecks stay admissible.
+- **C4 read-side re-de-id** (`a759afd`): `#[serde(try_from = "String")]` validating deserialization on
+  `StoredSymptom` (grammar), new `StoredAction` (frozen ACTION_VOCABULARY; on step action + description) and
+  `StoredPlanId` (slug), plus `common::Symptom` (for `verification.recurring`). An out-of-vocab action /
+  inadmissible id / non-grammar symptom now FAILS TO DESERIALIZE at `HttpCorpus::query` (transport/admission
+  split → `ServedPlanInadmissible`) and `FileCorpus::open` (Storage parse error). Symptom mint wired into the
+  1f gate (`GateError::SymptomNotDeIdentified`). Adversary-seeded read-path poison harness (leakguard::POISON
+  in a served symptom) refused; proven red-on-revert.
+- **2c serde_json::Value scoping** (doc commit): the only `Value` fields (`ToolOutcome.data`,
+  `AgentStep.args`) have no serialize sink post-Phase-1 → documented the invariant, not re-typed (typing =
+  C2/Phase-4). Scoped honestly per the doc.
+
+**Wire/on-disk shape byte-identical for admissible rows** (canned pre-split fixture + chain stable; envelope
+pins green). **205 tests** (was 198 after Phase 1), clippy `-D warnings` clean, fmt clean, CLI e2e smoke green
+(the real binary keeps `whea_uncorrectable_error`/`event_41`/`explorer.exe`, drops asset tag `RIG_NATHAN_DESK`).
+**Phases 0–2 of the leak methodology are now complete.** Remaining leak work is Phases 3–4 (egress-allowlist
+dylint + content gate + live hook; PromptPayload/`--allow-remote-inference`; keyed HMAC; CODEOWNERS) — all
+FOLLOWUPS/accepted-risk, none blocking. See `docs/corpus-leak-prevention.md` §4 Phases 3–4.
+
+--- previous (Phase 1, superseded by the Phase-2 state above) ---
+
 **As of 2026-07-02 ~19:15 UTC.** **Corpus leak-prevention Phase 1 is DONE** on branch
 **`claude/repo-scope-work-plan-h93qx5`** (which started == origin/main @ `a31198e`; now +5 commits,
 **committed locally, NOT pushed** — the orchestrator opens the PR). Phase 1 is the C1/C3 compile-error
@@ -335,6 +432,57 @@ See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementati
 
 ## Lessons learned (append-only)
 
+- **(2026-07-02) Pin a route surface by making the router and the pin read ONE list.** axum's `Router`
+  does not expose its routes for inspection, so a "freeze the endpoints" test cannot introspect the built
+  router. The working pattern: a `route_surface() -> Vec<(method, path, MethodRouter<Arc<AppState>>)>` is the
+  single source of truth; `build_router` folds it into the axum `Router`, and the pinning test maps it to the
+  `(method, path)` set and asserts equality. Because both the live router and the test read the same list they
+  cannot drift, and adding a route changes the set the test checks → a deliberate test edit is forced. The
+  handler in each tuple must be generic over the state (`get(health)`/`post(diagnose)` both unify to
+  `MethodRouter<Arc<AppState>>`), and the test only sorts/compares the `(&str,&str)` pair, never the
+  MethodRouter.
+
+- **(2026-07-02) Parse an endpoint's host by hand for the loopback check — no `url` crate is a dep, and
+  fail closed.** `endpoint_is_loopback` strips the scheme, takes the authority up to the first `/`/`?`/`#`,
+  drops userinfo before `@`, and splits host from port — special-casing a bracketed IPv6 literal (`[::1]`)
+  whose colons are part of the host. `localhost` matches directly; everything else goes through
+  `IpAddr::parse().is_loopback()` (covers 127.0.0.0/8 and ::1). An unparseable host is treated as
+  NON-loopback (refused) — the C2 egress guard must fail closed, never admit on a parse miss.
+
+- **(2026-07-02) `#[serde(try_from)]` read-side validation only bites where the type is DESERIALIZED —
+  and the corpus row's symptoms are two DIFFERENT types.** The signature symptoms are `StoredSymptom`
+  (in corpus-client); the verification `recurring` symptoms are `common::Symptom` (in common). You cannot
+  make `Verification.recurring: Vec<StoredSymptom>` — that needs `common` → `corpus-client`, the wrong
+  dependency direction (a cycle). The fix is to put the grammar predicate in `common` (`is_symptom_token`)
+  and add `try_from` to BOTH symptom types, each calling it. A single `StoredVerification` newtype would
+  also work but is more churn for no extra safety. Lesson: when a validated leaf appears on a row via two
+  crates, validate it in the lowest crate that owns the predicate, not by moving the field.
+
+- **(2026-07-02) Read-side leaf validation forces test fixtures to use REAL grammar tokens — the
+  synthetic `boot_loop` was never extractable.** Once `StoredSymptom`/`Symptom` validate on deserialize,
+  every serialize→deserialize round-trip in a test (FileCorpus reopen, the gate) must carry a grammar
+  member. ~10 corpus-client tests seeded `Symptom("boot_loop")`, which `extract_symptoms` never produces
+  (it yields `["boot","loop"]` from "boot loop"), so it fails the closed grammar. Swept to `event_41`
+  (a real `<prefix>_<digits>` token). Lesson: a test symptom must be something the extractor can emit;
+  `is_symptom_token(tok)` is the check. Watch the tamper test that does `text.replace("<sym>", ...)` —
+  replace with ANOTHER valid token (`xid_79`) so it still tests the CHAIN, not the new deserialize guard.
+
+- **(2026-07-02) A closed-grammar mint unblocks the `<prefix>_<digits>` symptom the round-trip mint
+  couldn't.** Phase 1 left `deid::symptom` on `extract_symptoms(s) == [s]`, which rejects `event_41`
+  (built from two input tokens "event"+"41", so it never round-trips as one token) — that is why the
+  symptom mint could not be wired into the write gate. Replacing the round-trip with direct closed-grammar
+  membership (`is_symptom_token`) admits `event_41` directly and makes the mint sound for BOTH the gate and
+  the `try_from` read guards. Lesson: when a "round-trip through the producer" predicate rejects a
+  legitimate producer output, the producer is many-to-one; encode the grammar as membership, not round-trip.
+
+- **(2026-07-02) `#[serde(try_from)]` moves the deserialize error inside `response.json()` — split
+  transport from admission or the error type is wrong.** With validating leaves, a poisoned served row
+  fails DURING `reqwest::Response::json()`, which maps to a transport error — but semantically it is an
+  admission refusal, not a network fault. Read the body as text (transport) THEN
+  `serde_json::from_str::<Vec<FixMapping>>` (admission), mapping the parse error to
+  `GateError::ServedPlanInadmissible`. This also keeps the `de_identify_plan` equality check as a clean
+  Layer-2 guard for the derived `title` (a plain String, not leaf-typed).
+
 - **(2026-07-02) Typing the leaf prose makes sealed `Debug` (1d) fall out for free — no manual impls.** The
   methodology's 1d said "manual redacting `Debug` on each raw type." But once the prose is a `Prose` newtype
   (1b) whose OWN `Debug` redacts, every containing struct keeps a *derived* `Debug` that is automatically
@@ -504,6 +652,40 @@ See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementati
   PREDICATE, not the type tag.
 
 ## Handoff log (reverse-chronological)
+
+- **2026-07-02 18:54 UTC** — **Corpus cartography (leak-C10) threat model + non-mappability policy landed
+  (docs/policy only — no `.rs` touched).** Owner-raised threat ("can a surface expose the internal corpus by
+  mapping it out through trusted calls?") analyzed by a 2-agent check; produced `docs/corpus-cartography-
+  threat.md` (honest limit §0, vectors V1-V7 §2, control set A-G §3, the NON-MAPPABILITY rule set §3b,
+  accepted residuals §4, phased sequence §5). This session made the docs/policy/tracking match the code drop
+  already committed (`4cf9d8f`, dropping `source` from `cec-diagnose/v1`): added **leak-C10** to
+  `docs/corpus-leak-prevention.md` §1.2 (+ §3.1(4) cross-reference); copied the 7-rule non-mappability set
+  into `AGENTS.md` as a sibling block to the §2.5 egress-sink checklist; corrected the wire-contract body in
+  `docs/integration-rfc-for-chris.md` to `{plan_id, max_risk, actions[]}` + filed real question **Q6**
+  (served-row provenance exposure, gated on B4); added the dated decision-log entry to
+  `docs/api-extension-design.md` §5. Filed 6 deferred controls to `FOLLOWUPS.md` (D-remainder
+  latency/slate equalization, A per-identity budget, B per-identity audit log, E keyed HMAC, C B4
+  provenance-minimization, Q6 pointer), each attributed to the threat doc. Non-mappability is now the
+  **fourth** enforced corpus property (admissibility, authenticity, access, non-mappability). **Next:**
+  the deferred controls above — E (keyed HMAC) is greenlightable now / pull it forward; A/B full form and C
+  are gated on B4/E3 per the threat doc's §5 sequence.
+
+- **2026-07-02 21:30 UTC** — **Corpus leak-prevention Phase 2 built (the C4/C5 read-side + dictionary
+  stops).** On `claude/repo-scope-work-plan-h93qx5` (started == origin/main `86e24cf`, Phase 1 already in),
+  3 green sub-steps, committed + proven, NOT pushed: **C5** (`a0818bc`) frozen `STOP_CODE_NAMES`/`MODULE_NAMES`
+  dictionaries + closed-grammar `is_symptom_token` replace the shape heuristics; `deid::symptom` wired to the
+  grammar (admits `event_41` — the Phase-1 blocker). **C4** (`a759afd`) `#[serde(try_from)]` validating
+  deserialization on `StoredSymptom`/`StoredAction`/`StoredPlanId`/`common::Symptom` — an out-of-vocab action,
+  inadmissible id, or non-grammar symptom fails to deserialize at `HttpCorpus::query` (transport/admission
+  split → `ServedPlanInadmissible`) and `FileCorpus::open` (Storage error); symptom mint wired into the 1f
+  gate (`GateError::SymptomNotDeIdentified`); adversary-seeded read-path poison harness. **2c** (doc commit)
+  scoped honestly — the `Value` fields have no serialize sink post-Phase-1, documented not re-typed
+  (typing = C2/Phase-4). Wire byte-identical (canned fixture + chain stable); envelope pins green. 198→205
+  tests, clippy/fmt clean, CLI e2e smoke green (real binary keeps `whea_uncorrectable_error`/`event_41`/
+  `explorer.exe`, drops asset tag `RIG_NATHAN_DESK`). Both a dictionary case and the read-side symptom guard
+  proven red-on-revert. **Phases 0–2 of the methodology are complete;** Phases 3–4 remain (FOLLOWUPS/
+  accepted-risk). Design decisions (see lessons): symptom validated in-place on `common::Symptom` (no
+  `StoredVerification` — a cycle); test symptom fixtures swept `boot_loop`→`event_41`.
 
 - **2026-07-02 19:15 UTC** — **Corpus leak-prevention Phase 1 built (the C1/C3 type barrier).** On
   `claude/repo-scope-work-plan-h93qx5` (started == origin/main `a31198e`), 4 green sub-steps, committed +

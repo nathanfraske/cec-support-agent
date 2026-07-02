@@ -71,6 +71,7 @@ endpoint**, and **commit-to-git**.
 | **C7** | **Hash-as-safety fallacy** — unsalted FNV emitted in envelope + URL | "It's hashed so it's safe" is false for low-cardinality/identity inputs; reversible by dictionary; a stable per-host correlation handle in logs | `unsalted-fnv-fingerprint-preimage`, `httpcorpus-fingerprint-in-url` |
 | **C8** | **Commit-time / git tree** — corpus rows, recon JSON, PII in source/docs/messages | Rails are name/secret-shaped, never content-shaped; hook is dormant; recon artifacts already hold live infra identity | `no-content-gate-anywhere`, `hook-dormant-and-gitleaks-uninstalled`, `recon-infra-json-unignored`, `rename-extension-bypass`, `git-add-f-defeats-gitignore-entirely`, `test-fixture-pii-is-the-house-style`, `doc-prose-leaks-infra-already-committed`, `gitleaks-cant-see-the-ed25519-seed-shape`, `commit-message-and-branch-leak-surface` |
 | **C9** | **Meta — false-confidence test** — the proof-of-no-leak avoids the trusted fields | The single de-id test seeds `describe/title/description` but uses clean `action`/`id`/label, so a C1 regression stays green | `leakage-suite-coverage-gap`, `attestation-message-new-field-unbound`, `vocabulary-snapshot-drift`, `ci-gate-runs-only-check-no-lint-no-gitleaks` |
+| **C10** | **Corpus cartography / query-oracle enumeration** — a caller with legitimate query access aggregates individually-clean, de-identified, attested responses to map the corpus's membership/coverage/structure/fix-content; orthogonal to C1-C9 (needs no identity to survive de-id); enforced by differential-minimization + budget + audit + roster, never by a type. See `docs/corpus-cartography-threat.md`. | Every prior class asks "did identity leak out of one row?"; C10 asks "can many de-id'd, attested rows be assembled into the map of what the corpus knows?" — de-id/attestation/encryption are all satisfied and it still succeeds | `diagnose-source-membership-oracle`, `retrieval-first-latency-differential`, `candidate-slate-structure-disclosure`, `enumerable-fnv-probe-space`, `served-provenance-priming-graph`, `no-query-budget-or-audit` |
 
 **The honest framing:** C3 and C8 are the "easy accidental leak" — those we *can* convert
 to hard stops cheaply. C1 is the keystone — fix it and the strongest vectors die. **C2,
@@ -344,6 +345,13 @@ the methodology, not a footnote:
    explicit act** rather than a config default — critical because pointing `--endpoint` at a
    MyOwnLLM/MyOwnMesh peer is the active integration direction. This is **declared accepted-risk
    with controls**, not a hard guarantee that raw text never leaves the box.
+   **BUILT — (b) done (2026-07-02, owner decision "trusted calls only").** `--endpoint` and
+   `--fast-endpoint` are refused at startup on both the `diagnose` and `serve` paths when the
+   host is non-loopback (`localhost` / `127.0.0.0/8` / `[::1]`) unless `--allow-remote-inference`
+   is explicitly passed (`crates/support-agent/src/main.rs::validate_inference_endpoints`; the
+   refusal is a fixed message that never echoes the URL). Remote inference egress is now an
+   audited, explicit act, not a config default. **(a)** the sealed `PromptPayload` chokepoint
+   remains the type-level follow-on (Phase 4, item 14).
 
 2. **Unsalted FNV correlation handles (C7)** — `config_class.key()` and the fingerprint are
    emitted in the envelope and the `HttpCorpus` GET **URL**, and over an identity-bearing
@@ -356,6 +364,11 @@ the methodology, not a footnote:
    identity in the message explaining the fix. The hook sees staged blobs, not log prose. A
    follow-on `xtask scan-msg` (commit-msg hook) is the only mitigation; until then this is
    **discipline**.
+
+4. **Corpus cartography (C10)** — not closable by a type at all: a rostered caller *is*
+   permitted to learn the answer to its own query, so bulk mapping of the corpus is minimized
+   by differential-minimization + budget + audit + roster-is-trust policy, never eliminated.
+   See `docs/corpus-cartography-threat.md` §0 for the honest limit and §3 for the control set.
 
 ---
 
@@ -412,7 +425,9 @@ all fail to compile.
 
 ### Phase 4 — Architectural decisions (C2/C7) + policy (L4)
 14. `PromptPayload` chokepoint **and/or** `--endpoint` localhost-allowlist with
-    `--allow-remote-inference` audit flag.
+    `--allow-remote-inference` audit flag. — **`--endpoint`/`--fast-endpoint` localhost-allowlist +
+    `--allow-remote-inference` DONE (2026-07-02); `validate_inference_endpoints` on both the
+    `diagnose` and `serve` paths. The `PromptPayload` chokepoint half remains.**
 15. Keyed/salted HMAC for `fingerprint_of`/`from_inventory`; retrieval keys out of GET URLs.
 16. `CODEOWNERS` + branch protection; `AGENTS.md` Agent Contract; `xtask scan-msg` follow-on.
 

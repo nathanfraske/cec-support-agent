@@ -1,12 +1,37 @@
 use serde::{Deserialize, Serialize};
 
 /// A normalized symptom string extracted from diagnostics.
+///
+/// Serializes transparently as a bare string. Deserialization is VALIDATING
+/// (`#[serde(try_from)]`): a symptom read from the wire or disk must be a member
+/// of the closed de-id grammar ([`crate::is_symptom_token`]), so a served or
+/// at-rest row cannot carry an identity-shaped "symptom" (`desktop-nathan01`,
+/// an asset tag) in the fault signature or a verification's recurring set. This
+/// is the read-side counterpart of the write-time extractor — Layer-1e/C4 of
+/// `docs/corpus-leak-prevention.md`. In-flight construction (`From<&str>`, the
+/// public tuple field) is unchecked; the extractor only ever produces grammar
+/// members, and the write gate re-validates.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String")]
 pub struct Symptom(pub String);
 
 impl From<&str> for Symptom {
     fn from(s: &str) -> Self {
         Symptom(s.to_string())
+    }
+}
+
+impl TryFrom<String> for Symptom {
+    type Error = String;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        if crate::is_symptom_token(&value) {
+            Ok(Symptom(value))
+        } else {
+            Err(format!(
+                "'{value}' is not a member of the de-id symptom grammar"
+            ))
+        }
     }
 }
 

@@ -13,7 +13,7 @@
 //! VERBATIM, and the adversarial de-id test never seeded those two fields — so
 //! identity placed there shipped unflagged. See `docs/corpus-leak-prevention.md`.
 
-use common::{extract_symptoms, Symptom};
+use common::{is_symptom_token, Symptom};
 
 /// A value rejected by a de-id mint: it would have carried unvalidated content
 /// into a corpus row. Holds only the field name and the reason — never the raw
@@ -85,25 +85,30 @@ pub fn plan_id(value: &str) -> Result<String, Reject> {
     }
 }
 
-/// Mint a symptom: the value must be EXACTLY what the de-id extractor would itself
-/// keep — `extract_symptoms(value) == [value]`. This round-trip property is the
-/// strongest check available: a value is an admissible symptom iff the allowlisting
-/// extractor produces it verbatim and nothing else; arbitrary identity fails
-/// because the extractor drops or transforms it.
+/// Mint a symptom: the value must be a single, canonical member of the closed
+/// de-id symptom grammar ([`common::is_symptom_token`]):
 ///
-/// NOTE (phase scope): a legitimately-extracted `<id-prefix>_<digits>` symptom is
-/// produced from two input tokens and does not round-trip as a single token, so
-/// this mint is intentionally NOT yet wired into the corpus write path (only the
-/// action/id mints are). It backs the leak-probe harness today; the symptom
-/// write-gate with the prefixed-id grammar lands with the read-side phase.
+/// `VOCABULARY ∪ 0x-hex ∪ <known-prefix>_<digits> ∪ frozen stop-code dictionary
+/// ∪ frozen OS/driver-module allowlist`
+///
+/// This is exactly the set the allowlisting extractor can emit as one token, so
+/// a value is an admissible symptom iff the extractor itself would have produced
+/// it; arbitrary identity fails because it is not a member of any list.
+///
+/// Phase 2 replaced the earlier round-trip check (`extract_symptoms(value) ==
+/// [value]`) with the closed grammar: the round-trip form rejected a
+/// legitimately-extracted `<id-prefix>_<digits>` symptom (produced from two
+/// input tokens, e.g. `event_41`), which is why it could not be wired into the
+/// write path in Phase 1. The grammar admits `event_41` directly, so this mint
+/// now backs the write-gate symptom check and the read-side deserialization
+/// guards as well as the leak-probe harness.
 pub fn symptom(value: &str) -> Result<Symptom, Reject> {
-    let extracted = extract_symptoms(value);
-    if extracted.len() == 1 && extracted[0].0 == value {
+    if is_symptom_token(value) {
         Ok(Symptom(value.to_string()))
     } else {
         Err(Reject {
             field: "symptom",
-            reason: "not a round-trip-stable extracted symptom",
+            reason: "not a member of the closed de-id symptom grammar",
         })
     }
 }
@@ -150,11 +155,17 @@ mod tests {
     }
 
     #[test]
-    fn symptom_round_trips_only_extractable_tokens() {
-        assert!(symptom("explorer.exe").is_ok());
-        assert!(symptom("0x1234").is_ok());
-        assert!(symptom("desktop-nathan01").is_err()); // not vocab/hex/module
+    fn symptom_admits_the_closed_grammar_and_rejects_identity() {
+        assert!(symptom("explorer.exe").is_ok()); // module allowlist
+        assert!(symptom("0x1234").is_ok()); // hex code
+        assert!(symptom("crash").is_ok()); // vocabulary
+        assert!(symptom("event_41").is_ok()); // <prefix>_<digits> — the Phase-1 blocker
+        assert!(symptom("xid_79").is_ok());
+        assert!(symptom("whea_uncorrectable_error").is_ok()); // stop-code dictionary
+        assert!(symptom("desktop-nathan01").is_err()); // hostname shape
         assert!(symptom("nathan").is_err());
+        assert!(symptom("boot_loop").is_err()); // not a real extracted token
+        assert!(symptom("acmecorp_agent.dll").is_err()); // in-house binary
         assert!(symptom("explorer.exe crashes").is_err()); // multi-token
     }
 }

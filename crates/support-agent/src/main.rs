@@ -67,6 +67,10 @@ struct Args {
     bind: String,
     /// `--allow-remote`: permit a non-loopback bind (deliberate exposure).
     allow_remote: bool,
+    /// `--allow-remote-inference`: permit a non-loopback `--endpoint`/
+    /// `--fast-endpoint` (the model-inference egress carries raw request prose,
+    /// leak class C2 — sending it off the local host is a deliberate, audited act).
+    allow_remote_inference: bool,
 }
 
 #[tokio::main]
@@ -111,6 +115,7 @@ fn parse_args() -> Result<Option<Args>, String> {
     let mut serve = false;
     let mut bind = "127.0.0.1:8127".to_string();
     let mut allow_remote = false;
+    let mut allow_remote_inference = false;
 
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -167,6 +172,7 @@ fn parse_args() -> Result<Option<Args>, String> {
                 bind = args.next().ok_or("--bind requires a value")?;
             }
             "--allow-remote" => allow_remote = true,
+            "--allow-remote-inference" => allow_remote_inference = true,
             // Generate a sign-off authority key pair. The PUBLIC key goes on the
             // engine (CEC_SIGNOFF_PUBKEY) to ENFORCE attestation; the SECRET seed
             // (CEC_SIGNOFF_SEED) is held only where sign-off is performed — never
@@ -208,7 +214,63 @@ fn parse_args() -> Result<Option<Args>, String> {
         serve,
         bind,
         allow_remote,
+        allow_remote_inference,
     }))
+}
+
+/// Whether an inference endpoint URL points at the local host. Loopback is
+/// `localhost`, `127.0.0.0/8`, or `[::1]`. Anything else — including a host we
+/// cannot parse — is treated as non-loopback (fail closed): raw request prose is
+/// the model-inference egress (leak class C2), so sending it off the local host
+/// must be a deliberate decision, never the accident of an unparsed URL.
+fn endpoint_is_loopback(url: &str) -> bool {
+    // Authority = scheme-stripped, up to the first path/query/fragment.
+    let rest = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    // Drop any userinfo before the host:port.
+    let host_port = authority
+        .rsplit_once('@')
+        .map(|(_, h)| h)
+        .unwrap_or(authority);
+    // A bracketed IPv6 literal (`[::1]`) keeps its colons; an IPv4/DNS host does
+    // not, so the port is whatever follows the last colon outside the brackets.
+    let host = if let Some(after) = host_port.strip_prefix('[') {
+        after.split(']').next().unwrap_or(after)
+    } else {
+        host_port.split(':').next().unwrap_or(host_port)
+    };
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    matches!(host.parse::<std::net::IpAddr>(), Ok(ip) if ip.is_loopback())
+}
+
+/// Refuse a non-loopback inference endpoint unless the operator explicitly opted
+/// in. `--endpoint`/`--fast-endpoint` are where the raw request prose egresses to
+/// a model (leak class C2, `docs/corpus-leak-prevention.md` §3.1); pointing them
+/// off the local host — the active MyOwnLLM/MyOwnMesh integration direction — is
+/// a deliberate, audited act, so it requires `--allow-remote-inference`. The
+/// refusal is a fixed message that never echoes the URL (a peer address is infra
+/// identity, C6/C8).
+pub(crate) fn validate_inference_endpoints(args: &Args) -> anyhow::Result<()> {
+    if args.allow_remote_inference {
+        return Ok(());
+    }
+    for (flag, value) in [
+        ("--endpoint", &args.endpoint),
+        ("--fast-endpoint", &args.fast_endpoint),
+    ] {
+        if let Some(url) = value {
+            if !endpoint_is_loopback(url) {
+                anyhow::bail!(
+                    "refusing a non-loopback inference endpoint on {flag}: raw request \
+                     prose egresses to the model there. Pass --allow-remote-inference to \
+                     send it off the local host deliberately."
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 async fn run(args: Args) -> anyhow::Result<()> {
@@ -221,6 +283,12 @@ async fn run(args: Args) -> anyhow::Result<()> {
     macro_rules! hprint {
         ($($a:tt)*) => {{ if args.json { eprint!($($a)*) } else { print!($($a)*) } }};
     }
+
+    // Trusted calls only: a non-loopback inference endpoint is where raw request
+    // prose would leave the box (leak class C2). Refuse it at startup unless the
+    // operator explicitly opted in — before any request text is built.
+    validate_inference_endpoints(&args)?;
+
     human!("cec-support-agent: diagnose");
     human!("  request: {}", args.describe);
 
@@ -678,6 +746,32 @@ async fn run(args: Args) -> anyhow::Result<()> {
                     );
                 }
 
+                // Gate THIS candidate on ITS OWN required escalation, recomputed
+                // for the plan about to run — never the judge's winner. The retry
+                // loop falls through to a next-best candidate whose risk (and so
+                // escalation) can differ from the winner's; reusing the winner's
+                // escalation let a verifier sign-off execute a Reversible fallback
+                // the panel independently routes to HumanConfirm. A candidate that
+                // out-ranks the sign-off is skipped, never run.
+                let candidate_sandbox_validated =
+                    sandbox_validated_for(sandbox.as_deref(), candidate, args.json).await;
+                let candidate_escalation = required_escalation(
+                    &route,
+                    candidate_sandbox_validated,
+                    candidate,
+                    &judge.score(candidate),
+                );
+                if candidate_escalation == Escalation::HumanConfirm
+                    && sign_off != SignOff::HumanConfirmed
+                {
+                    human!(
+                        "  sign-off refused for this plan: the judge requires HumanConfirm \
+                         (route: {route:?}, sandbox: unvalidated); skipping it — re-run with \
+                         --sign-off human to authorize this plan"
+                    );
+                    continue;
+                }
+
                 // Consent is to a rendered plan, never an opaque script:
                 // plain-language steps, risk class, and the restore-point
                 // coverage boundary.
@@ -1061,14 +1155,10 @@ fn signature_of(events: &[DiagnosticEvent]) -> FaultSignature {
 /// matches force every new variant to receive an explicit wire value, and the
 /// pinning test freezes each value so a change fails loudly and demands a
 /// version decision.
-fn wire_source(source: &CandidateSource) -> &'static str {
-    match source {
-        CandidateSource::ColdModel => "cold_model",
-        CandidateSource::CorpusPrimed => "corpus_primed",
-        CandidateSource::Human => "human",
-    }
-}
-
+///
+/// A candidate's `source` (cold-model vs corpus-primed) is deliberately NOT a
+/// wire field — it is a corpus membership oracle (leak-C10,
+/// `docs/corpus-cartography-threat.md`). See [`diagnose_envelope`].
 fn wire_risk(risk: Risk) -> &'static str {
     match risk {
         Risk::ReadOnly => "read_only",
@@ -1114,9 +1204,14 @@ fn diagnose_envelope(
     let cands: Vec<_> = candidates
         .iter()
         .map(|c| {
+            // `source` (cold_model vs corpus_primed) is deliberately absent: it is a
+            // corpus MEMBERSHIP oracle (leak-C10, docs/corpus-cartography-threat.md) —
+            // present iff the corpus holds a confirmed fix for this exact key. The
+            // consumer never needs it (actions/max_risk/consent/escalation drive the
+            // UI), so emitting it would gratuitously turn every diagnose into a yes/no
+            // membership probe. Do not re-add it (a negative pin guards this).
             serde_json::json!({
                 "plan_id": c.plan.id,
-                "source": wire_source(&c.source),
                 "max_risk": wire_risk(c.plan.risk()),
                 "actions": c.plan.steps.iter().map(|s| s.action.clone()).collect::<Vec<_>>(),
             })
@@ -1427,6 +1522,11 @@ OPTIONS:
                          reversible steps) or 'human' (authorizes destructive
                          steps). The judge may require 'human'. Omit it to stop
                          before execution (the sign-off-gated default).
+    --allow-remote-inference
+                         Permit a non-loopback --endpoint/--fast-endpoint. The
+                         model-inference call carries raw request prose, so
+                         sending it off the local host is refused by default;
+                         this flag makes that egress a deliberate, audited act.
     -h, --help           Print help
     -V, --version        Print version
 
@@ -1455,6 +1555,103 @@ heuristic and an empty in-memory corpus. No CEC-hosted service is required.",
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- Trusted calls only (leak C2): the inference-endpoint loopback guard.
+
+    fn args_with_endpoints(
+        endpoint: Option<&str>,
+        fast_endpoint: Option<&str>,
+        allow_remote_inference: bool,
+    ) -> Args {
+        Args {
+            describe: "x".into(),
+            endpoint: endpoint.map(str::to_string),
+            model: "local-model".into(),
+            fast_endpoint: fast_endpoint.map(str::to_string),
+            fast_model: None,
+            corpus: None,
+            offline: false,
+            no_questions: true,
+            sign_off: None,
+            inventory_keys: None,
+            json: false,
+            serve: false,
+            bind: "127.0.0.1:8127".into(),
+            allow_remote: false,
+            allow_remote_inference,
+        }
+    }
+
+    #[test]
+    fn endpoint_is_loopback_recognizes_the_local_host_forms() {
+        // localhost / 127.0.0.0/8 / [::1], with or without scheme, port, path.
+        for url in [
+            "http://localhost:8080/v1",
+            "localhost",
+            "http://127.0.0.1:8080/v1",
+            "http://127.9.9.9/v1",
+            "https://[::1]:8443/v1",
+            "http://user:pass@127.0.0.1:8080/v1",
+        ] {
+            assert!(endpoint_is_loopback(url), "{url:?} should be loopback");
+        }
+        // Anything else — including a host we cannot parse — is NOT loopback.
+        for url in [
+            "http://10.0.0.5:8080/v1",
+            "http://myownllm.mesh:8080/v1",
+            "https://api.example.com/v1",
+            "http://169.254.1.1/v1",
+            "not a url",
+        ] {
+            assert!(!endpoint_is_loopback(url), "{url:?} must not be loopback");
+        }
+    }
+
+    #[test]
+    fn loopback_inference_endpoints_are_admitted() {
+        let args = args_with_endpoints(
+            Some("http://localhost:8080/v1"),
+            Some("http://127.0.0.1:9090/v1"),
+            false,
+        );
+        assert!(validate_inference_endpoints(&args).is_ok());
+        // No endpoint configured is also fine (cold start).
+        assert!(validate_inference_endpoints(&args_with_endpoints(None, None, false)).is_ok());
+    }
+
+    #[test]
+    fn a_non_loopback_inference_endpoint_is_refused_without_the_flag() {
+        // --endpoint off-box: refused, and the refusal never echoes the URL.
+        let args = args_with_endpoints(Some("http://10.0.0.5:8080/v1"), None, false);
+        let err = validate_inference_endpoints(&args)
+            .expect_err("a non-loopback --endpoint must be refused");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("--endpoint"), "{msg}");
+        assert!(
+            !msg.contains("10.0.0.5"),
+            "the refusal must not echo the endpoint address: {msg}"
+        );
+        // --fast-endpoint off-box is caught too, even when --endpoint is local.
+        let fast = args_with_endpoints(
+            Some("http://localhost:8080/v1"),
+            Some("https://api.example.com/v1"),
+            false,
+        );
+        assert!(validate_inference_endpoints(&fast).is_err());
+    }
+
+    #[test]
+    fn the_allow_remote_inference_flag_admits_a_non_loopback_endpoint() {
+        let args = args_with_endpoints(
+            Some("http://10.0.0.5:8080/v1"),
+            Some("https://api.example.com/v1"),
+            true,
+        );
+        assert!(
+            validate_inference_endpoints(&args).is_ok(),
+            "--allow-remote-inference is the operator's audited opt-in"
+        );
+    }
 
     // --- Leak-prevention (Phase 0): the action-vocabulary drift guard.
 
@@ -1611,12 +1808,18 @@ mod tests {
         assert!(selected < cands.len());
         // each candidate carries exactly the de-identified fields — no title/rationale
         let c0 = &cands[0];
-        for f in ["plan_id", "source", "max_risk", "actions"] {
+        for f in ["plan_id", "max_risk", "actions"] {
             assert!(c0.get(f).is_some(), "envelope candidate missing {f}");
         }
         assert!(
             c0.get("title").is_none() && c0.get("rationale").is_none(),
             "envelope candidate must not carry free-text fields"
+        );
+        // Negative pin: `source` is a corpus membership oracle (leak-C10) and must
+        // never ride the wire. If a future change re-adds it, this fails.
+        assert!(
+            c0.get("source").is_none(),
+            "envelope candidate must not carry `source` (corpus membership oracle, leak-C10)"
         );
     }
 
@@ -1625,9 +1828,6 @@ mod tests {
         // v1 freezes these exact strings. A Rust-side variant rename must fail
         // HERE, not silently change the wire: within a major the values are
         // immutable, and changing one demands a schema-major decision.
-        assert_eq!(wire_source(&CandidateSource::ColdModel), "cold_model");
-        assert_eq!(wire_source(&CandidateSource::CorpusPrimed), "corpus_primed");
-        assert_eq!(wire_source(&CandidateSource::Human), "human");
         assert_eq!(wire_risk(Risk::ReadOnly), "read_only");
         assert_eq!(wire_risk(Risk::Reversible), "reversible");
         assert_eq!(wire_risk(Risk::Destructive), "destructive");
@@ -1672,7 +1872,6 @@ mod tests {
         assert_eq!(env["part_class"], "psu");
         assert_eq!(env["consent_required"], "allow_reversible");
         assert_eq!(env["escalation"], "human_confirm");
-        assert_eq!(env["candidates"][0]["source"], "cold_model");
         let software = diagnose_envelope(
             &sig,
             &CoarseHostInventory.config_class(),

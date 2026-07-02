@@ -12,6 +12,23 @@ driven as a spawn-per-diagnosis CLI sidecar. This supersedes RFC decision **D1**
 deliberately-deferred items (daemon mode, the post-execution envelope, W8, the
 `HttpCorpus` read-path hardening) into the critical path. Details in §3.
 
+> **Progress update (2026-07-02, later).** Much of the plan below has since shipped to
+> `main` — read the phase items as the original scoping, not the current backlog. **Done and
+> merged:** PRs #1–#4, #7, #11, #12 (Phase A housekeeping; the evidence-integrity layer +
+> MyOwn P0; the `cec-support-agent serve` API v1 with pinned wire grammar, hard-loopback
+> default, `--allow-remote` §13 notice, frozen route surface, and `--allow-remote-inference`
+> enforcement; **leak-prevention Phases 0, 1, 2** — validating mints, the stored/in-flight
+> type split with `Prose` leaf typing, and read-side validating deserialization + frozen
+> dictionaries). **Added since:** the trusted-corpus-access trajectory (`docs/trusted-corpus-access-trajectory.md`),
+> the API extension design (`docs/api-extension-design.md`), and **leak-C10 corpus cartography**
+> (`docs/corpus-cartography-threat.md`: `source` membership label removed from the envelope,
+> binding non-mappability policy in `AGENTS.md`). A full-stack audit then found and closed
+> 3 HIGH + 1 MED + 3 LOW defects (incl. an escalation/consent bypass and a confirmation-replay
+> hole). **Still open:** B4 attested read path, F1/F2/F3 (chain anchor, canonical `chain_hash`,
+> key registry), the E-track integration (gated on Chris — RFC Q1–Q6), the retrieval-first
+> latency/slate differential decision, and keyed-HMAC fingerprints (leak-C7). Inline `file:line`
+> citations below predate later refactors and may have drifted — the code is authoritative.
+
 ---
 
 ## 1. Verified state of the world
