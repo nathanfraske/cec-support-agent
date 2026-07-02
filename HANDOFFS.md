@@ -15,9 +15,41 @@ Below "Pick up here", keep a reverse-chronological **handoff log** of dated entr
 
 ## Current state
 
-**As of 2026-06-15 ~02:00 UTC.** On branch **`feat/myown-integration-p0`** (forked at `6672e87`, same point
-as the local PR#2 branch). **MyOwn-family integration P0 is BUILT + verified + all gates green**, committed
-locally, **push pending owner OK**. Plus a real finding: **PR #2 is RED on CI** (fmt) — fixed in-tree.
+**As of 2026-06-15 ~03:55 UTC.** Two workstreams in flight; main working dir is on `feat/myown-integration-p0`.
+
+**(A) Corpus leak-prevention methodology — ACTIVE (owner: implement Phases 0–2).** On branch
+**`feat/corpus-leak-prevention`** (rebased onto the P0 tip `673a381` so it has the envelope + all de-id code;
+force-pushed; worked in a worktree at `/tmp/cec-leak`). `docs/corpus-leak-prevention.md` = the methodology
+(57 vectors, 4 layers, red-teamed, honest §6). **Phase 0 DONE + verified** (`cf95d1c`): `crates/deid` validating
+mints (`action`=frozen-vocabulary membership = the keystone C1 fix; `plan_id`=slug charset; `symptom`=extractor
+round-trip; each `Result`); `de_identify_plan`+`Contribution::new`→`Result` (out-of-vocab action/id REFUSES the
+row); `crates/leakguard` canonical POISON; the leakage suite now BITES (seeds action/id, asserts refusal — proven
+red-on-revert); drift guard. 180 tests, clippy+fmt clean. **Pick up here: Phase 1** (type split + `Prose` leaf
+typing + sealed `Debug` + private `Contribution` fields + `trybuild` + write-gate idempotence) then **Phase 2**
+(read-side `from_served` + frozen dictionaries + ban `serde_json::Value`) — see `docs/corpus-leak-prevention.md`
+§4 and FOLLOWUPS. NOTE: the private `corpus-ingest` will need to adapt to `Contribution::new -> Result` on its
+next engine-pin bump (FOLLOWUPS).
+
+**(B) MyOwn-family integration P0 — DONE, both PRs green, awaiting merge.** **PR #2** (`b7ad864`) and stacked
+**PR #3** (`673a381`) are FULLY GREEN on CI (check ×3 OSes, audit, secrets — zero failures). 170 tests. Merge
+order: **PR #2 first**, then PR #3 (auto-retargets to `main`). RFC Q1–Q5 await Chris.
+
+This session's later arc (all owner-approved): fixed PR #2's red CI, triaged the secrets job, then ran the
+owner's 3 cleanup tracks:
+- **fmt regression** (PR #2 `11f0609`) → fixed `538cd43`.
+- **`secrets`/gitleaks job** triaged (`wf_60234519-881`): root cause = missing `GITHUB_TOKEN` env (a
+  gitleaks-action breaking change), NOT a leak — gitleaks full-history + an independent 10-method cross-check
+  both `all_clear`. Fixed (token env + `permissions` + `checkout@v5`/`gitleaks-action@v3`).
+- **Track 1 — P0 adversarial review (`wf_923ec5a0-84d`, 13 confirmed):** found + fixed **2 CRITICAL** P0 bugs
+  (`ddd1145`): **D1** the `cec-diagnose/v1` envelope leaked raw `--describe` via `candidates[].rationale`/`title`
+  (hostname/user/IP/serial in cleartext) → now ships only `{plan_id, source, max_risk, actions[]}`; **D2** the
+  stdout-purity hole — `record_outcome`/`sandbox_validated_for` (free fns) used bare `println!` so `--json
+  --sign-off` emitted 2 lines → fixed via a module-scoped `tprintln!`. **D4** the de-id test was vacuous →
+  rewritten to bite. +5 tests incl. `tests/cli_contract.rs`.
+- **Track 2 — FOLLOWUPS reconciliation:** tombstoned 8 engine-gap items implemented by PR #2's increments
+  (verified against the live code), re-filed 4 residuals; the section went ~12 open → 6 open / 11 closed.
+- **Track 3 — CI hardening (`673a381`/`b7ad864`):** `concurrency` block (already cutting duplicate runs),
+  `cargo-deny-action` (prebuilt, honors `deny.toml`), SHA-pinned all third-party actions + `.github/dependabot.yml`.
 
 - **P0 (DONE, this branch):** the engine's dependency-free machine-output + inventory seams.
   - `crates/common/src/inventory.rs` — `InventoryProvider` trait + `CoarseHostInventory` (today's
@@ -36,11 +68,13 @@ locally, **push pending owner OK**. Plus a real finding: **PR #2 is RED on CI** 
 - **RFC for Chris:** `docs/integration-rfc-for-chris.md` — the frame, D1 (single-shot) + D2 (versioning)
   decided, **Q1–Q5 open** for Chris, the wire contract, P0 = built. `docs/integration-myown-family.md` P0
   section updated to DONE with verified accept-criteria.
-- **FINDING — PR #2 is RED on CI (all platforms).** `11f0609` (PR #2's audit-fix commit) shipped **4
-  rustfmt-1.9 wrapping violations** in `corpus-client/{schema.rs,store.rs}`; CI runs `cargo fmt --all -- --check`
-  so every `check` job fails and **PR #2 cannot merge**. (The previous agents' "fmt clean" predated rustfmt
-  1.9.0.) FIXED in-tree and isolated as a **portable fmt-only commit** for cherry-pick onto PR #2's branch.
-  Note: the local PR#2 branch is also 2 doc commits (`271db03`+`6672e87`) ahead of origin, still pending push.
+- **PR #2 red CI — FIXED + pushed.** `11f0609` had shipped **4 rustfmt-1.9 wrapping violations** in
+  `corpus-client/{schema.rs,store.rs}` (CI runs `cargo fmt --all -- --check`; the prior "fmt clean" predated
+  rustfmt 1.9.0). Fixed as the portable commit `538cd43`, fast-forwarded onto `feat/agent-ops-evidence-integrity`
+  (`920a..538cd43`, also bringing the 2 pending doc commits). **PR #2 `check` is now green on all 3 platforms.**
+- **Pushed:** `feat/agent-ops-evidence-integrity` → `538cd43` (PR #2 green); `feat/myown-integration-p0` →
+  `d61b962` as **PR #3** (stacked on PR #2's branch, so it shows only the P0 delta; auto-retargets to `main`
+  when PR #2 merges).
 
 --- previous (superseded) ---
 
@@ -104,21 +138,60 @@ commit on branch `feat/agent-ops-evidence-integrity`.
 
 ## Pick up here
 
-**ACTIVE — awaiting the owner's call on two routing decisions (both involve an owner-gated PUSH):**
+### PRIMARY — Corpus leak-prevention Phases 1–2 (owner chose Phases 0–2; Phase 0 DONE)
 
-1. **Make PR #2 green.** PR #2 is RED on CI (fmt regression in `11f0609`, fix committed locally as a portable
-   fmt-only commit). Decide the route: (a) push the fmt fix + the 2 pending doc commits (`271db03`+`6672e87`)
-   to `origin/feat/agent-ops-evidence-integrity` so PR #2 goes green, or (b) fold everything through the P0
-   branch and supersede. Then `gh pr checks 2` should pass.
-2. **Land P0.** The `feat/myown-integration-p0` work is committed locally, all gates green. Decide: push it as
-   a new PR, or stack it on PR #2. (P0 is additive + cold-start-safe; no decisions needed in the code itself.)
-3. **Chris's input on RFC Q1–Q5** (`docs/integration-rfc-for-chris.md`) unblocks P3/P4. P1/P2 (AllMyStuff-side
-   de-id allowlist + the serde-only `diagnose` contract — the MIT half, lives in the AllMyStuff repo) do NOT
-   need Q1–Q5 and are the natural next build step once the owner okays direction.
+**Branch:** `feat/corpus-leak-prevention` on origin at `cf95d1c` (= the P0 tip `673a381` + the methodology
+doc + Phase 0). The `/tmp/cec-leak` worktree was removed (ephemeral); **resume by re-adding it:**
+`git worktree add /tmp/cec-leak feat/corpus-leak-prevention` then build there. The design + the precise step
+list is `docs/corpus-leak-prevention.md` §4 (Phases 1–2) and §2 Layers 1–2 (the *how*). **Read it first.**
 
-Build loop: `. "$HOME/.cargo/env"` then `cargo build/test/clippy/fmt --workspace` (run cargo with
-`dangerouslyDisableSandbox`). The new flags: `cec-support-agent diagnose --json [--inventory-keys <file|->]`.
-Per-item status in `TODOS.md`; deferred items (post-exec envelope, daemon mode, Q1–Q5, PR#2 push) in `FOLLOWUPS.md`.
+**Phase 1 — type split + leaf `Prose` typing + sealed `Debug` (the C1/C3 compile-error hard stops). LARGE,
+high-ripple, workspace-wide serde refactor — do it in green sub-steps:**
+1. Introduce `StoredPlan` / `StoredSymptom` (in `crates/deid`, or a `de-id::stored` module) as the ONLY
+   `Serialize + Deserialize` corpus-bound payload. `FileCorpus::open`/`HttpCorpus::query` (`store.rs`) and
+   `chain_hash` route through a `StoredContribution`. **GOTCHA (red-team-confirmed): you CANNOT just strip
+   `Deserialize` from `Plan` — `FileCorpus::open` (`store.rs:~286`) and `HttpCorpus::query` (`store.rs:~450`)
+   deserialize the in-flight types today.** That is exactly why the split is needed: they deserialize
+   `StoredPlan`, and raw `Plan` then genuinely has no serde path.
+2. Remove `Serialize` from raw `Plan`/`Candidate`/`Outcome`/`DiagnosticEvent`/`ToolOutcome`/`AgentRun`. This is
+   what makes `serde_json::to_string(&candidate)` a hard `E0277`. Ripples to: the `--json` envelope
+   (`diagnose_envelope` already only emits primitives — good), panel, every domain-type serde consumer.
+3. `Prose(String)` — private field, **no `Serialize`, no `Display`** — for `Plan.title`/`PlanStep.description`/
+   `Candidate.rationale`/`DiagnosticEvent.message`/`StepResult.summary`, exposed only via an `into_inner()` the
+   egress lint denylists. (Closes the red-team "String-laundering" bypass: removing `Serialize` from the struct
+   does nothing for `json!({"x": c.rationale})` while `rationale` is a plain `String`.) Fix `render_consent`
+   (`main.rs:~794`) which copies `plan.title` out into a printable `String`.
+4. Seal/redact `Debug` on the raw types (don't punt to a lint — `format!("{outcome:?}")` leaks).
+5. Make `Contribution` fields **private**, `Contribution::new` the only constructor; add `trybuild` compile-fail
+   tests pinning (a) `to_string(&candidate)`, (b) struct-literal `Contribution{..}`, (c) `format!("{:?}", outcome)`.
+6. **Write gate (closes the runtime `/mnt/e` path no git/CI sees):** `gate::ensure_evidence_integrity` re-runs
+   `de_identify_plan` and asserts idempotence, and re-runs a symptom check. **GOTCHA:** the strict symptom
+   round-trip mint rejects a legitimately-extracted `<id-prefix>_<digits>` symptom (produced from two input
+   tokens, doesn't round-trip as one) — handle the prefixed-id grammar here (that's why Phase 0 did NOT yet wire
+   `deid::symptom` into the write path; only action/id are validated so far).
+
+**Phase 2 — read-side re-de-id + closed dictionaries:** `from_served` re-validates every served `FixMapping`
+(`#[serde(try_from)]` on `StoredSymptom`/`ActionToken` so a bad wire value fails to *deserialize*); replace the
+`is_stop_code_name`/`module_name` SHAPE heuristics (`extract.rs`) with FROZEN dictionaries (they currently keep
+any ALL-CAPS_UNDERSCORE token + any `*.exe/.dll/.sys` — so asset tags / in-house binaries pass as "symptoms");
+ban `serde_json::Value` on boundary types (`ToolOutcome.data`, `AgentStep.args` → typed summaries).
+
+**Verification discipline (non-negotiable — the old suite was vacuous):** for every guard you add, PROVE it
+fails on a reverted fix (revert→red→`git checkout`→green), as done for Phase 0's C1 guards.
+
+**Build loop:** `. "$HOME/.cargo/env"` then `cargo build/test/clippy/fmt --workspace` (cargo with
+`dangerouslyDisableSandbox`). **DOWNSTREAM:** the private `corpus-ingest` (`/mnt/e/cec-corpus-private`) calls
+`Contribution::new` (now `Result`) — it breaks on its next engine-pin bump (FOLLOWUPS).
+
+### SECONDARY — MyOwn integration: merge the green PRs
+
+**PR #2** (`b7ad864`) + stacked **PR #3** (`673a381`) are FULLY green on CI. Merge **PR #2 first**, then PR #3
+(auto-retargets to `main`). The leak-prevention branch is based on PR #3's tip, so it should rebase onto `main`
+after both merge (or merge PR #3 first into it). RFC Q1–Q5 await Chris. P1/P2 of the INTEGRATION (AllMyStuff-side
+`inventory_to_config_keys()` + serde-only `diagnose` contract, the MIT half in the AllMyStuff repo) is the next
+integration build step and does not need Q1–Q5.
+
+Per-item status in `TODOS.md`; deferred backlog in `FOLLOWUPS.md`.
 
 --- previous (superseded) ---
 
@@ -279,8 +352,66 @@ See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementati
   (not just `cargo fmt` then trust it) and, when a PR is "presented," confirm with `gh pr checks <N>` rather
   than assuming. The fix is mechanical (`cargo fmt --all`); keep it as its own commit so it's cherry-pickable.
 
+- [2026-06-15 03:10 UTC] **A de-id guarantee dies on the FIRST un-audited serialization path.** The corpus
+  write path was carefully de-identified (`de_identify_plan` strips free text to the action vocabulary), but the
+  P0 `--json` envelope was a SEPARATE serialization that emitted `candidate.rationale`/`plan.title` verbatim —
+  and the heuristic rationale is `format!("...: {describe}")`, so the raw request text (hostname/user/IP/serial)
+  shipped in cleartext. The hashed fields right next to it (config_class, fingerprint) made it look safe. Lesson:
+  every NEW path that serializes domain objects to an external boundary must be independently de-id-audited;
+  don't assume a guarantee enforced elsewhere covers it. Emit only allowlisted, de-identified fields (here: the
+  tool-name `actions` vocabulary), never free text — and write a test that PLANTS identity and greps the output.
+- [2026-06-15 03:10 UTC] **`run()`-local macros don't cover the functions `run()` calls.** The `--json` stdout-
+  purity fix used a `macro_rules!` defined inside `run()`, which silently left `record_outcome`/`sandbox_validated_for`
+  (free functions) writing to stdout via bare `println!` — so `--json --sign-off` broke the one-line contract. A
+  contract that must hold across a call graph needs a MODULE-scoped router (`tprintln!(json, …)`), and a
+  PROCESS-level test (`tests/cli_contract.rs`, `wc -l == 1`) — a unit test of the envelope function can't see it.
+
+- [2026-06-15 03:55 UTC] **A de-id test that avoids the leaky field is worse than no test — it manufactures
+  false confidence.** The "adversarial" leakage suite seeded identity into describe/title/description but used a
+  clean `action:"driver_rollback"` / `id:"model-1"`, and even *asserted the action was preserved* — so it passed
+  precisely because it never touched the two fields `de_identify_plan` copied verbatim. A "proof of no leak" must
+  plant into EVERY field the sink keeps, and you must PROVE it fails on a reverted fix (do the revert→red→restore
+  check) — otherwise you have a vault around a sieve. Fixed in Phase 0: the mints validate action/id (refuse,
+  not copy), the suite seeds them, and `leakguard::POISON` is the single source so a future test can't re-narrow it.
+- [2026-06-15 03:55 UTC] **Provenance ≠ content: a "came-from-the-de-id-function" wrapper certifies whatever the
+  function copied through.** The red-team's keystone point. `de_identify_plan` was the trusted chokepoint, but it
+  trusted `action`/`id`. The fix is a VALIDATING mint (a positive allowlist + a round-trip property), not just a
+  newtype proving origin. When building the Phase-1 `DeIdentified<T>`, the security boundary is the mint
+  PREDICATE, not the type tag.
+
 ## Handoff log (reverse-chronological)
 
+- **2026-06-15 03:55 UTC** — **Corpus leak-prevention: methodology designed + Phase 0 implemented + verified.**
+  Owner asked to codify prevention of all corpus leaks incl. agent-accidental ones. Ran a 15-agent workflow
+  (`wf_148ceb35-f02`, 57 vectors, 11 critical): wrote `docs/corpus-leak-prevention.md` (4 layers, red-teamed,
+  honest §6 on guarantee-vs-accepted-risk). Owner chose Phases 0–2. Implemented **Phase 0** on
+  `feat/corpus-leak-prevention` (`cf95d1c`): `crates/deid` validating mints + `crates/leakguard` poison set;
+  `de_identify_plan`/`Contribution::new`→`Result` (closes the CRITICAL C1 action/id pass-through); the leakage
+  suite now BITES (proven red-on-revert). 180 tests, gates clean. Verified the discipline the old suite lacked.
+  Phases 1–2 (type split + leaf `Prose` + read-side + dictionaries) remain — a large workspace-wide serde
+  refactor (FOLLOWUPS). **Lessons:** a de-id test that avoids the leaky field manufactures false confidence;
+  provenance ≠ content (validate the mint predicate, not just the type tag).
+- **2026-06-15 03:10 UTC** — **Cleanup while Chris drafts: 3 owner-chosen tracks, both PRs still green.**
+  **Track 1 (P0 adversarial review, `wf_923ec5a0-84d`, 18 agents):** 13 confirmed findings → fixed 2 CRITICAL
+  (D1 envelope de-id leak via `candidates[].rationale`; D2 stdout-purity hole in free fns under `--json
+  --sign-off`) + the vacuous de-id test (D4); refactored `emit_diagnose_envelope`→`diagnose_envelope()->Value`;
+  +5 tests incl. process-level `tests/cli_contract.rs`. 170 tests green. Pushed `ddd1145` to PR #3 (P0-only code,
+  nothing to port to PR #2). **Track 2 (FOLLOWUPS reconciliation):** verified each engine-gap item vs the live
+  code; tombstoned 8 (PR #2 increments) + re-filed 4 residuals (~12 open → 6/11). **Track 3 (CI hardening,
+  `673a381`/`b7ad864`):** concurrency block, `cargo-deny-action`, SHA-pinned actions + dependabot. CI re-verified
+  fully green on both PRs (the concurrency block is already cancelling duplicate runs). **Lessons:** a de-id
+  guarantee dies on the first un-audited serialization path; a `run()`-local macro doesn't cover called functions.
+- **2026-06-15 02:30 UTC** — **Triaged + fixed the `secrets`/gitleaks CI job → both PRs fully green.** Scouted
+  the failure inline (the PR-event run errored "GITHUB_TOKEN is now required to scan pull requests"; the
+  push-event run passed clean), downloaded gitleaks 8.24.3 and scanned the FULL history (36 commits) + working
+  tree → `no leaks found`. Ran workflow `wf_60234519-881` (4 agents) to adversarially verify the exact fix
+  (permissions/fork-PR nuance), audit adjacent CI issues, and independently cross-check for real secrets
+  (10 methods, `all_clear`). Applied to `.github/workflows/ci.yml`: `GITHUB_TOKEN` env + `permissions` block +
+  `checkout@v4→v5` + `gitleaks-action@v2→v3` (the Node-20→24 cutover is 2026-06-16). Landed on both branches
+  no-force (PR #3 `53dd992`; PR #2 cherry-pick `951ae82` via a throwaway worktree, leaving the dirty tracking
+  files untouched). CI settled fully green on both PRs (check×3 + audit + secrets, 0 failures). Deferred CI
+  hygiene → FOLLOWUPS. **Lesson:** gitleaks-action@v2+ needs `GITHUB_TOKEN` in `env` for `pull_request` events
+  — a missing-token fail looks identical to a "secret found" red X; always read the job log before assuming a leak.
 - **2026-06-15 02:00 UTC** — **MyOwn integration P0 BUILT + fixed PR #2's red CI.** Owner greenlit (single-shot
   CLI, versioning = agent's call, the rest → an RFC for Chris). Implemented P0 on `feat/myown-integration-p0`:
   `common::InventoryProvider`/`CoarseHostInventory`/`ExternalInventory` (`inventory.rs`), CLI `--inventory-keys`
@@ -289,9 +420,11 @@ See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementati
   (additive-within-major). Wrote `docs/integration-rfc-for-chris.md` (D1/D2 decided, Q1–Q5 for Chris) and
   updated the integration doc's P0 → DONE. **165 tests green, clippy + fmt CLEAN**, smoke-verified. Discovered
   via `gh pr checks 2` that **PR #2 is RED on CI** — a rustfmt-1.9 regression from `11f0609`; fixed in-tree
-  (portable fmt-only commit). Committed locally; **push (P0 + the PR#2 fix) pending owner OK**. TODOS/FOLLOWUPS
-  updated. **Lessons:** a `--json` contract must own stdout; rustfmt version skew can silently red-light CI —
-  always `gh pr checks` a "presented" PR.
+  (portable fmt-only commit `538cd43`). Owner approved **"push both"**: fast-forwarded the fmt fix + 2 doc
+  commits onto `feat/agent-ops-evidence-integrity` (PR #2 `check` now green on all 3 platforms), and pushed P0
+  as **stacked PR #3** (`d61b962`, base = PR #2's branch). Only red left is the pre-existing `secrets`/gitleaks
+  job. TODOS/FOLLOWUPS updated. **Lessons:** a `--json` contract must own stdout; rustfmt version skew can
+  silently red-light CI — always `gh pr checks` a "presented" PR.
 - **2026-06-15 01:15 UTC** — **Seedless validation gate + MyOwn-family integration recon.** Added
   `corpus-ingest check` (full admissibility + de-id validation, no seed — split `flow::compile` into
   `validate`+`compile`), `make check`, a CI merge-gate (`.github/workflows/validate.yml`), and a local
