@@ -27,7 +27,8 @@ use common::{
     ExecutionResult, FaultSignature, Plan, PlanStep, Risk, Severity,
 };
 use corpus_client::{
-    Contribution, CorpusStore, FileCorpus, LocalCorpus, Outcome, OutcomeLabel, SignOff,
+    Contribution, CorpusStore, FileCorpus, LocalCorpus, Outcome, OutcomeLabel, RowProvenance,
+    SignOff,
 };
 use inference::{ChatCompletionRequest, ChatMessage, Completer, Endpoint, OpenAiClient};
 use intake::{
@@ -35,7 +36,7 @@ use intake::{
 };
 use panel::{best_of_n, required_escalation, route_for, Escalation, HeuristicJudge, Judge, Route};
 use provenance::SigningKey;
-use swarm::{Generator, Swarm, SwarmError};
+use swarm::{Generator, SandboxValidator, Swarm, SwarmError};
 use tools_windows::{firmware_advisory, windows_tools, BoardIdentity};
 
 /// Parsed command-line arguments for the `diagnose` flow.
@@ -127,6 +128,23 @@ fn parse_args() -> Result<Option<Args>, String> {
             }
             // The single verb; accepted for readability of the command line.
             "diagnose" => {}
+            // Generate a sign-off authority key pair. The PUBLIC key goes on the
+            // engine (CEC_SIGNOFF_PUBKEY) to ENFORCE attestation; the SECRET seed
+            // (CEC_SIGNOFF_SEED) is held only where sign-off is performed — never
+            // on the engine in a split deployment, or alongside it for a single
+            // operator who is themselves the authority.
+            "gen-signoff-key" => {
+                let authority = corpus_client::SignOffAuthority::generate();
+                println!("# cec-support-agent sign-off authority key — store the seed securely");
+                println!("# PUBLIC KEY (engine, enforces attestation):");
+                println!(
+                    "export CEC_SIGNOFF_PUBKEY={}",
+                    authority.public_key().to_hex()
+                );
+                println!("# SECRET SEED (sign-off side only; keep off the engine):");
+                println!("export CEC_SIGNOFF_SEED={}", authority.seed_hex());
+                return Ok(None);
+            }
             other => return Err(format!("unknown argument: {other}")),
         }
     }
@@ -274,17 +292,60 @@ async fn run(args: Args) -> anyhow::Result<()> {
         }
     }
 
+    // Sign-off attestation (MH-1): if CEC_SIGNOFF_PUBKEY is set, the corpus
+    // store ENFORCES that every confirmed row carries a valid ed25519
+    // attestation by that authority (a self-asserted HumanConfirmed is refused).
+    // If CEC_SIGNOFF_SEED is set, this run holds the authority and attests its
+    // own outcomes (single-operator mode). A set-but-invalid key is a hard error
+    // — never silently run unprotected. `signoff_authority` is threaded into
+    // record_outcome so each contribution is attested before submit.
+    let signoff_authority = parse_env_authority()?;
+    let mut signoff_pubkey = parse_env_pubkey()?;
+    // A seed set without an explicit pubkey would otherwise self-attest into a
+    // store that does not enforce — attesting but not protected, silently. Derive
+    // the enforcing key from the seed so single-operator mode actually enforces:
+    // never attest without enforcing.
+    let derived_enforcement = signoff_pubkey.is_none() && signoff_authority.is_some();
+    if derived_enforcement {
+        signoff_pubkey = signoff_authority.as_ref().map(|a| a.public_key());
+    }
+    if let Some(pubkey) = &signoff_pubkey {
+        println!(
+            "  sign-off: attestation ENFORCED (authority {}…){}",
+            &pubkey.id(),
+            if derived_enforcement {
+                "; enforcing key derived from CEC_SIGNOFF_SEED \
+                 (single-operator mode: this run self-attests and enforces)"
+            } else if signoff_authority.is_some() {
+                "; this run holds the seed and self-attests (single-operator mode)"
+            } else {
+                "; this run must receive attestations (none produced here)"
+            }
+        );
+    }
+
     // 4. The corpus: file-backed when `--corpus` names a path — the
     //    self-hosted flywheel, where the next run facing a known signature
     //    starts from this run's outcome — and in-memory otherwise. Cold start
     //    either way: no CEC service is required.
     let corpus: Box<dyn CorpusStore> = match &args.corpus {
         Some(path) => {
-            let file = FileCorpus::open(path)?;
+            let mut file = FileCorpus::open(path)?;
+            if let Some(pubkey) = &signoff_pubkey {
+                // Re-admits every at-rest row under the authority; a corpus whose
+                // on-disk history is unattested (or forged) is refused here.
+                file = file.with_authority(pubkey.clone())?;
+            }
             println!("  corpus: file-backed at {path} ({} row(s))", file.len());
             Box::new(file)
         }
-        None => Box::new(LocalCorpus::new()),
+        None => {
+            let mut local = LocalCorpus::new();
+            if let Some(pubkey) = &signoff_pubkey {
+                local = local.with_authority(pubkey.clone());
+            }
+            Box::new(local)
+        }
     };
     let known = corpus.query(&signature, &config_class).await?;
     println!(
@@ -370,17 +431,39 @@ async fn run(args: Args) -> anyhow::Result<()> {
     }
     candidates.extend(gathered.candidates);
 
-    // 6. Sandbox validation. The CLI configures no VM backend, so every plan
-    //    is unvalidated here — and unvalidated equals escalate: the judge
-    //    requires human sign-off for any state-changing unvalidated plan.
-    let sandbox_validated = false;
-    println!("  sandbox: no validator configured; plans are unvalidated (unvalidated = escalate)");
+    // 5b. Reconcile model-claimed risk against each registered tool's real risk.
+    //     A generator (or a corpus row) cannot mislabel a state-changing action
+    //     as ReadOnly to understate the rendered consent or slip past the
+    //     consent gate: an under-stated step is RAISED to the tool's true risk
+    //     before the plan is judged, consented to, or executed.
+    for candidate in &mut candidates {
+        let (reconciled, corrections) = dispatcher.reconcile_risk(&candidate.plan);
+        for correction in &corrections {
+            println!(
+                "  risk reconciled: '{}' claimed {:?} but is {:?} — raised before consent",
+                correction.action, correction.claimed, correction.actual
+            );
+        }
+        candidate.plan = reconciled;
+    }
 
-    // 7. Judge panel: score the slate, pick best-of-N, decide the escalation
-    //    from the route, the validation state, and the risk/score ladder.
+    // 6/7. Judge panel: score the slate and pick best-of-N. Then sandbox-validate
+    //      the WINNER and decide the escalation from the route, the REAL
+    //      validation state, and the risk/score ladder. The CLI configures no VM
+    //      backend, so the winner is unvalidated — and unvalidated equals
+    //      escalate: a state-changing plan still requires human sign-off. A
+    //      deployment that wires a disposable-VM `SandboxValidator` gets positive
+    //      validation evidence, and a clean apply can lower the bar.
     let judge = HeuristicJudge;
     let (index, best, score) =
         best_of_n(&judge, &candidates).expect("the heuristic candidate is always present");
+    let sandbox: Option<Box<dyn SandboxValidator>> = None; // deployment wires a disposable-VM backend
+    if sandbox.is_none() {
+        println!(
+            "  sandbox: no validator configured; the winner is unvalidated (unvalidated = escalate)"
+        );
+    }
+    let sandbox_validated = sandbox_validated_for(sandbox.as_deref(), best).await;
     let escalation = required_escalation(&route, sandbox_validated, best, &score);
 
     let consent_needed = match best.plan.risk() {
@@ -423,6 +506,15 @@ async fn run(args: Args) -> anyhow::Result<()> {
             );
         }
         Some(sign_off) => {
+            // Run-provenance for every row this run records: a fresh run id, the
+            // retrieval-first lane, and which precedents primed the slate — so the
+            // corpus counts only independent confirmations (EI-03/A5).
+            let row_provenance = RowProvenance {
+                run_id: run_id(),
+                retrieval_first,
+                primed_from: known.iter().map(|m| m.plan.id.clone()).collect(),
+            };
+
             // The sign-off must meet the judge's required escalation: a
             // verifier cannot authorize a run the panel routed to a human.
             if escalation == Escalation::HumanConfirm && sign_off != SignOff::HumanConfirmed {
@@ -468,6 +560,9 @@ async fn run(args: Args) -> anyhow::Result<()> {
                     label,
                     &config_class,
                     sign_off,
+                    None,
+                    Some(row_provenance.clone()),
+                    signoff_authority.as_ref(),
                 )
                 .await;
                 return Ok(());
@@ -514,6 +609,9 @@ async fn run(args: Args) -> anyhow::Result<()> {
                             label.clone(),
                             &config_class,
                             sign_off,
+                            None,
+                            Some(row_provenance.clone()),
+                            signoff_authority.as_ref(),
                         )
                         .await;
                         final_label = Some(label);
@@ -549,15 +647,24 @@ async fn run(args: Args) -> anyhow::Result<()> {
                     execution.steps.len()
                 );
 
-                // Verify the outcome: re-run the collection and diff against
-                // the original failure signature. The claim "fixed" is only
-                // valid against the same instrument that established
-                // "broken". (The bootstrap collector re-derives the
-                // signature from the request text, so it cannot observe a
-                // fix yet; a real collector re-runs the targeted collection.)
+                // Verify the outcome: re-collect from the live machine and diff
+                // against the original failure signature. The claim "fixed" is
+                // only valid against the same instrument that established
+                // "broken", so the post-state must be a REAL re-collection, not
+                // a re-read of the request text. `recollect_post_signature`
+                // returns None for the bootstrap (no live tools) — and a None
+                // post yields `Verdict::Unverified`, so a run that never
+                // observed the machine afterwards escalates instead of being
+                // recorded as resolved (NR-1).
                 let class = verification_class_for(&route, case.reproducibility);
-                let post = signature_of(&collect_diagnostics(&args.describe));
-                let verdict = verify_outcome(&signature, &post, class);
+                let post = recollect_post_signature();
+                if post.is_none() {
+                    println!(
+                        "  verification: no live re-collection available — the outcome cannot be \
+                         confirmed and will escalate for human verification (NR-1)"
+                    );
+                }
+                let verdict = verify_outcome(&signature, post.as_ref(), class);
                 println!("  verification ({class:?}): {verdict:?}");
                 if let Verdict::Fail { recurring } = &verdict {
                     println!(
@@ -572,6 +679,8 @@ async fn run(args: Args) -> anyhow::Result<()> {
                 // a discard — because an unlabeled ticket is corpus poison.
                 let label = label_for(&route, &execution, &verdict);
                 println!("  outcome label: {label:?}");
+                // Bind the verifier's verdict to the row: a resolved label is
+                // gated on a matching passing verdict, and stays auditable.
                 record_outcome(
                     &*corpus,
                     &signature,
@@ -579,6 +688,9 @@ async fn run(args: Args) -> anyhow::Result<()> {
                     label.clone(),
                     &config_class,
                     sign_off,
+                    Some(verdict.to_verification(class)),
+                    Some(row_provenance.clone()),
+                    signoff_authority.as_ref(),
                 )
                 .await;
 
@@ -684,9 +796,14 @@ fn explain_label(label: &OutcomeLabel) -> &'static str {
     }
 }
 
-/// Record one labeled outcome through the corpus sign-off gate.
-/// `Contribution::new` strips the plan to its action vocabulary; an
-/// unconfirmed outcome would be refused by the gate, in code.
+/// Record one labeled outcome through the corpus evidence-integrity gate.
+/// `Contribution::new` strips the plan to its action vocabulary; the gate
+/// refuses — in code — an unconfirmed outcome, a resolved label with no matching
+/// passing verdict, or a resolved destructive plan without human sign-off. The
+/// `verification` is the verdict bound to the row so a resolved outcome is
+/// auditable against its evidence; `None` for outcomes that never executed
+/// (a withdrawn ticket, or no executable plan).
+#[allow(clippy::too_many_arguments)]
 async fn record_outcome(
     corpus: &dyn CorpusStore,
     signature: &FaultSignature,
@@ -694,16 +811,28 @@ async fn record_outcome(
     label: OutcomeLabel,
     config_class: &ConfigClass,
     sign_off: SignOff,
+    verification: Option<common::Verification>,
+    provenance: Option<RowProvenance>,
+    authority: Option<&corpus_client::SignOffAuthority>,
 ) {
-    let contribution = Contribution::new(
+    let mut contribution = Contribution::new(
         Outcome {
             signature: signature.clone(),
             plan: plan.clone(),
             label: label.clone(),
+            verification,
         },
         config_class.clone(),
         sign_off,
     );
+    if let Some(provenance) = provenance {
+        contribution = contribution.with_provenance(provenance);
+    }
+    // Attest AFTER provenance so the run-provenance pin is bound into the
+    // signature (a valid attestation cannot be replayed onto a fabricated run).
+    if let Some(authority) = authority {
+        contribution = contribution.attested_by(authority);
+    }
     match corpus.submit(&contribution).await {
         Ok(()) => println!("  corpus: outcome recorded (label={label:?}, sign-off={sign_off:?})"),
         Err(error) => println!("  corpus: submit refused: {error}"),
@@ -722,9 +851,57 @@ fn collect_diagnostics(describe: &str) -> Vec<DiagnosticEvent> {
     )]
 }
 
+/// Whether the chosen plan was POSITIVELY validated in a disposable sandbox.
+/// With no validator configured (the CLI default) this is `false` — and
+/// unvalidated equals escalate, so a state-changing plan still requires human
+/// sign-off. A deployment that wires a `SandboxValidator` (a disposable VM with
+/// no user data) gets a real per-plan report: a clean apply is positive
+/// evidence that lowers the escalation bar; a dirty apply or a validation error
+/// does not (it stays conservative — escalate).
+async fn sandbox_validated_for(sandbox: Option<&dyn SandboxValidator>, best: &Candidate) -> bool {
+    let Some(validator) = sandbox else {
+        return false;
+    };
+    match validator.validate(best).await {
+        Ok(report) => {
+            println!(
+                "  sandbox: {} — {}",
+                if report.applied_cleanly {
+                    "validated cleanly"
+                } else {
+                    "did NOT apply cleanly (stays unvalidated)"
+                },
+                report.notes
+            );
+            report.applied_cleanly
+        }
+        Err(error) => {
+            println!("  sandbox: validation failed ({error}); treating as unvalidated");
+            false
+        }
+    }
+}
+
+/// Re-collect the post-execution signature from the LIVE machine, for the
+/// verification diff. A genuine re-collection re-runs the diagnostic tools
+/// (event log, WER/WHEA, CIM) against the host and builds a fresh signature with
+/// the same instrument that established the fault. The bootstrap has no live
+/// collector, so this returns `None` — and a `None` post is treated as
+/// [`Verdict::Unverified`], not a pass: re-reading the request text is not an
+/// observation of the post-fix state, so a run that never re-observed the
+/// machine escalates instead of being recorded as resolved (NR-1). A Windows
+/// build wires the real re-collection (via `tools-windows`) here.
+fn recollect_post_signature() -> Option<FaultSignature> {
+    None
+}
+
 /// Build the fault signature from the structured symptoms of every event.
 /// Free text never reaches the signature: extraction keeps only vocabulary
-/// terms, hex codes, prefixed ids, and module names.
+/// terms, hex codes, prefixed ids, and module names. This is the builder a live
+/// re-collection (`recollect_post_signature` on a Windows build) uses to turn
+/// re-collected events into the post-fix signature; it is exercised by the
+/// tests today.
+#[allow(dead_code)] // wired in by the real (Windows) re-collection; used by tests
 fn signature_of(events: &[DiagnosticEvent]) -> FaultSignature {
     let mut symptoms: Vec<common::Symptom> = events
         .iter()
@@ -740,10 +917,61 @@ fn signature_of(events: &[DiagnosticEvent]) -> FaultSignature {
 /// bootstrap uses the host's coarse identity so corpus rows are still scoped
 /// to like configs.
 fn host_config_class() -> ConfigClass {
-    ConfigClass::from_inventory([
+    ConfigClass::from_inventory(host_inventory())
+}
+
+/// The inventory facts that scope a corpus row to "like configs". A real CEC
+/// build keys on the BOM revision; a general host derives the class from its
+/// hardware and driver inventory. Today this is the cross-platform coarse set
+/// (OS, arch, OS family) — deterministic and identity-free. A Windows build
+/// SHOULD enrich it here with CIM **configuration** fields (board vendor/model,
+/// BIOS version/date, chipset, GPU model, driver versions) — never serial
+/// numbers or service tags — so retrieval is scoped to genuinely-like hardware
+/// rather than to every machine sharing an OS/arch. That enrichment needs a
+/// Windows host to build and verify and is tracked in FOLLOWUPS; the config
+/// class is already bound into a row's sign-off attestation, so whatever it is
+/// derived from is tamper-evident.
+fn host_inventory() -> Vec<String> {
+    vec![
         format!("os:{}", std::env::consts::OS),
         format!("arch:{}", std::env::consts::ARCH),
-    ])
+        format!("family:{}", std::env::consts::FAMILY),
+    ]
+}
+
+/// Read the sign-off authority PUBLIC key from `CEC_SIGNOFF_PUBKEY` (hex). Absent
+/// → `None` (attestation not enforced — cold start). Present but invalid → a hard
+/// error: a typo must never silently drop the engine into an unprotected mode.
+fn parse_env_pubkey() -> anyhow::Result<Option<corpus_client::SignOffPublicKey>> {
+    match std::env::var("CEC_SIGNOFF_PUBKEY") {
+        Err(_) => Ok(None),
+        Ok(hex) => corpus_client::SignOffPublicKey::from_hex(hex.trim())
+            .map(Some)
+            .ok_or_else(|| {
+                anyhow::anyhow!("CEC_SIGNOFF_PUBKEY is not a valid ed25519 public key (hex)")
+            }),
+    }
+}
+
+/// Read the sign-off authority SECRET seed from `CEC_SIGNOFF_SEED` (hex), for a
+/// single operator who is themselves the authority. Absent → `None`. Present but
+/// invalid → a hard error.
+fn parse_env_authority() -> anyhow::Result<Option<corpus_client::SignOffAuthority>> {
+    match std::env::var("CEC_SIGNOFF_SEED") {
+        Err(_) => Ok(None),
+        Ok(hex) => corpus_client::SignOffAuthority::from_seed_hex(hex.trim())
+            .map(Some)
+            .ok_or_else(|| anyhow::anyhow!("CEC_SIGNOFF_SEED is not a valid 32-byte seed (hex)")),
+    }
+}
+
+/// A fresh, opaque id for this run, so the corpus can tell independent
+/// confirmations apart from a re-submission of the same run (EI-03/A5). It
+/// carries no identity — it is random bytes.
+fn run_id() -> String {
+    let mut bytes = [0u8; 16];
+    getrandom::getrandom(&mut bytes).expect("OS entropy source");
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// Whether this run is a routine ticket that may sample a lighter model tier:
@@ -787,7 +1015,12 @@ fn label_for(route: &Route, execution: &ExecutionResult, verdict: &Verdict) -> O
     match verdict {
         Verdict::Pass => OutcomeLabel::ResolvedConfirmed,
         Verdict::ProvisionalPass => OutcomeLabel::ResolvedProvisional,
-        Verdict::Fail { .. } | Verdict::OffMachine => OutcomeLabel::EscalatedHumanUnresolved,
+        // Fail (the fix did not hold), OffMachine (hardware belongs to the
+        // bench), and Unverified (no live re-collection observed the outcome)
+        // all escalate to a human rather than claim a resolution.
+        Verdict::Fail { .. } | Verdict::OffMachine | Verdict::Unverified => {
+            OutcomeLabel::EscalatedHumanUnresolved
+        }
     }
 }
 
@@ -920,6 +1153,12 @@ fn print_help() {
 
 USAGE:
     cec-support-agent diagnose [OPTIONS]
+    cec-support-agent gen-signoff-key
+
+COMMANDS:
+    diagnose             Run the diagnostic pipeline (the default).
+    gen-signoff-key      Generate a sign-off authority ed25519 key pair and print
+                         the CEC_SIGNOFF_PUBKEY / CEC_SIGNOFF_SEED exports.
 
 OPTIONS:
     --describe <TEXT>    Describe the user's problem
@@ -944,6 +1183,21 @@ OPTIONS:
     -h, --help           Print help
     -V, --version        Print version
 
+ENVIRONMENT:
+    CEC_SIGNOFF_PUBKEY   Sign-off authority public key (hex). When set, the corpus
+                         ENFORCES that every confirmed row carries a valid ed25519
+                         attestation — a self-asserted sign-off is refused, and a
+                         file-backed corpus whose on-disk rows are unattested (or
+                         forged) is refused at open, not served.
+    CEC_SIGNOFF_SEED     Sign-off authority secret seed (hex). When set, this run
+                         holds the authority and attests its own outcomes
+                         (single-operator mode). Set without CEC_SIGNOFF_PUBKEY,
+                         the enforcing pubkey is DERIVED from the seed so the run
+                         both self-attests and enforces — it never attests into an
+                         unprotected store. In a split deployment, set only the
+                         pubkey on the engine and produce attestations elsewhere.
+                         A set-but-invalid value is a hard error.
+
 Cold start: with no --endpoint (or with --offline), the agent runs the full
 diagnostic -> route -> candidate -> judge pipeline using the model-free
 heuristic and an empty in-memory corpus. No CEC-hosted service is required.",
@@ -954,6 +1208,41 @@ heuristic and an empty in-memory corpus. No CEC-hosted service is required.",
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct FakeSandbox {
+        clean: bool,
+    }
+
+    #[async_trait]
+    impl SandboxValidator for FakeSandbox {
+        async fn validate(
+            &self,
+            candidate: &Candidate,
+        ) -> Result<swarm::ValidationReport, SwarmError> {
+            Ok(swarm::ValidationReport {
+                candidate_id: candidate.plan.id.clone(),
+                applied_cleanly: self.clean,
+                notes: "fake sandbox".into(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn sandbox_validation_drives_the_validated_flag() {
+        let best = heuristic_candidate("x");
+        assert!(
+            !sandbox_validated_for(None, &best).await,
+            "no validator -> unvalidated (escalate)"
+        );
+        assert!(
+            sandbox_validated_for(Some(&FakeSandbox { clean: true }), &best).await,
+            "a clean sandbox apply is positive validation evidence"
+        );
+        assert!(
+            !sandbox_validated_for(Some(&FakeSandbox { clean: false }), &best).await,
+            "a dirty apply stays unvalidated"
+        );
+    }
 
     #[test]
     fn heuristic_plan_is_reversible_and_needs_consent() {
@@ -1048,6 +1337,9 @@ mod tests {
             OutcomeLabel::ResolvedConfirmed,
             &config_class,
             SignOff::HumanConfirmed,
+            Some(common::Verification::pass()),
+            None,
+            None,
         )
         .await;
         // ...and run 2 facing the same signature retrieves it as precedent.

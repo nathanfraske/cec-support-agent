@@ -1,0 +1,126 @@
+{
+  "current_state_summary": "Local inference is a HYBRID fronted by ONE OpenAI-compatible reverse proxy: the cec-llm-broker on 0.0.0.0:8080 (running as the SYSTEM systemd unit cec-llm-broker.service, PID 122048, enabled, up ~1.5 days). Clients send an OpenAI request whose model field is a broker alias; the broker routes by name, boots the backend on demand, arbitrates the single RTX 5090 (32GB) via a 30GB VRAM budget + LRU eviction + a 30-min idle reaper, rewrites the alias to the served name, and proxies/streams the reply. Two backend kinds: (a) managed WSL2 docker-compose seats in CEC-Platform/docker/compose.yaml (vLLM + llama.cpp server-cuda, GGUFs read from E:/AI Models over the slow drvfs /mnt/e mount, multi-minute cold loads); (b) external Windows-native llama-server seats (managed:false, host=windows-host resolved to the WSL default gateway 172.27.192.1) that the broker proxies but never starts/stops/reaps. LIVE PROBE 2026-06-14: broker UP; 917 requests served, 16 starts, 7 evictions. The ONLY running backend is deepseek-v4-flash (Windows-native port 8007, reachable, ~13GB attn/KV on the 5090 so nvidia-smi shows 14.6/32GB used). NO docker containers running (all WSL seats cold). The second Windows-native seat cec-worker-vision-win (8090) is registered but NOT reachable (the libomp140 System32 ENTRYPOINT_NOT_FOUND load blocker from 2026-06-12 is still unresolved), so the WSL cec-worker-vision (8012) remains the live vision/worker seat. Two Claude remote-control user services are active. WHAT CHANGED recently: the broker was rebuilt from spec 2026-06-12 (v2, stdlib-only on-demand orchestrator) after a WSL move to E: wiped the original (models survived on E:/AI Models); a Windows-native serving migration opened 2026-06-12 (broker gained managed:false external-backend support and the V4-Flash deep auditor on 8007 went live as the first/only working native seat); the model lineup churned (Qwen3-235B retired/deleted 2026-06-09, MiniMax-M2.7 retired from CEC paths 2026-06-11 but kept registered for the other project, default reviewer now cec-manager-fast gpt-oss-120b, deep auditor now DeepSeek-V4-Flash-284B replacing M2.7, default seat now the unified text+vision cec-worker-vision); and Claude session survivability was rebuilt onto tmux + systemd auto-reup 2026-06-14.",
+  "components": [
+    {
+      "name": "cec-llm-broker",
+      "role": "Single front door to all local inference: on-demand model orchestrator / OpenAI-compatible reverse proxy. Routes by model-alias, boots managed WSL seats on demand via docker compose, arbitrates the 5090 (30GB budget, LRU eviction, 30-min idle reap), rewrites alias to served name, streams SSE. Proxies but never manages external Windows-native seats.",
+      "path": "/home/nathan/cec-llm-broker/broker.py",
+      "ports_or_services": "0.0.0.0:8080, SYSTEM systemd unit cec-llm-broker.service (enabled, PID 122048). Endpoints GET /v1/models, POST /v1/chat-completions, GET /health, GET /broker/stats. Registry models.json = 10 models.",
+      "how_to_run": "sudo systemctl status/restart cec-llm-broker; journalctl -u cec-llm-broker -f. Dev: python3 broker.py. Durable vendored copy at CEC-Platform/ops/cec-llm-broker/, deployed by ops/provision.sh."
+    },
+    {
+      "name": "broker registry models.json",
+      "role": "Source of truth for the 10 aliases (port/served/vram_gb/backend/managed/host). 8 managed WSL backends + 2 external Windows-native.",
+      "path": "/home/nathan/cec-llm-broker/models.json",
+      "ports_or_services": "cec-judge vLLM 8000; cec-worker 8002; cec-worker-quality 8004; cec-vision-judge 8006; cec-worker-vision 8012 (DEFAULT seat); cec-worker-quality-vision 8014; cec-manager 8003 (MiniMax-M2.7, retired from CEC); cec-manager-fast 8005 (gpt-oss-120b, DEFAULT reviewer); cec-worker-vision-win 8090 (EXTERNAL, NOT reachable); deepseek-v4-flash 8007 (EXTERNAL, deep auditor, RUNNING)."
+    },
+    {
+      "name": "WSL docker-compose backends",
+      "role": "Managed on-demand seats: vLLM (cec-judge AWQ) + llama.cpp server-cuda. GGUFs on E:/AI Models (/mnt/e drvfs, slow cold loads). MoE seats run -ngl 99 with --n-cpu-moe to keep experts in host RAM. Broker owns lifecycle; never compose up/down by hand.",
+      "path": "/home/nathan/CEC-Platform/docker/compose.yaml",
+      "ports_or_services": "Profiles map to ports 8000/8002/8004/8006/8012/8014/8003/8005. NONE running now (all cold).",
+      "how_to_run": "Broker-managed. Build only: docker compose -f docker/compose.yaml build routing."
+    },
+    {
+      "name": "Windows-native llama-server seats",
+      "role": "Migration-target seats served by native Windows llama-server.exe reading GGUFs from E: at NTFS speed (skips drvfs tax). External (managed:false): proxied but never started/stopped/reaped; vram counted but never evicted.",
+      "path": "/home/nathan/CEC-Platform/ops/windows-serving/ (run-worker-vision.bat, install-task.ps1, close-dialogs.ps1, README.md); binaries on E:/llama-cpp-win/ (llama.cpp b9611, CUDA 13.3, pinned in versions.env).",
+      "ports_or_services": "deepseek-v4-flash 8007 (DeepSeek-V4-Flash-284B, ~160GB experts in RAM + ~13GB GPU) LIVE; cec-worker-vision-win 8090 (Qwen3.6-35B + mmproj) registered but NOT reachable (libomp140 System32 blocker; WSL 8012 fallback). Via gateway 172.27.192.1.",
+      "how_to_run": "Windows-side only (not WSL-spawnable). Persistent via the CEC-WorkerVision / V4 logon Scheduled Tasks. install-task.ps1 run once elevated."
+    },
+    {
+      "name": "cec_judge_local seat resolver",
+      "role": "Main client adapter: how the CEC pipeline reaches local compute. Resolves each tier endpoint+model from env (CEC_VLLM_URL, CEC_VLLM_WORKER/MANAGER/REVIEWER_URL, CEC_VLLM_MODEL_NAME). Defaults URLs to the broker (8080) and seat to cec-worker-vision; reviewer default cec-manager-fast; opt-in deep auditor deepseek-v4-flash. Fail-safe to a deterministic fallback. Cloud-seat shim routes claude-prefixed names off-broker.",
+      "path": "/home/nathan/CEC-Platform/scripts/cec_judge_local.py",
+      "ports_or_services": "Broker http://localhost:8080/v1 on host; http://host.docker.internal:8080/v1 in the routing container.",
+      "how_to_run": "Imported by cec_router/cec_fullstack. Manual: python3 scripts/cec_judge_local.py up|down|warm|status."
+    },
+    {
+      "name": "cec_v4_task DeepSeek-V4 dispatcher",
+      "role": "Hands a task to the DeepSeek-V4-Flash deep-reasoner seat through the broker to the Windows-native 8007 endpoint; recovers V4 answers stranded in reasoning_content. Used as a panel seat or via the idle queue cec_v4_queue.",
+      "path": "/home/nathan/CEC-Platform/scripts/cec_v4_task.py",
+      "ports_or_services": "Broker 8080, model deepseek-v4-flash.",
+      "how_to_run": "python3 scripts/cec_v4_task.py (X-CEC-Client v4-task)."
+    },
+    {
+      "name": "routing container (compute-plane consumer)",
+      "role": "NOT inference: the CPU Freerouting JVM swarm + kicad-cli DRC pipeline. Reaches the broker via host.docker.internal:8080 for LLM judge tiers. The in-container consumer of local inference.",
+      "path": "/home/nathan/CEC-Platform/docker/compose.yaml (service routing) + docker/Dockerfile.routing",
+      "ports_or_services": "freerouting REST 37864; CEC_VLLM_URL=http://host.docker.internal:8080/v1; mounts ../../cec-runs as /cec-runs.",
+      "how_to_run": "docker compose -f docker/compose.yaml up -d freerouting routing"
+    },
+    {
+      "name": "Claude remote-control session survivability",
+      "role": "Keeps Claude RC bridges and interactive sessions alive across console/WSL drops via tmux + systemd auto-reup. How an interactive Claude agent on this box stays connected to drive the local stack.",
+      "path": "/home/nathan/CEC-Platform/ops/ (claude-rc-tmux.sh, claude-session.sh, rc-recover.sh, templated claude-rc user service, README-claude-rc.md)",
+      "ports_or_services": "Two systemd USER services active (CEC-Platform and CEC_AutoDiagnoser instances). tmux socket claude-rc.",
+      "how_to_run": "ops/claude-session.sh [project] for interactive; ops/rc-recover.sh to recover a zombied bridge. Not yet auto-installed by provision.sh."
+    },
+    {
+      "name": "cec-runs run ledger",
+      "role": "Sibling run-ledger repo (append-only ledger.jsonl, mounted into the routing container as /cec-runs) + verifier-calibration.json. Latest entries 2026-06-14 fullstack:eps-8pin.",
+      "path": "/home/nathan/cec-runs/ (runs/ledger.jsonl, verifier-calibration.json)",
+      "ports_or_services": "filesystem; CEC_RUNS_DIR",
+      "how_to_run": "Written by cec_ledger during pipeline runs."
+    }
+  ],
+  "how_local_agents_run_now": "An agent or pipeline script never contacts a model server directly. It sends an OpenAI-compatible request whose model field is a broker alias to the cec-llm-broker at http://localhost:8080/v1 (host) or http://host.docker.internal:8080/v1 (inside the routing container). The broker looks the alias up in models.json: for a managed WSL seat it runs docker compose up for that profile/service, evicting the LRU GPU backend if the 30GB budget would overflow, polls health (cold loads take minutes off the drvfs E: mount), then proxies and streams; idle backends are reaped after 30 min. For an external Windows-native seat (deepseek-v4-flash 8007, cec-worker-vision-win 8090) it resolves host=windows-host to the WSL default gateway 172.27.192.1, proxies if the seat answers, and never starts/stops/reaps it. CEC pipeline tiers pick their alias and endpoint via cec_judge_local.py env knobs (default seat cec-worker-vision, default reviewer cec-manager-fast, opt-in deep auditor deepseek-v4-flash via cec_v4_task.py). Everything is fail-safe: broker or seat down yields connection-refused and the client falls back to its deterministic path. Right now only the Windows-native DeepSeek-V4 seat (8007) is up; every WSL docker seat is cold and would be booted on first request. An interactive Claude agent reaches all this from a tmux+systemd-supervised session (ops/claude-session.sh).",
+  "files_and_scripts": [
+    "/home/nathan/cec-llm-broker/broker.py",
+    "/home/nathan/cec-llm-broker/models.json",
+    "/home/nathan/cec-llm-broker/cec-llm-broker.service",
+    "/home/nathan/cec-llm-broker/README.md",
+    "/etc/systemd/system/cec-llm-broker.service",
+    "/home/nathan/CEC-Platform/ops/cec-llm-broker/",
+    "/home/nathan/CEC-Platform/ops/README-claude-rc.md",
+    "/home/nathan/CEC-Platform/ops/claude-rc-tmux.sh",
+    "/home/nathan/CEC-Platform/ops/claude-session.sh",
+    "/home/nathan/CEC-Platform/ops/rc-recover.sh",
+    "/home/nathan/CEC-Platform/ops/provision.sh",
+    "/home/nathan/CEC-Platform/ops/windows-serving/README.md",
+    "/home/nathan/CEC-Platform/ops/windows-serving/run-worker-vision.bat",
+    "/home/nathan/CEC-Platform/ops/windows-serving/install-task.ps1",
+    "/home/nathan/CEC-Platform/ops/windows-serving/close-dialogs.ps1",
+    "/home/nathan/CEC-Platform/ops/secrets/",
+    "/home/nathan/CEC-Platform/ops/hooks/pre-push",
+    "/home/nathan/CEC-Platform/docker/compose.yaml",
+    "/home/nathan/CEC-Platform/docker/Dockerfile.routing",
+    "/home/nathan/CEC-Platform/docker/README.md",
+    "/home/nathan/CEC-Platform/docker/xvfb-entrypoint.sh",
+    "/home/nathan/CEC-Platform/docker/.wslconfig.example",
+    "/home/nathan/CEC-Platform/versions.env",
+    "/home/nathan/CEC-Platform/docs/local-compute-exploration.md",
+    "/home/nathan/CEC-Platform/docs/local-compute-windows-native-migration.md",
+    "/home/nathan/CEC-Platform/docs/self-hosted-router.md",
+    "/home/nathan/CEC-Platform/docs/ai-box-upgrade-analysis-2026-06-12.md",
+    "/home/nathan/CEC-Platform/docs/llm-manager-bench-2026-06-09.md",
+    "/home/nathan/CEC-Platform/docs/seat-bakeoff-2026-06-13/findings.md",
+    "/home/nathan/CEC-Platform/scripts/cec_judge_local.py",
+    "/home/nathan/CEC-Platform/scripts/cec_v4_task.py",
+    "/home/nathan/CEC-Platform/scripts/cec_overnight.py",
+    "/home/nathan/CEC-Platform/scripts/cec_fullstack.py",
+    "/home/nathan/CEC-Platform/scripts/cec_bench_manager.py",
+    "/home/nathan/CEC-Platform/scripts/route-local.sh",
+    "/home/nathan/cec-runs/runs/ledger.jsonl",
+    "/home/nathan/cec-runs/verifier-calibration.json"
+  ],
+  "what_changed": [
+    "Broker rebuilt from spec 2026-06-12 (v2, stdlib-only on-demand orchestrator) after a WSL move to E: wiped the original cec-llm-broker; models survived on E:/AI Models. Older docs (local-compute-exploration.md, self-hosted-router.md) describe the simpler earlier proxy with cec-judge vLLM 8000 + cec-manager 235B llama.cpp 8001.",
+    "Windows-native serving migration opened 2026-06-12 (docs/local-compute-windows-native-migration.md) to kill the drvfs cold-load tax. Broker gained managed:false external-backend support (proxy-only, never start/stop/reap, count-but-never-evict VRAM). Two external seats registered.",
+    "DeepSeek-V4-Flash-284B Windows-native seat on 8007 is the first and only working native seat and the current deep auditor (replaced MiniMax-M2.7 as the deep tier, owner 2026-06-11). Running now (~13GB on the 5090, experts in host RAM).",
+    "cec-worker-vision-win (8090) registered but NOT reachable; the libomp140 System32 ENTRYPOINT_NOT_FOUND blocker (2026-06-12) needs one elevated System32 replace. WSL cec-worker-vision (8012) remains the live fallback, so the worker-vision migration has not actually happened.",
+    "Model lineup churn: Qwen3-235B manager retired + service removed 2026-06-09 (files deleted); MiniMax-M2.7 (cec-manager 8003) retired from CEC paths 2026-06-11 but kept registered for the other project; default reviewer now cec-manager-fast (gpt-oss-120b 8005); cec-worker-vision (8012) became the default unified text+vision seat; its vram_gb lowered 25 to 10 (2026-06-13) for V4 co-residency via --n-cpu-moe 99.",
+    "Broker now runs as a SYSTEM systemd unit (enabled, auto-restart) deployed by ops/provision.sh from the vendored ops/cec-llm-broker copy (WSL-ephemeral durability policy).",
+    "Claude RC + interactive session survivability rebuilt 2026-06-14 onto tmux + systemd auto-reup (claude-rc-tmux.sh wrapper, claude-session.sh, rc-recover.sh); new ops/secrets bot-identity + pre-push guard.",
+    "versions.env grew a windows-serving section pinning llama.cpp b9611 / CUDA 13.3 + sha256 per binary."
+  ],
+  "open_questions": [
+    "cec-worker-vision-win (8090) registered but unreachable on probe: is the libomp140 System32 fix still pending (elevated action not taken), or has the owner left worker-vision on WSL? Disk says blocked; live probe confirms down.",
+    "Mirrored WSL networking is explicitly deferred pending an owner decision; current mode is NAT (gateway 172.27.192.1).",
+    "The AI-box upgrade (Threadripper PRO 9965WX / 2x RTX 5090 / 256GB) is an analysis doc, not a committed purchase; unclear if ordered. Would change the single-GPU swap-arbitration design.",
+    "The deepseek-v4-flash launcher (E:/toolchain/run-v4-flash.bat) and the V4 llama.cpp fork build live on the Windows E: drive, not in repo/WSL; could not inspect them, only the broker registry note documents them.",
+    "The cec_v4_queue idle-queue (docs/v4-queue has pending/done dirs) is referenced but its worker script was not inspected; how V4 idle tasks are dispatched/drained is not fully traced.",
+    "ik_llama.cpp MoE-offload seats Windows-native build is gated on a CUDA 12.8+ toolkit (box has 12.1); no evidence on disk it was resolved, so those seats remain WSL-only.",
+    "versions.env pins the Windows binaries by sha256 but no native-binary verification step runs on this box that I could find; whether the running V4/native binaries match the pins is unverified from WSL."
+  ]
+}

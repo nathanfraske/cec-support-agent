@@ -17,6 +17,7 @@ mod fault;
 mod fluency;
 mod hash;
 mod plan;
+mod verification;
 
 pub use candidate::{Candidate, CandidateSource};
 pub use config_class::ConfigClass;
@@ -26,6 +27,7 @@ pub use extract::extract_symptoms;
 pub use fault::{FaultSignature, Symptom};
 pub use fluency::Fluency;
 pub use plan::{Plan, PlanStep, Risk};
+pub use verification::{Verification, VerificationClass, VerificationResult};
 
 #[cfg(test)]
 mod tests {

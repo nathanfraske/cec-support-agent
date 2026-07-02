@@ -3,6 +3,7 @@
 *.pdb
 .env
 .env.*
+*.env
 *.key
 *.pem
 # Never commit corpus data or model weights
@@ -13,3 +14,20 @@
 *.bin
 *.sqlite
 *.duckdb
+
+# Private-corpus boundary (see BOUNDARY.md): the ground-truth data lives ONLY in
+# the off-tree private repo. Refuse its shapes here so a stray copy can never be
+# staged into the open engine, in any form, including fixtures or git history.
+/flows/
+/build/
+*.flow.yaml
+*.flow.yml
+*.jsonl
+*.ndjson
+*.seed
+*.seedhex
+cec-corpus-private/
+**/cec-corpus*
+
+# Scratch audit diffs must not be swept in by `git add -A`.
+.claude/audit/*.diff

@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cargo fmt --all -- --check
+# gitleaks is a hard dependency of this guard — never commit without the secret scan.
+command -v gitleaks >/dev/null 2>&1 || {
+  echo "Refusing commit: gitleaks is required but not installed (see BOUNDARY.md / private WIRING.md)." >&2
+  exit 1
+}
 gitleaks protect --staged --redact
 # Block corpus data and model weights from ever being staged. Kept in lockstep
 # with .gitignore: corpus/ and weights/ dirs, model-weight formats (gguf,
-# safetensors, bin), and corpus database formats (sqlite, duckdb).
-if git diff --cached --name-only | grep -E '^(corpus|weights)/|\.(gguf|safetensors|bin|sqlite|duckdb)$'; then
-  echo "Refusing commit: corpus data or model weights must not enter this repo." >&2
+# safetensors, bin), corpus database formats (sqlite, duckdb), AND the private-
+# corpus boundary shapes (compiled rows, authored flows, seeds, any cec-corpus path).
+if git diff --cached --name-only | grep -E '^(corpus|weights)/|\.(gguf|safetensors|bin|sqlite|duckdb|jsonl|ndjson|seed|seedhex|env)$|\.flow\.ya?ml$|cec-corpus'; then
+  echo "Refusing commit: corpus data, model weights, or private-corpus material must not enter this repo." >&2
   exit 1
 fi

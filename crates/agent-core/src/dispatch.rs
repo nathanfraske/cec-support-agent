@@ -1,7 +1,21 @@
 use std::collections::HashMap;
 
+use common::{Plan, Risk};
+
 use crate::consent::Consent;
 use crate::tool::{Tool, ToolError, ToolOutcome};
+
+/// A correction the dispatcher made to a plan whose step under-stated its real
+/// risk — e.g. a model labeling a `registry_set` step `ReadOnly`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RiskCorrection {
+    /// The action whose claimed risk was raised.
+    pub action: String,
+    /// The risk the plan claimed.
+    pub claimed: Risk,
+    /// The action's true risk, taken from the registered tool.
+    pub actual: Risk,
+}
 
 /// Holds registered tools and enforces the consent gate before dispatch.
 #[derive(Default)]
@@ -31,6 +45,37 @@ impl Dispatcher {
     /// advisory-only and cannot be executed.
     pub fn contains(&self, name: &str) -> bool {
         self.tools.contains_key(name)
+    }
+
+    /// The declared risk of a registered tool, or `None` if it is not in the
+    /// vocabulary.
+    pub fn risk_of(&self, name: &str) -> Option<Risk> {
+        self.tools.get(name).map(|tool| tool.risk())
+    }
+
+    /// Reconcile a (possibly model-generated) plan's claimed risks against the
+    /// real risk of each registered tool. A model cannot mislabel a
+    /// state-changing action as `ReadOnly` to slip it past the consent gate or
+    /// understate it in the rendered consent: any step that under-states its
+    /// tool's risk is RAISED to the true risk (never lowered), and the
+    /// correction is reported. Out-of-vocabulary steps are left untouched — they
+    /// are advisory-only and never executed anyway.
+    pub fn reconcile_risk(&self, plan: &Plan) -> (Plan, Vec<RiskCorrection>) {
+        let mut corrected = plan.clone();
+        let mut corrections = Vec::new();
+        for step in &mut corrected.steps {
+            if let Some(actual) = self.risk_of(&step.action) {
+                if step.risk < actual {
+                    corrections.push(RiskCorrection {
+                        action: step.action.clone(),
+                        claimed: step.risk,
+                        actual,
+                    });
+                    step.risk = actual;
+                }
+            }
+        }
+        (corrected, corrections)
     }
 
     /// A stable, model-readable catalog of registered tools — one

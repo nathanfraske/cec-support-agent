@@ -10,8 +10,8 @@ description = "Plan provenance: the judge signs winning plans (HMAC-SHA256 over 
 [dependencies]
 common = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
 thiserror = { workspace = true }
 hmac = { workspace = true }
 sha2 = { workspace = true }
 getrandom = { workspace = true }
+ed25519-dalek = { workspace = true }
