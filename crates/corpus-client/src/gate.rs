@@ -2,7 +2,9 @@ use common::{Risk, VerificationResult};
 use provenance::{SignOffPublicKey, SignOffSignature};
 use thiserror::Error;
 
-use crate::schema::{attestation_message, de_identify_plan, Contribution, OutcomeLabel, SignOff};
+use crate::schema::{
+    attestation_message, de_identify_plan, is_run_id_token, Contribution, OutcomeLabel, SignOff,
+};
 
 /// Why a contribution was refused at the evidence-integrity gate.
 ///
@@ -58,6 +60,12 @@ pub enum GateError {
     /// path additionally refuses it at deserialize (`#[serde(try_from)]`).
     #[error("refused: a stored symptom is not a member of the de-id grammar")]
     SymptomNotDeIdentified,
+    /// The row's run-provenance `run_id` is not a bounded opaque token — a
+    /// free-text/path/email/prose string a hand-edited or embedder-built row could
+    /// carry on the provenance pin, which rides onto the JSONL row unmodified. The
+    /// write gate bounds it; the read path additionally refuses it at deserialize.
+    #[error("refused: a run-provenance run_id is not a bounded opaque token")]
+    RunIdNotDeIdentified,
 }
 
 /// The evidence-integrity gate: the single checkpoint that admits a row into the
@@ -116,6 +124,16 @@ pub fn ensure_evidence_integrity(contribution: &Contribution) -> Result<(), Gate
             if !common::is_symptom_token(&symptom.0) {
                 return Err(GateError::SymptomNotDeIdentified);
             }
+        }
+    }
+
+    // (1d) The run-provenance pin carries a `run_id` onto the row unmodified. It
+    // is OS entropy on shipped paths, but an embedder-built or hand-edited row
+    // could smuggle a path/email/prose here; bound it to an opaque token on the
+    // write boundary, symmetric with the read-side deserialize guard.
+    if let Some(provenance) = &contribution.provenance {
+        if !is_run_id_token(&provenance.run_id) {
+            return Err(GateError::RunIdNotDeIdentified);
         }
     }
 
@@ -178,7 +196,7 @@ pub fn ensure_attested(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::{Contribution, Outcome};
+    use crate::schema::{Contribution, Outcome, RowProvenance};
     use common::{ConfigClass, FaultSignature, Plan, PlanStep, Symptom, Verification};
 
     fn config_class() -> ConfigClass {
@@ -441,5 +459,132 @@ mod tests {
             Some(Verification::pass()),
         );
         assert!(ensure_evidence_integrity(&c).is_ok());
+    }
+
+    // --- #4: the label's part_class and the provenance run_id are validated
+    //     (they ride onto the row unmodified; part_class egresses to the API
+    //     wire). part_class is minted at Contribution::new; run_id is bounded at
+    //     the write gate — both additionally refused at deserialize (see store.rs).
+
+    #[test]
+    fn a_poisoned_part_class_is_refused_at_construction() {
+        // A hardware label carrying identity/prose in part_class must be refused
+        // where the plan's de-id mint refuses one — at construction — not copied
+        // onto the row and out to `wire_label`.
+        let poisoned = Contribution::new(
+            Outcome {
+                signature: FaultSignature::from_symptoms(vec![Symptom("event_41".into())]),
+                plan: plan_with(Risk::ReadOnly),
+                label: OutcomeLabel::EscalatedHardware {
+                    part_class: "psu on DESKTOP-NATHAN01 for nathan@cec.direct".into(),
+                },
+                verification: None,
+            },
+            config_class(),
+            SignOff::HumanConfirmed,
+        );
+        let reject = poisoned.expect_err("a poisoned part_class must be refused at construction");
+        assert_eq!(reject.field, "part_class");
+
+        // The frozen taxonomy vocabulary still admits.
+        let clean = Contribution::new(
+            Outcome {
+                signature: FaultSignature::from_symptoms(vec![Symptom("event_41".into())]),
+                plan: plan_with(Risk::ReadOnly),
+                label: OutcomeLabel::EscalatedHardware {
+                    part_class: "psu".into(),
+                },
+                verification: None,
+            },
+            config_class(),
+            SignOff::HumanConfirmed,
+        );
+        assert!(
+            clean.is_ok(),
+            "a taxonomy part_class must still be admitted"
+        );
+    }
+
+    #[test]
+    fn a_poisoned_run_id_is_refused_by_the_write_gate() {
+        // A free-text/identity run_id on the provenance pin is bounded to an
+        // opaque token at the write boundary.
+        let c = contribution(
+            OutcomeLabel::ResolvedConfirmed,
+            SignOff::HumanConfirmed,
+            Risk::Reversible,
+            Some(Verification::pass()),
+        )
+        .with_provenance(RowProvenance {
+            run_id: "nathan@cec.direct C:/Users/nathan".into(),
+            retrieval_first: false,
+            primed_from: Vec::new(),
+        });
+        assert_eq!(
+            ensure_evidence_integrity(&c),
+            Err(GateError::RunIdNotDeIdentified)
+        );
+
+        // A genuine opaque run id still admits.
+        let clean = contribution(
+            OutcomeLabel::ResolvedConfirmed,
+            SignOff::HumanConfirmed,
+            Risk::Reversible,
+            Some(Verification::pass()),
+        )
+        .with_provenance(RowProvenance {
+            run_id: "a1b2c3d4e5f60718293a4b5c6d7e8f90".into(),
+            retrieval_first: false,
+            primed_from: Vec::new(),
+        });
+        assert!(ensure_evidence_integrity(&clean).is_ok());
+    }
+
+    // --- #7: the write-gate symptom guard (SymptomNotDeIdentified) bites through
+    //     the blessed construct+submit path. Symptom is a public tuple struct and
+    //     Contribution::new wraps the caller's FaultSignature without validating
+    //     its tokens, so this gate loop is the only write-path symptom guard —
+    //     drive an identity-shaped token through it and assert BOTH halves fire.
+
+    #[test]
+    fn a_non_de_identified_symptom_is_refused_by_the_write_gate() {
+        // (a) A poisoned token in the fault SIGNATURE (the first half of the loop).
+        let in_signature = Contribution::new(
+            Outcome {
+                signature: FaultSignature::from_symptoms(vec![Symptom("DESKTOP-NATHAN01".into())]),
+                plan: plan_with(Risk::ReadOnly),
+                label: OutcomeLabel::EscalatedHumanUnresolved,
+                verification: None,
+            },
+            config_class(),
+            SignOff::HumanConfirmed,
+        )
+        .expect("construction wraps the symptom without validating it");
+        assert_eq!(
+            ensure_evidence_integrity(&in_signature),
+            Err(GateError::SymptomNotDeIdentified)
+        );
+
+        // (b) A poisoned token in the verification's RECURRING set, over a CLEAN
+        //     signature — so only the second half of the loop can catch it.
+        let in_recurring = Contribution::new(
+            Outcome {
+                signature: FaultSignature::from_symptoms(vec![Symptom("event_41".into())]),
+                plan: plan_with(Risk::ReadOnly),
+                label: OutcomeLabel::EscalatedHumanUnresolved,
+                verification: Some(Verification {
+                    result: VerificationResult::Fail,
+                    class: None,
+                    recurring: vec![Symptom("nathan@cec.direct".into())],
+                }),
+            },
+            config_class(),
+            SignOff::HumanConfirmed,
+        )
+        .expect("construction wraps the recurring symptom without validating it");
+        assert_eq!(
+            ensure_evidence_integrity(&in_recurring),
+            Err(GateError::SymptomNotDeIdentified)
+        );
     }
 }

@@ -57,7 +57,7 @@ use common::{
 };
 use corpus_client::{CorpusStore, FileCorpus, LocalCorpus, OutcomeLabel, RowProvenance, SignOff};
 use intake::{Interview, Reproducibility};
-use panel::{best_of_n, required_escalation, route_for, Escalation, HeuristicJudge, Route};
+use panel::{best_of_n, required_escalation, route_for, Escalation, HeuristicJudge, Judge, Route};
 use provenance::SigningKey;
 use swarm::{Generator, Swarm};
 use tools_windows::windows_tools;
@@ -75,7 +75,6 @@ struct Session {
     route: Route,
     candidates: Vec<Candidate>,
     selected: usize,
-    escalation: Escalation,
     reproducibility: Reproducibility,
     retrieval_first: bool,
     primed_from: Vec<String>,
@@ -445,7 +444,6 @@ async fn handle_diagnose(
                 route,
                 candidates,
                 selected,
-                escalation,
                 reproducibility: case.reproducibility,
                 retrieval_first,
                 primed_from: known.iter().map(|m| m.plan.id().to_string()).collect(),
@@ -529,9 +527,24 @@ async fn handle_execute(
         }));
     }
 
-    // The sign-off must meet the judge's required escalation — a verifier
-    // cannot authorize a run the panel routed to a human.
-    if session.escalation == Escalation::HumanConfirm && sign_off != SignOff::HumanConfirmed {
+    // The sign-off must meet the required escalation of the CANDIDATE ACTUALLY
+    // SELECTED — never the judge's winner. The caller can pick any slate
+    // candidate by plan_id (the app-side retry), and `session.escalation` was
+    // computed once at diagnose time for the winner only. Binding the gate to it
+    // let a verifier sign-off run a Reversible sibling the panel independently
+    // routes to HumanConfirm whenever the winner happened to be lower-escalation
+    // (e.g. a ReadOnly corpus precedent → Auto). Recompute the panel's escalation
+    // for THIS candidate — re-running the sandbox check and the judge score — and
+    // gate on that.
+    let judge = HeuristicJudge;
+    let candidate_sandbox_validated = sandbox_validated_for(None, candidate, true).await;
+    let candidate_escalation = required_escalation(
+        &session.route,
+        candidate_sandbox_validated,
+        candidate,
+        &judge.score(candidate),
+    );
+    if candidate_escalation == Escalation::HumanConfirm && sign_off != SignOff::HumanConfirmed {
         return Err(ApiError::new(
             StatusCode::CONFLICT,
             "sign_off_below_required_escalation",
@@ -612,7 +625,7 @@ async fn handle_execute(
             .collect::<Vec<_>>(),
         "verification": wire_verdict(&verdict),
         "label": wire_label(&label),
-        "escalation_required": wire_escalation(&session.escalation),
+        "escalation_required": wire_escalation(&candidate_escalation),
     }))
 }
 
@@ -764,6 +777,82 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn execute_gate_binds_to_the_selected_candidate_not_the_winner() {
+        // Regression for the escalation-downgrade defect: the execute gate must
+        // bind to the required escalation of the candidate ACTUALLY selected by
+        // plan_id, not the judge's winner. Build a session whose winner is a
+        // ReadOnly plan (escalation Auto) but which also carries a Reversible
+        // sibling the panel independently routes to HumanConfirm (reversible +
+        // unvalidated). A verifier sign-off that selects that sibling must be
+        // refused (409 sign_off_below_required_escalation) even though the
+        // winner's escalation — the value stored on the session — is only Auto.
+        use common::{Plan, PlanStep, Symptom};
+
+        let state = offline_state();
+
+        let mut read_only = Plan::new("winner-readonly", "cim_query");
+        read_only.steps.push(PlanStep {
+            description: "cim_query".into(),
+            action: "cim_query".into(),
+            risk: Risk::ReadOnly,
+        });
+        let winner = Candidate::new(
+            read_only,
+            "read-only precedent",
+            CandidateSource::CorpusPrimed,
+        );
+
+        let mut reversible = Plan::new("sibling-reversible", "registry_set");
+        reversible.steps.push(PlanStep {
+            description: "registry_set".into(),
+            action: "registry_set".into(),
+            risk: Risk::Reversible,
+        });
+        let sibling = Candidate::new(reversible, "reversible sibling", CandidateSource::ColdModel);
+
+        let session_id = "escalation-downgrade-regression".to_string();
+        {
+            let mut sessions = state.sessions.lock().expect("sessions lock");
+            sessions.insert(
+                session_id.clone(),
+                Session {
+                    signature: FaultSignature::from_symptoms(vec![Symptom("event_41".into())]),
+                    config_class: ConfigClass::from_inventory(["os:windows 11"]),
+                    route: Route::SoftwareState,
+                    candidates: vec![winner, sibling],
+                    // Select the ReadOnly winner: at diagnose time the panel would
+                    // record its escalation as Auto — the very value the old gate
+                    // trusted.
+                    selected: 0,
+                    reproducibility: Reproducibility::Unknown,
+                    retrieval_first: true,
+                    primed_from: vec![],
+                    created: Instant::now(),
+                },
+            );
+        }
+
+        // Select the Reversible sibling with only a verifier sign-off. The panel
+        // would route that plan to HumanConfirm, so the gate must refuse it — the
+        // stored Auto escalation of the winner must not authorize it.
+        let refused = handle_execute(
+            &state,
+            ExecuteRequest {
+                session_id,
+                consented: true,
+                sign_off: "verifier".into(),
+                plan_id: Some("sibling-reversible".into()),
+            },
+        )
+        .await;
+        let error = refused.expect_err(
+            "a verifier sign-off must not run a Reversible candidate the panel routes to HumanConfirm",
+        );
+        assert_eq!(error.status, StatusCode::CONFLICT);
+        assert_eq!(error.reason, "sign_off_below_required_escalation");
+    }
+
+    #[tokio::test]
     async fn execute_with_human_sign_off_returns_the_post_execution_envelope() {
         let state = offline_state();
         let envelope = handle_diagnose(
@@ -801,13 +890,24 @@ mod tests {
             label.starts_with("escalated_") || label == "reopened",
             "off-Windows execution must not claim resolution, got {label:?}"
         );
-        // The post-execution envelope is de-identified: no request prose.
+        // The post-execution envelope is de-identified: NONE of the planted
+        // identifier tokens may survive into it. Assert all five, case-insensitively
+        // (both sides lowercased), the same helper the diagnose-response test uses —
+        // the earlier form checked only 2 of 5 and the serial check was
+        // case-sensitive.
         let serialized = serde_json::to_string(&result).expect("serializes");
-        assert!(
-            !serialized.to_lowercase().contains("desktop-nathan01")
-                && !serialized.contains("SN12345678"),
-            "planted identity leaked into the API execute response"
-        );
+        for token in [
+            "DESKTOP-NATHAN01",
+            "nathan",
+            "00:1A:2B:3C:4D:5E",
+            "SN12345678",
+            "192.168.1.20",
+        ] {
+            assert!(
+                !serialized.to_lowercase().contains(&token.to_lowercase()),
+                "planted identity {token:?} leaked into the API execute response"
+            );
+        }
     }
 
     #[test]

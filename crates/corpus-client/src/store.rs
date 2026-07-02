@@ -7,7 +7,8 @@ use thiserror::Error;
 
 use crate::gate::{ensure_attested, ensure_evidence_integrity, GateError};
 use crate::schema::{
-    chain_hash, de_identify_plan, Contribution, FixMapping, OutcomeLabel, RowIntegrity,
+    attestation_message, chain_hash, de_identify_plan, Contribution, FixMapping, OutcomeLabel,
+    RowIntegrity,
 };
 use crate::stored::{StoredPlan, StoredSignature};
 
@@ -45,15 +46,36 @@ pub enum CorpusError {
 /// EI-03/A5: a confirmation counts only if it came from an independent run.
 /// A row whose plan was corpus-primed *from the very mapping it would confirm*
 /// is circular and contributes nothing. Otherwise rows are deduplicated by
-/// `run_id`, so re-submitting the same run cannot inflate confidence. A legacy
-/// row with no provenance is counted once per row (the prior behavior), since
-/// its independence cannot be established.
-fn confirmation_key(row: &Contribution, plan_id: &str, index: usize) -> Option<String> {
+/// `run_id`, so re-submitting the same run cannot inflate confidence. A row with
+/// no provenance is deduplicated by a CONTENT HASH of its canonical bytes, so
+/// byte-identical no-provenance submissions collapse to a single key — a verbatim
+/// replay is one observation, not N. (The prior positional `row:{index}` counted
+/// every resubmission as distinct, so a replayed no-provenance row inflated
+/// confirmations, and its Reopened mirror over-demoted a multiply-confirmed fix.)
+fn confirmation_key(row: &Contribution, plan_id: &str) -> Option<String> {
     match &row.provenance {
         Some(p) if p.retrieval_first && p.primed_from.iter().any(|id| id == plan_id) => None,
         Some(p) => Some(format!("run:{}", p.run_id)),
-        None => Some(format!("row:{index}")),
+        None => Some(format!("content:{}", content_hash(row))),
     }
+}
+
+/// A stable content hash of a row's canonical bytes, used as the independence key
+/// for a row that carries no run provenance. It reuses the attestation
+/// canonicalization — covering the signature, plan, label, verification,
+/// sign-off, and config class (everything that makes two rows the *same*
+/// observation) and excluding the attestation and the tamper-evidence link — so
+/// two byte-identical no-provenance rows hash equal and count once.
+fn content_hash(row: &Contribution) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(b"cec-corpus-confirmation-content-v1\n");
+    hasher.update(attestation_message(row));
+    hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 /// Derive the fix mappings for a signature at a config class from a set of
@@ -87,7 +109,7 @@ fn fix_mappings(
     let mut order: Vec<String> = Vec::new();
     let mut accs: HashMap<String, Acc> = HashMap::new();
 
-    for (index, row) in rows.iter().enumerate() {
+    for row in rows {
         if row.outcome.signature.fingerprint != signature.fingerprint
             || row.config_class != *config_class
         {
@@ -112,7 +134,7 @@ fn fix_mappings(
         // re-submissions of one run collapse, and a circular (self-primed) row
         // contributes to neither — symmetric, so a reopen can never out-weigh a
         // confirmation through replay alone.
-        if let Some(key) = confirmation_key(row, &plan_id, index) {
+        if let Some(key) = confirmation_key(row, &plan_id) {
             if resolved {
                 acc.contributors.insert(key);
             } else {
@@ -298,6 +320,25 @@ impl FileCorpus {
             }
         };
         let head = verify_chain(&rows)?;
+        // De-id image check at the disk boundary (Layer-1f), matching
+        // `HttpCorpus::query`. Every stored LEAF validates at deserialize
+        // (`#[serde(try_from)]`), but `StoredPlan.title` is a plain string with no
+        // read-side guard, so a hand-edited row with valid-vocabulary leaves but an
+        // identity-bearing title deserializes clean. Enforce here — independent of
+        // whether an authority is configured — that every at-rest plan is its own
+        // de-identified image, so a cold-start open never serves such a title into
+        // the human trace or the consent screen.
+        for (i, row) in rows.iter().enumerate() {
+            match de_identify_plan(&row.outcome.plan.to_plan()) {
+                Ok(reminted) if reminted == row.outcome.plan => {}
+                _ => {
+                    return Err(CorpusError::Storage(format!(
+                        "corpus integrity: at-rest row {i}'s stored plan is not its own \
+                         de-identified image (a title or leaf the de-id mint would never emit)"
+                    )))
+                }
+            }
+        }
         Ok(Self {
             path,
             rows: std::sync::Mutex::new(rows),
@@ -664,17 +705,58 @@ mod tests {
 
     #[tokio::test]
     async fn confirmations_aggregate_per_plan() {
-        // Legacy rows (no provenance): each submission counts once, as before.
+        // Rows for the same plan aggregate into ONE mapping. Two byte-identical
+        // no-provenance submissions are one observation, not two: keyed on a
+        // content hash of the row's canonical bytes, a verbatim replay collapses
+        // to a single confirmation (the #2 replay-inflation fix). Independence
+        // between distinct runs is established by provenance, not by resubmission.
         let corpus = LocalCorpus::new();
         let row = contribution(OutcomeLabel::ResolvedConfirmed, SignOff::HumanConfirmed);
         corpus.submit(&row).await.expect("first");
-        corpus.submit(&row).await.expect("second");
+        corpus.submit(&row).await.expect("second (verbatim replay)");
         let hits = corpus
             .query(&row.outcome.signature.to_signature(), &config_class())
             .await
             .expect("query");
         assert_eq!(hits.len(), 1, "same plan aggregates into one mapping");
-        assert_eq!(hits[0].confirmations, 2);
+        assert_eq!(
+            hits[0].confirmations, 1,
+            "byte-identical no-provenance rows collapse to one confirmation"
+        );
+    }
+
+    #[tokio::test]
+    async fn verbatim_no_provenance_resubmissions_do_not_inflate_or_over_demote() {
+        // #2 regression (replay integrity): a no-provenance attested row's
+        // confirmation key is a CONTENT HASH of its canonical bytes, so N verbatim
+        // resubmissions of a ResolvedConfirmed row yield exactly ONE confirmation —
+        // the replay the Some(p) run-dedup branch stops but the None branch used to
+        // skip. Symmetrically, N verbatim Reopened replays demote by ONE, not N, so
+        // a duplicated Reopened line cannot bury a multiply-confirmed fix.
+        let corpus = LocalCorpus::new();
+        let sig = FaultSignature::from_symptoms(vec![Symptom("event_41".into())]);
+        let confirmed = contribution(OutcomeLabel::ResolvedConfirmed, SignOff::HumanConfirmed);
+        for _ in 0..5 {
+            corpus.submit(&confirmed).await.expect("verbatim confirm");
+        }
+        let hits = corpus.query(&sig, &config_class()).await.expect("query");
+        assert_eq!(hits.len(), 1, "same plan → one mapping");
+        assert_eq!(
+            hits[0].confirmations, 1,
+            "5 byte-identical no-provenance confirmations are ONE independent confirmation"
+        );
+
+        // Five verbatim Reopened replays cancel exactly one confirmation (net
+        // zero), not five — otherwise a single duplicated reopen buries the fix.
+        let reopened = contribution(OutcomeLabel::Reopened, SignOff::HumanConfirmed);
+        for _ in 0..5 {
+            corpus.submit(&reopened).await.expect("verbatim reopen");
+        }
+        let demoted = corpus.query(&sig, &config_class()).await.expect("query");
+        assert!(
+            demoted.is_empty(),
+            "one confirmation net one distinct reopen is zero — demoted out of retrieval"
+        );
     }
 
     fn provenance(run_id: &str, retrieval_first: bool, primed_from: &[&str]) -> RowProvenance {
@@ -910,6 +992,52 @@ mod tests {
         assert!(
             matches!(FileCorpus::open(&path.0), Err(CorpusError::Storage(_))),
             "a non-grammar symptom on disk must fail to deserialize at open"
+        );
+    }
+
+    #[tokio::test]
+    async fn file_corpus_open_refuses_a_poisoned_part_class_on_disk() {
+        // #4: the label's part_class rides onto the row unmodified and egresses to
+        // the API wire via `wire_label`. A hand-edited hardware label whose
+        // part_class carries identity must fail to DESERIALIZE at open, matching
+        // the other stored leaves.
+        let path = TempPath::new("disk-poison-part-class");
+        let row = r#"{"outcome":{"signature":{"fingerprint":"x","symptoms":["event_41"]},"plan":{"id":"p1","title":"cim_query","steps":[{"description":"cim_query","action":"cim_query","risk":"read_only"}]},"label":{"escalated_hardware":{"part_class":"psu on DESKTOP-NATHAN01"}}},"config_class":{"derived_hash":"x"},"sign_off":"human_confirmed"}"#;
+        std::fs::write(&path.0, format!("{row}\n")).expect("write crafted row");
+        assert!(
+            matches!(FileCorpus::open(&path.0), Err(CorpusError::Storage(_))),
+            "an identity-bearing part_class on disk must fail to deserialize at open"
+        );
+    }
+
+    #[tokio::test]
+    async fn file_corpus_open_refuses_a_poisoned_run_id_on_disk() {
+        // #4: the provenance run_id rides onto the row unmodified. A hand-edited
+        // row whose run_id is a smuggled path/email must fail to deserialize.
+        let path = TempPath::new("disk-poison-run-id");
+        let row = r#"{"outcome":{"signature":{"fingerprint":"x","symptoms":["event_41"]},"plan":{"id":"p1","title":"cim_query","steps":[{"description":"cim_query","action":"cim_query","risk":"read_only"}]},"label":"escalated_human_unresolved"},"config_class":{"derived_hash":"x"},"sign_off":"human_confirmed","provenance":{"run_id":"nathan@cec.direct","retrieval_first":false}}"#;
+        std::fs::write(&path.0, format!("{row}\n")).expect("write crafted row");
+        assert!(
+            matches!(FileCorpus::open(&path.0), Err(CorpusError::Storage(_))),
+            "an identity-bearing run_id on disk must fail to deserialize at open"
+        );
+    }
+
+    #[tokio::test]
+    async fn file_corpus_open_refuses_an_identity_bearing_title_on_disk() {
+        // #5: StoredPlan.title is the one stored leaf with no deserialize-time
+        // try_from. Every LEAF here is admissible (valid id, vocabulary
+        // action/symptom) so the row deserializes clean, but the title carries
+        // identity the mint would never produce (the mint reconstructs it as the
+        // joined actions, "cim_query"). The de_identify_plan image check at open
+        // must refuse it — a cold-start open (no authority) must not serve an
+        // identity-bearing title into the human trace or consent screen.
+        let path = TempPath::new("disk-poison-title");
+        let row = r#"{"outcome":{"signature":{"fingerprint":"x","symptoms":["event_41"]},"plan":{"id":"p1","title":"DESKTOP-NATHAN01 nathan 192.168.1.20","steps":[{"description":"cim_query","action":"cim_query","risk":"read_only"}]},"label":"resolved_confirmed","verification":{"result":"pass"}},"config_class":{"derived_hash":"x"},"sign_off":"human_confirmed"}"#;
+        std::fs::write(&path.0, format!("{row}\n")).expect("write crafted row");
+        assert!(
+            matches!(FileCorpus::open(&path.0), Err(CorpusError::Storage(_))),
+            "an identity-bearing plan title on disk must be refused at cold-start open"
         );
     }
 

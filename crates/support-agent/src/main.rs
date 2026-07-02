@@ -746,6 +746,32 @@ async fn run(args: Args) -> anyhow::Result<()> {
                     );
                 }
 
+                // Gate THIS candidate on ITS OWN required escalation, recomputed
+                // for the plan about to run — never the judge's winner. The retry
+                // loop falls through to a next-best candidate whose risk (and so
+                // escalation) can differ from the winner's; reusing the winner's
+                // escalation let a verifier sign-off execute a Reversible fallback
+                // the panel independently routes to HumanConfirm. A candidate that
+                // out-ranks the sign-off is skipped, never run.
+                let candidate_sandbox_validated =
+                    sandbox_validated_for(sandbox.as_deref(), candidate, args.json).await;
+                let candidate_escalation = required_escalation(
+                    &route,
+                    candidate_sandbox_validated,
+                    candidate,
+                    &judge.score(candidate),
+                );
+                if candidate_escalation == Escalation::HumanConfirm
+                    && sign_off != SignOff::HumanConfirmed
+                {
+                    human!(
+                        "  sign-off refused for this plan: the judge requires HumanConfirm \
+                         (route: {route:?}, sandbox: unvalidated); skipping it — re-run with \
+                         --sign-off human to authorize this plan"
+                    );
+                    continue;
+                }
+
                 // Consent is to a rendered plan, never an opaque script:
                 // plain-language steps, risk class, and the restore-point
                 // coverage boundary.
