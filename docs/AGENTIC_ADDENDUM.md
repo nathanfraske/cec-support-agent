@@ -89,34 +89,36 @@ Four `SessionStart` command hooks fire in order, each emitting
 
 `SessionStart` re-runs on resume, so the baseline is never stale.
 
-### 2b. PreToolUse: the invariant guard (worth adding — prevention)
+### 2b. PreToolUse: the invariant guard (built — prevention)
 
 `PreToolUse` fires before a tool runs and blocks it by exiting 2, even under bypass mode.
-Matched to `Write|Edit`, it is the hard guard that a security-invariant violation cannot be
-written into the tree in the first place. It should inspect `tool_input.file_path` and the
-incoming content and block:
+Matched to `Write|Edit`, **`invariant-guard.sh`** is the hard guard that a corpus/weights/
+seed file cannot be written into the tree in the first place. It parses `tool_input.file_path`
+and blocks (exit 2, with a message naming the shape) any write **inside the repo** whose path
+matches the exfil regex `scripts/githooks/pre-commit` and `.gitignore` already deny — a
+`corpus/`/`weights/` path, a `.gguf`/`.safetensors`/`.bin`/`.sqlite`/`.duckdb`/`.jsonl`/
+`.ndjson`/`.seed`/`.seedhex`/`.env` extension, a `*.flow.yaml`, anything matching
+`cec-corpus`. This promotes the dormant pre-commit block (inert until `core.hooksPath` is set,
+and only firing at commit) to a pre-**write** deny, and writes outside the repo pass through.
 
-- **The exfil shapes** already denied by `scripts/githooks/pre-commit` and `.gitignore` — a
-  corpus/weights path, a `.gguf`/`.safetensors`/`.jsonl`/`.seed`/`.seedhex` extension, a
-  `*.flow.yaml`, anything matching `cec-corpus`. Promoting this from a pre-commit hook (which
-  is dormant until `core.hooksPath` is set, and only fires at commit) to `PreToolUse` blocks
-  the write itself.
-- **A re-added membership oracle** — a `"source"` field re-appearing in the diagnose envelope
-  builder, or a `Serialize` derive re-added to a raw domain type (`Plan`, `Candidate`,
-  `Outcome`, `DiagnosticEvent`, `ToolOutcome`), or a new route literal added to
-  `route_surface()`. Each is a customs violation the compiler or a negative pin catches
-  eventually; a `PreToolUse` deny catches it at authorship.
+The block is deliberately **path-only**, because that is the check with effectively zero
+false positives — no one legitimately writes a `corpus/` file or a `.seed` into the engine
+repo. The fuzzier content-level customs (a re-added `"source"` envelope field, a `Serialize`
+derive back on a raw domain type, a new `route_surface()` route) are **not** hard-blocked
+here — a grep heuristic would false-positive on this repo's own prose and on the legitimate
+serde on stored types. Those are surfaced non-blocking in §2c and belong properly in the
+`projectops` `invariants` tool (§3), on top of the compiler and the negative pins that already
+catch them.
 
-This is the analogue of the reference's em-dash/adverb customs guard, re-aimed at our
-customs: the customs are security invariants, not prose style.
-
-### 2c. PostToolUse: per-edit reaction (worth adding)
+### 2c. PostToolUse: per-edit reaction (built)
 
 `PostToolUse` fires after a successful edit and cannot undo it, but it can surface feedback.
-Matched to edits under `crates/corpus-client/`, `crates/deid/`, `crates/support-agent/src/
-serve.rs`, and the wire builders, it runs the fast checks on the changed file — `cargo fmt`
-on the file, a grep for a conflict marker, a re-added `source`/`Serialize`, an `eprintln!`
-of a request body — and returns a message so the agent fixes it immediately.
+Matched to `Write|Edit`, **`invariant-check.sh`** reads the just-written file and surfaces
+(exit 2, feedback) only on **unambiguous** problems — a merge-conflict marker, content shaped
+like a serialized corpus row (`"outcome":{"signature":{"fingerprint"…}`, the renamed-dump
+backstop the path guard cannot catch), or an encrypted-seed / private-key block — and is
+silent otherwise. It is intentionally narrow so it never false-positives on the repo's own
+documentation, which discusses `attestation`/`sign_off`/`fingerprint` as prose.
 
 ### 2d. Stop: the completion gate
 
@@ -137,12 +139,24 @@ Two things happen at Stop.
   is set), or while commits are unpushed. It guards recursion with `stop_hook_active` and
   exits 2 with the specific remediation. It is a backstop, not a substitute for the agent
   committing and pushing its own work.
+- **`tracking-freshness.sh` (built; a soft nudge).** If the branch changed `crates/` (vs
+  `origin/main`) without also updating `HANDOFFS.md` or `TODOS.md`, it surfaces a one-time
+  reminder to keep the baton and checklist current in the same turn. It respects
+  `stop_hook_active` (single pass, never a loop) and never blocks the durability push.
 
-**Worth adding: fold the verification suite and a tracking-freshness check into the Stop
-gate.** Today no Stop hook runs `cargo`. A gate that runs the suite (§4) and, if any file
-under `crates/` changed this session, asserts `HANDOFFS.md` and `TODOS.md` were updated,
-would make "the turn cannot end while the tree is red or the memory is stale" mechanical
-rather than a discipline — matching the reference project's completion gate.
+**Still proposed: fold the verification suite into the Stop gate.** The full `cargo` suite is
+deliberately **not** run at Stop — a multi-minute compile on every turn end is impractical;
+that is CI's job, and, once built, the `projectops` `verify` tool's (§3), which the gate can
+call selectively. The freshness nudge above is the fast, always-on half.
+
+### 2f. Activation: `ops/provision.sh`
+
+The guards above ship inert until the hooks are executable and the dormant pre-commit exfil
+guard is switched on. **`ops/provision.sh`** is the one idempotent activator: it runs `git
+config core.hooksPath scripts/githooks`, `chmod +x`'s the hooks, ensures the pinned toolchain
+components, warns if `gitleaks` is absent (a hard dependency of the pre-commit hook), and runs
+the full suite. Safe to re-run; it is also the disaster-recovery script for a fresh clone. It
+does not provision secrets, a bot PAT, or branch protection — those stay owner/GitHub-side.
 
 ### 2e. Note on the two settings layers
 

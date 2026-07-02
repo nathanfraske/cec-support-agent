@@ -235,13 +235,22 @@ recommends that are NOT yet built, each attributed to the threat doc's §3 contr
   migrates the `Mac` API, and verifies `attestation_message` / `chain_hash` / `content_hash` / plan-signature
   outputs are byte-unchanged (the wire-compat + attestation tests must stay green). Resume:
   `crates/provenance/src/lib.rs` + the workspace `Cargo.toml` dep versions; dependabot PRs #8/#9/#10 left open.
-- [ ] [added 2026-07-02 22:42 UTC] **[AGENTIC ADDENDUM — mechanical backstops not yet built]**
-  `docs/AGENTIC_ADDENDUM.md` is landed as the spec, but three enforcement pieces it proposes are not
-  implemented: (a) a `PreToolUse` invariant guard (§2b) that blocks a corpus/weights/seed write or a re-added
-  `source` membership field / `Serialize`-on-a-raw-type / new `route_surface()` entry BEFORE the write —
-  promotes the dormant `scripts/githooks/pre-commit` exfil block to a hard pre-write deny; (b) folding the
-  verification suite + a tracking-freshness check into the Stop gate (§2d) so a turn cannot end with a red
-  tree or stale HANDOFFS/TODOS; (c) the `projectops` MCP server (§3) + the review panels (§4). — why
-  deferred: the spec + the reachability wiring (AGENTS.md reference + the `addendum-context.sh` SessionStart
-  hook) are done; building the mechanical enforcement is a separate increment and the owner's call. Resume:
-  `docs/AGENTIC_ADDENDUM.md` §2b/§2d/§3-§4; `.claude/hooks/` + `.claude/settings.json`.
+- [x] [added 2026-07-02 22:42 UTC · closed 2026-07-02 23:56 UTC → PR #13: Tier-1 guards built] **[AGENTIC
+  ADDENDUM — mechanical backstops]** BUILT this turn: (a) the `PreToolUse` invariant guard
+  (`invariant-guard.sh`) hard-blocking a corpus/weights/seed **path** write (the re-added-oracle/Serialize
+  content checks were intentionally NOT hard-blocked — a grep heuristic false-positives on our own prose;
+  they moved to the PostToolUse surface + the future `projectops invariants` tool); (b) the PostToolUse
+  reaction (`invariant-check.sh`, conflict markers + serialized-corpus-row + seed/key blocks, self-safe);
+  the Stop tracking-freshness nudge (`tracking-freshness.sh`); and `ops/provision.sh` (Tier-0 activator).
+  All validated (block/allow/surface/self-reference) and wired in `.claude/settings.json`. STILL OPEN →
+  re-filed below.
+- [ ] [added 2026-07-02 23:56 UTC] **[AGENTIC ADDENDUM — remaining standup: projectops + panels + Stop
+  verify]** The structured-data keystone is not built: (a) the `projectops` MCP server (§3) — `verify`
+  (the cargo suite as JSON), `invariants` (de-id barrier / frozen route / wire grammar / vocab-drift
+  checks — the proper structural home for the re-added-Serialize/`source`/route checks the PreToolUse guard
+  deliberately does not attempt), `backlog`, `leak_scan`; (b) the review panels (§4), which all depend on
+  `projectops` emitting structured output; (c) folding the cargo `verify` suite into the Stop gate by having
+  it call `projectops verify` selectively (the fast tracking-freshness half is already built; the full-suite
+  half is deferred because a multi-minute compile on every turn end is impractical). — why deferred: the
+  guards + spec + reachability are done; the server + panels are the next, larger increment and the owner's
+  call. Resume: `docs/AGENTIC_ADDENDUM.md` §3-§4; a new `.mcp.json` + `tools/projectops_server`.
