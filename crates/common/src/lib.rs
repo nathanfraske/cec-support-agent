@@ -16,6 +16,7 @@ mod extract;
 mod fault;
 mod fluency;
 mod hash;
+mod inventory;
 mod plan;
 mod verification;
 
@@ -26,6 +27,7 @@ pub use execution::{ExecutionResult, StepResult};
 pub use extract::extract_symptoms;
 pub use fault::{FaultSignature, Symptom};
 pub use fluency::Fluency;
+pub use inventory::{CoarseHostInventory, ExternalInventory, InventoryProvider};
 pub use plan::{Plan, PlanStep, Risk};
 pub use verification::{Verification, VerificationClass, VerificationResult};
 

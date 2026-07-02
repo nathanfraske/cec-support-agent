@@ -23,8 +23,9 @@ use std::process::ExitCode;
 use agent_core::{verify_outcome, Consent, Dispatcher, Verdict, VerificationClass};
 use async_trait::async_trait;
 use common::{
-    extract_symptoms, Candidate, CandidateSource, ConfigClass, DiagnosticEvent, EventKind,
-    ExecutionResult, FaultSignature, Plan, PlanStep, Risk, Severity,
+    extract_symptoms, Candidate, CandidateSource, CoarseHostInventory, ConfigClass,
+    DiagnosticEvent, EventKind, ExecutionResult, ExternalInventory, FaultSignature,
+    InventoryProvider, Plan, PlanStep, Risk, Severity,
 };
 use corpus_client::{
     Contribution, CorpusStore, FileCorpus, LocalCorpus, Outcome, OutcomeLabel, RowProvenance,
@@ -50,6 +51,13 @@ struct Args {
     offline: bool,
     no_questions: bool,
     sign_off: Option<SignOff>,
+    /// `--inventory-keys <file|->`: identity-free config keys from an external
+    /// inventory source (e.g. a device-inventory tool driving the engine over a
+    /// process boundary). Replaces the coarse os/arch/family config class.
+    inventory_keys: Option<String>,
+    /// `--json`: emit a machine-readable `cec-diagnose/v1` result envelope on
+    /// stdout (for an embedder driving the engine as a sidecar).
+    json: bool,
 }
 
 #[tokio::main]
@@ -82,6 +90,8 @@ fn parse_args() -> Result<Option<Args>, String> {
     let mut offline = false;
     let mut no_questions = false;
     let mut sign_off = None;
+    let mut inventory_keys = None;
+    let mut json = false;
 
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -126,6 +136,10 @@ fn parse_args() -> Result<Option<Args>, String> {
             "--describe" => {
                 describe = args.next().ok_or("--describe requires a value")?;
             }
+            "--inventory-keys" => {
+                inventory_keys = Some(args.next().ok_or("--inventory-keys requires a value")?);
+            }
+            "--json" => json = true,
             // The single verb; accepted for readability of the command line.
             "diagnose" => {}
             // Generate a sign-off authority key pair. The PUBLIC key goes on the
@@ -164,12 +178,23 @@ fn parse_args() -> Result<Option<Args>, String> {
         offline,
         no_questions,
         sign_off,
+        inventory_keys,
+        json,
     }))
 }
 
 async fn run(args: Args) -> anyhow::Result<()> {
-    println!("cec-support-agent: diagnose");
-    println!("  request: {}", args.describe);
+    // Under --json, stdout carries ONLY the cec-diagnose/v1 envelope; the human-
+    // readable trace goes to stderr so an embedder gets clean machine output on stdout.
+    macro_rules! human {
+        () => { if args.json { eprintln!() } else { println!() } };
+        ($($a:tt)*) => {{ if args.json { eprintln!($($a)*) } else { println!($($a)*) } }};
+    }
+    macro_rules! hprint {
+        ($($a:tt)*) => {{ if args.json { eprint!($($a)*) } else { print!($($a)*) } }};
+    }
+    human!("cec-support-agent: diagnose");
+    human!("  request: {}", args.describe);
 
     // 0. Intake: map the person's input to an actual case (the "identify the
     //    problem" step of the standard troubleshooting methodology). The
@@ -202,8 +227,8 @@ async fn run(args: Args) -> anyhow::Result<()> {
         };
         while let Some(question) = interview.next_question() {
             let prompt = interviewer.ask(&interview, question.kind).await;
-            println!("  ? {prompt}");
-            print!("  > ");
+            human!("  ? {prompt}");
+            hprint!("  > ");
             std::io::stdout().flush()?;
             let mut line = String::new();
             if std::io::stdin().read_line(&mut line)? == 0 {
@@ -213,11 +238,11 @@ async fn run(args: Args) -> anyhow::Result<()> {
         }
     }
     let case = interview.into_case();
-    println!("  case: {}", case.brief());
+    human!("  case: {}", case.brief());
     // The register check: how reasoned the person's explanation was decides
     // how measured the response is. It calibrates teaching (definitions,
     // examples, walkthroughs), never safety or what gets checked.
-    println!(
+    human!(
         "  register: {:?} ({})",
         case.fluency,
         match case.fluency {
@@ -233,7 +258,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
     //    by construction.
     let events = collect_diagnostics(&args.describe);
     let signature = case.signature();
-    println!(
+    human!(
         "  fault signature: {} ({} structured symptom(s))",
         signature.fingerprint,
         signature.symptoms.len()
@@ -241,16 +266,16 @@ async fn run(args: Args) -> anyhow::Result<()> {
 
     // 2. The config class scopes every corpus row and query to like configs:
     //    the BOM revision on a CEC build, a derived inventory hash otherwise.
-    let config_class = host_config_class();
-    println!("  config class: {}", config_class.key());
+    let config_class = host_config_class(&args)?;
+    human!("  config class: {}", config_class.key());
 
     // 3. Routing precedes scoring: the routing verdict determines which gates
     //    are load-bearing. A hardware-evidenced case's deliverable is a
     //    diagnosis plus a parts action; an ambiguous case escalates.
     let route = route_for(&signature);
-    println!("  route: {route:?}");
+    human!("  route: {route:?}");
     if case.fluency == common::Fluency::Guided {
-        println!("  what this means: {}", route.explanation());
+        human!("  what this means: {}", route.explanation());
     }
 
     // The agent's operation vocabulary, behind the consent gate. Built here
@@ -275,20 +300,23 @@ async fn run(args: Args) -> anyhow::Result<()> {
         {
             Ok(outcome) if outcome.ok => match BoardIdentity::from_tool_data(&outcome.data) {
                 Some(board) => {
-                    println!(
+                    human!(
                         "  board: {} {} — BIOS {} ({})",
-                        board.manufacturer, board.product, board.bios_version, board.bios_date
+                        board.manufacturer,
+                        board.product,
+                        board.bios_version,
+                        board.bios_date
                     );
                     let advisory = firmware_advisory(&board, case.fluency);
-                    println!("  firmware advisory ({}):", advisory.vendor);
+                    human!("  firmware advisory ({}):", advisory.vendor);
                     for step in &advisory.steps {
-                        println!("    {step}");
+                        human!("    {step}");
                     }
                 }
-                None => println!("  board: identity payload unrecognized"),
+                None => human!("  board: identity payload unrecognized"),
             },
-            Ok(outcome) => println!("  board: unavailable ({})", outcome.summary),
-            Err(error) => println!("  board: unavailable ({error})"),
+            Ok(outcome) => human!("  board: unavailable ({})", outcome.summary),
+            Err(error) => human!("  board: unavailable ({error})"),
         }
     }
 
@@ -310,7 +338,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
         signoff_pubkey = signoff_authority.as_ref().map(|a| a.public_key());
     }
     if let Some(pubkey) = &signoff_pubkey {
-        println!(
+        human!(
             "  sign-off: attestation ENFORCED (authority {}…){}",
             &pubkey.id(),
             if derived_enforcement {
@@ -336,7 +364,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
                 // on-disk history is unattested (or forged) is refused here.
                 file = file.with_authority(pubkey.clone())?;
             }
-            println!("  corpus: file-backed at {path} ({} row(s))", file.len());
+            human!("  corpus: file-backed at {path} ({} row(s))", file.len());
             Box::new(file)
         }
         None => {
@@ -348,7 +376,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
         }
     };
     let known = corpus.query(&signature, &config_class).await?;
-    println!(
+    human!(
         "  corpus: {} known mapping(s) for this signature at this config class",
         known.len()
     );
@@ -378,14 +406,14 @@ async fn run(args: Args) -> anyhow::Result<()> {
         .collect();
     let retrieval_first = !candidates.is_empty();
     if retrieval_first {
-        println!(
+        human!(
             "  retrieval-first: adapting {} precedent plan(s); skipping de novo generation",
             candidates.len()
         );
     }
 
     let swarm = Swarm::new();
-    println!(
+    human!(
         "  swarm: {} trusted node(s) registered",
         swarm.nodes().len()
     );
@@ -410,7 +438,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
             } else {
                 (base_url.clone(), args.model.clone())
             };
-            println!("  generation model: {generation_model}");
+            human!("  generation model: {generation_model}");
             for hypothesis in HYPOTHESES {
                 generators.push(Box::new(ModelGenerator {
                     base_url: generation_url.clone(),
@@ -439,9 +467,11 @@ async fn run(args: Args) -> anyhow::Result<()> {
     for candidate in &mut candidates {
         let (reconciled, corrections) = dispatcher.reconcile_risk(&candidate.plan);
         for correction in &corrections {
-            println!(
+            human!(
                 "  risk reconciled: '{}' claimed {:?} but is {:?} — raised before consent",
-                correction.action, correction.claimed, correction.actual
+                correction.action,
+                correction.claimed,
+                correction.actual
             );
         }
         candidate.plan = reconciled;
@@ -459,11 +489,11 @@ async fn run(args: Args) -> anyhow::Result<()> {
         best_of_n(&judge, &candidates).expect("the heuristic candidate is always present");
     let sandbox: Option<Box<dyn SandboxValidator>> = None; // deployment wires a disposable-VM backend
     if sandbox.is_none() {
-        println!(
+        human!(
             "  sandbox: no validator configured; the winner is unvalidated (unvalidated = escalate)"
         );
     }
-    let sandbox_validated = sandbox_validated_for(sandbox.as_deref(), best).await;
+    let sandbox_validated = sandbox_validated_for(sandbox.as_deref(), best, args.json).await;
     let escalation = required_escalation(&route, sandbox_validated, best, &score);
 
     let consent_needed = match best.plan.risk() {
@@ -472,20 +502,20 @@ async fn run(args: Args) -> anyhow::Result<()> {
         Risk::Destructive => Consent::AllowDestructive,
     };
 
-    println!();
-    println!(
+    human!();
+    human!(
         "selected candidate #{index} of {} (source: {:?})",
         candidates.len(),
         best.source
     );
-    println!("  title:      {}", best.plan.title);
-    println!("  rationale:  {}", best.rationale);
-    println!("  risk:       {:?}", best.plan.risk());
-    println!("  score:      {:.3}", score.total());
-    println!("  escalation: {escalation:?}");
-    println!("  steps:");
+    human!("  title:      {}", best.plan.title);
+    human!("  rationale:  {}", best.rationale);
+    human!("  risk:       {:?}", best.plan.risk());
+    human!("  score:      {:.3}", score.total());
+    human!("  escalation: {escalation:?}");
+    human!("  steps:");
     for (i, step) in best.plan.steps.iter().enumerate() {
-        println!(
+        human!(
             "    {}. [{:?}] {} -> {}",
             i + 1,
             step.risk,
@@ -493,17 +523,39 @@ async fn run(args: Args) -> anyhow::Result<()> {
             step.action
         );
     }
-    println!("  tools available: {:?}", dispatcher.tool_names());
-    println!("  consent needed:  {consent_needed:?}");
+    human!("  tools available: {:?}", dispatcher.tool_names());
+    human!("  consent needed:  {consent_needed:?}");
 
-    println!();
+    // Machine-readable result envelope for an embedder driving the engine as a
+    // sidecar (cec-diagnose/v1). De-identified by construction (see
+    // `diagnose_envelope`). The ONLY line written to stdout under --json — the
+    // human trace went to stderr via `human!`/`tprintln!`.
+    if args.json {
+        let envelope = diagnose_envelope(
+            &signature,
+            &config_class,
+            &route,
+            &candidates,
+            index,
+            &consent_needed,
+            &escalation,
+        );
+        println!(
+            "{}",
+            serde_json::to_string(&envelope).expect("diagnose envelope serializes")
+        );
+    }
+
+    human!();
     match args.sign_off {
         None => {
-            println!(
-                "Execution and corpus write-back are gated on {escalation:?} sign-off and are NOT \
-                 performed by this run. Re-run with --sign-off <verifier|human> to execute the \
-                 winning plan, verify the outcome, and record the labeled result."
-            );
+            if !args.json {
+                human!(
+                    "Execution and corpus write-back are gated on {escalation:?} sign-off and are NOT \
+                     performed by this run. Re-run with --sign-off <verifier|human> to execute the \
+                     winning plan, verify the outcome, and record the labeled result."
+                );
+            }
         }
         Some(sign_off) => {
             // Run-provenance for every row this run records: a fresh run id, the
@@ -518,7 +570,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
             // The sign-off must meet the judge's required escalation: a
             // verifier cannot authorize a run the panel routed to a human.
             if escalation == Escalation::HumanConfirm && sign_off != SignOff::HumanConfirmed {
-                println!(
+                human!(
                     "sign-off refused: the judge requires HumanConfirm for this run \
                      (route: {route:?}, sandbox: unvalidated). Re-run with --sign-off human."
                 );
@@ -534,7 +586,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
                 SignOff::VerifierConfirmed => Consent::AllowReversible,
                 SignOff::Unconfirmed => Consent::ReadOnlyOnly,
             };
-            println!("sign-off: {sign_off:?} -> executing under consent {granted:?}");
+            human!("sign-off: {sign_off:?} -> executing under consent {granted:?}");
 
             // 9. The agent executes only plans drawn from its operation
             //    vocabulary (the registered tools); anything else is
@@ -548,7 +600,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
             ranked.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
             if ranked.is_empty() {
-                println!(
+                human!(
                     "no executable plan: every candidate contains operations outside the \
                      agent's vocabulary (advisory-only). Escalating to a human."
                 );
@@ -563,12 +615,13 @@ async fn run(args: Args) -> anyhow::Result<()> {
                     None,
                     Some(row_provenance.clone()),
                     signoff_authority.as_ref(),
+                    args.json,
                 )
                 .await;
                 return Ok(());
             }
             if !is_executable(&best.plan, &dispatcher) {
-                println!(
+                human!(
                     "  note: the judge's winner is advisory-only; executing the best plan \
                      from the agent's vocabulary instead"
                 );
@@ -586,21 +639,21 @@ async fn run(args: Args) -> anyhow::Result<()> {
             let mut final_label: Option<OutcomeLabel> = None;
             for (attempt, (_, candidate)) in ranked.iter().take(MAX_ATTEMPTS).enumerate() {
                 if attempt > 0 {
-                    println!();
-                    println!("retry {attempt}: next-best plan '{}'", candidate.plan.title);
+                    human!();
+                    human!("retry {attempt}: next-best plan '{}'", candidate.plan.title);
                 }
 
                 // Consent is to a rendered plan, never an opaque script:
                 // plain-language steps, risk class, and the restore-point
                 // coverage boundary.
-                println!("{}", render_consent(&candidate.plan));
+                human!("{}", render_consent(&candidate.plan));
                 if std::io::stdin().is_terminal() {
-                    print!("  Type 'yes' to consent, anything else to decline: ");
+                    hprint!("  Type 'yes' to consent, anything else to decline: ");
                     std::io::stdout().flush()?;
                     let mut line = String::new();
                     std::io::stdin().read_line(&mut line)?;
                     if !line.trim().eq_ignore_ascii_case("yes") {
-                        println!("  consent declined; ticket withdrawn");
+                        human!("  consent declined; ticket withdrawn");
                         let label = OutcomeLabel::Withdrawn;
                         record_outcome(
                             &*corpus,
@@ -612,23 +665,24 @@ async fn run(args: Args) -> anyhow::Result<()> {
                             None,
                             Some(row_provenance.clone()),
                             signoff_authority.as_ref(),
+                            args.json,
                         )
                         .await;
                         final_label = Some(label);
                         break;
                     }
                 } else {
-                    println!("  (headless run: --sign-off {sign_off:?} is the recorded consent)");
+                    human!("  (headless run: --sign-off {sign_off:?} is the recorded consent)");
                 }
 
                 let signed = signer.sign(&candidate.plan);
-                println!("  plan signature: {}…", &signed.signature[..16]);
+                human!("  plan signature: {}…", &signed.signature[..16]);
                 let execution =
                     agent_core::execute_signed_plan(&dispatcher, &signed, &signer, granted)
                         .await
                         .map_err(|error| anyhow::anyhow!(error))?;
                 for step in &execution.steps {
-                    println!(
+                    human!(
                         "  step {} [{}] {} -> {}",
                         step.step,
                         if step.ok { "ok" } else { "fail" },
@@ -636,7 +690,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
                         step.summary
                     );
                 }
-                println!(
+                human!(
                     "  execution: {} ({}/{} step(s) ok)",
                     if execution.completed {
                         "completed"
@@ -659,15 +713,15 @@ async fn run(args: Args) -> anyhow::Result<()> {
                 let class = verification_class_for(&route, case.reproducibility);
                 let post = recollect_post_signature();
                 if post.is_none() {
-                    println!(
+                    human!(
                         "  verification: no live re-collection available — the outcome cannot be \
                          confirmed and will escalate for human verification (NR-1)"
                     );
                 }
                 let verdict = verify_outcome(&signature, post.as_ref(), class);
-                println!("  verification ({class:?}): {verdict:?}");
+                human!("  verification ({class:?}): {verdict:?}");
                 if let Verdict::Fail { recurring } = &verdict {
-                    println!(
+                    human!(
                         "  hard negative: {} original symptom(s) recurred; the failed plan \
                          and this diff enter the retry context",
                         recurring.len()
@@ -678,7 +732,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
                 // label — a failure enters the corpus as a hard negative, not
                 // a discard — because an unlabeled ticket is corpus poison.
                 let label = label_for(&route, &execution, &verdict);
-                println!("  outcome label: {label:?}");
+                human!("  outcome label: {label:?}");
                 // Bind the verifier's verdict to the row: a resolved label is
                 // gated on a matching passing verdict, and stays auditable.
                 record_outcome(
@@ -691,6 +745,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
                     Some(verdict.to_verification(class)),
                     Some(row_provenance.clone()),
                     signoff_authority.as_ref(),
+                    args.json,
                 )
                 .await;
 
@@ -705,10 +760,10 @@ async fn run(args: Args) -> anyhow::Result<()> {
             }
 
             if let Some(label) = final_label {
-                println!();
-                println!("ticket label: {label:?}");
+                human!();
+                human!("ticket label: {label:?}");
                 if case.fluency == common::Fluency::Guided {
-                    println!("  what this means: {}", explain_label(&label));
+                    human!("  what this means: {}", explain_label(&label));
                 }
             }
         }
@@ -803,6 +858,14 @@ fn explain_label(label: &OutcomeLabel) -> &'static str {
 /// `verification` is the verdict bound to the row so a resolved outcome is
 /// auditable against its evidence; `None` for outcomes that never executed
 /// (a withdrawn ticket, or no executable plan).
+/// Route a human-trace line to stderr under `--json` (keeping stdout pure for the
+/// single `cec-diagnose/v1` envelope) or to stdout otherwise. Module-scoped so the
+/// free helpers reached from `run()` honor the stdout contract too — the `human!`
+/// macro is local to `run()` and does not cover functions it calls.
+macro_rules! tprintln {
+    ($json:expr, $($a:tt)*) => {{ if $json { eprintln!($($a)*) } else { println!($($a)*) } }};
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn record_outcome(
     corpus: &dyn CorpusStore,
@@ -814,6 +877,7 @@ async fn record_outcome(
     verification: Option<common::Verification>,
     provenance: Option<RowProvenance>,
     authority: Option<&corpus_client::SignOffAuthority>,
+    json: bool,
 ) {
     let mut contribution = Contribution::new(
         Outcome {
@@ -834,8 +898,11 @@ async fn record_outcome(
         contribution = contribution.attested_by(authority);
     }
     match corpus.submit(&contribution).await {
-        Ok(()) => println!("  corpus: outcome recorded (label={label:?}, sign-off={sign_off:?})"),
-        Err(error) => println!("  corpus: submit refused: {error}"),
+        Ok(()) => tprintln!(
+            json,
+            "  corpus: outcome recorded (label={label:?}, sign-off={sign_off:?})"
+        ),
+        Err(error) => tprintln!(json, "  corpus: submit refused: {error}"),
     }
 }
 
@@ -858,13 +925,18 @@ fn collect_diagnostics(describe: &str) -> Vec<DiagnosticEvent> {
 /// no user data) gets a real per-plan report: a clean apply is positive
 /// evidence that lowers the escalation bar; a dirty apply or a validation error
 /// does not (it stays conservative — escalate).
-async fn sandbox_validated_for(sandbox: Option<&dyn SandboxValidator>, best: &Candidate) -> bool {
+async fn sandbox_validated_for(
+    sandbox: Option<&dyn SandboxValidator>,
+    best: &Candidate,
+    json: bool,
+) -> bool {
     let Some(validator) = sandbox else {
         return false;
     };
     match validator.validate(best).await {
         Ok(report) => {
-            println!(
+            tprintln!(
+                json,
                 "  sandbox: {} — {}",
                 if report.applied_cleanly {
                     "validated cleanly"
@@ -876,7 +948,10 @@ async fn sandbox_validated_for(sandbox: Option<&dyn SandboxValidator>, best: &Ca
             report.applied_cleanly
         }
         Err(error) => {
-            println!("  sandbox: validation failed ({error}); treating as unvalidated");
+            tprintln!(
+                json,
+                "  sandbox: validation failed ({error}); treating as unvalidated"
+            );
             false
         }
     }
@@ -912,32 +987,89 @@ fn signature_of(events: &[DiagnosticEvent]) -> FaultSignature {
     FaultSignature::from_symptoms(symptoms)
 }
 
-/// The config class for this host. A real collector derives it from the CIM
-/// hardware and driver inventory (or the BOM revision on a CEC build); the
-/// bootstrap uses the host's coarse identity so corpus rows are still scoped
-/// to like configs.
-fn host_config_class() -> ConfigClass {
-    ConfigClass::from_inventory(host_inventory())
+/// Build the `cec-diagnose/v1` machine-readable result envelope for an embedder
+/// driving the engine as a sidecar. De-identified BY CONSTRUCTION: it carries
+/// only the hashed `fault.fingerprint`, the vocabulary `symptoms` (never the
+/// request text), the hashed `config_class`, the route/consent/escalation enums,
+/// and per candidate the `plan_id`, `source`, `max_risk`, and the **action
+/// vocabulary** (tool names). It deliberately OMITS a candidate's free-text
+/// `title`/`rationale` and a step's `description`, which can carry raw request
+/// prose (hostname/user/IP/serial) — the app maps the action vocabulary to its
+/// own human-readable labels. Returns the JSON value; the caller emits the
+/// single stdout line so the function stays unit-testable.
+#[allow(clippy::too_many_arguments)]
+fn diagnose_envelope(
+    signature: &FaultSignature,
+    config_class: &ConfigClass,
+    route: &Route,
+    candidates: &[Candidate],
+    selected: usize,
+    consent: &Consent,
+    escalation: &Escalation,
+) -> serde_json::Value {
+    let cands: Vec<_> = candidates
+        .iter()
+        .map(|c| {
+            serde_json::json!({
+                "plan_id": c.plan.id,
+                "source": format!("{:?}", c.source),
+                "max_risk": format!("{:?}", c.plan.risk()),
+                "actions": c.plan.steps.iter().map(|s| s.action.clone()).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "schema_version": "cec-diagnose/v1",
+        "fault": {
+            "fingerprint": signature.fingerprint,
+            "symptoms": signature.symptoms.iter().map(|s| s.0.clone()).collect::<Vec<_>>(),
+        },
+        "config_class": config_class.key(),
+        "route": format!("{route:?}"),
+        "candidates": cands,
+        "selected": selected,
+        "consent_required": format!("{consent:?}"),
+        "escalation": format!("{escalation:?}"),
+        "executed": false,
+    })
 }
 
-/// The inventory facts that scope a corpus row to "like configs". A real CEC
-/// build keys on the BOM revision; a general host derives the class from its
-/// hardware and driver inventory. Today this is the cross-platform coarse set
-/// (OS, arch, OS family) — deterministic and identity-free. A Windows build
-/// SHOULD enrich it here with CIM **configuration** fields (board vendor/model,
-/// BIOS version/date, chipset, GPU model, driver versions) — never serial
-/// numbers or service tags — so retrieval is scoped to genuinely-like hardware
-/// rather than to every machine sharing an OS/arch. That enrichment needs a
-/// Windows host to build and verify and is tracked in FOLLOWUPS; the config
-/// class is already bound into a row's sign-off attestation, so whatever it is
-/// derived from is tamper-evident.
-fn host_inventory() -> Vec<String> {
-    vec![
-        format!("os:{}", std::env::consts::OS),
-        format!("arch:{}", std::env::consts::ARCH),
-        format!("family:{}", std::env::consts::FAMILY),
-    ]
+fn host_config_class(args: &Args) -> anyhow::Result<ConfigClass> {
+    // An external inventory source (e.g. a device-inventory tool driving the engine
+    // over a process boundary) supplies identity-free keys via --inventory-keys;
+    // otherwise the coarse os/arch/family default keeps cold-start behavior intact.
+    if let Some(src) = &args.inventory_keys {
+        let external = ExternalInventory::new(read_inventory_keys(src)?);
+        if !external.is_empty() {
+            return Ok(external.config_class());
+        }
+    }
+    Ok(CoarseHostInventory.config_class())
 }
+
+/// Read identity-free inventory keys, one per line, from a file path or stdin
+/// (`-`). The supplying tool is responsible for keys being de-identified; the
+/// engine re-derives the class and never stores the keys (a de-id regression test
+/// guards this path).
+fn read_inventory_keys(src: &str) -> anyhow::Result<Vec<String>> {
+    let text = if src == "-" {
+        use std::io::Read as _;
+        let mut buf = String::new();
+        std::io::stdin().read_to_string(&mut buf)?;
+        buf
+    } else {
+        std::fs::read_to_string(src)
+            .map_err(|e| anyhow::anyhow!("reading --inventory-keys {src}: {e}"))?
+    };
+    Ok(text.lines().map(str::to_string).collect())
+}
+
+// The coarse os/arch/family inventory default lives in `common::CoarseHostInventory`
+// (the `InventoryProvider` seam). A real CEC build keys on the BOM revision; a richer
+// host derives the class from real hardware/driver inventory, supplied identity-free
+// via `--inventory-keys` (e.g. by a device-inventory tool over a process boundary) —
+// see `docs/integration-myown-family.md`. The config class is bound into a row's
+// sign-off attestation, so whatever it is derived from is tamper-evident.
 
 /// Read the sign-off authority PUBLIC key from `CEC_SIGNOFF_PUBKEY` (hex). Absent
 /// → `None` (attestation not enforced — cold start). Present but invalid → a hard
@@ -1209,6 +1341,132 @@ heuristic and an empty in-memory corpus. No CEC-hosted service is required.",
 mod tests {
     use super::*;
 
+    // --- Inventory seam (P0): external keys are de-identified into the config class.
+
+    #[test]
+    fn external_inventory_keys_are_de_identified_into_the_config_class() {
+        // The engine re-derives the config class as a one-way hash of the keys, so
+        // an identity-bearing key is CONSUMED into the hash (it scopes retrieval)
+        // but never stored or echoed verbatim. These assertions bite — the earlier
+        // version checked a 16-hex hash for identity substrings, which is true by
+        // construction and could never catch a regression.
+        let keys = vec![
+            "os:windows 11".to_string(),
+            "host:DESKTOP-NATHAN01".to_string(),
+        ];
+        let class = ExternalInventory::new(keys.clone()).config_class();
+        // (a) it is the derived hash: 16 lowercase-hex chars, == from_inventory(keys).
+        let key = class.key();
+        assert_eq!(key.len(), 16, "expected a 16-hex DerivedHash, got {key:?}");
+        assert!(
+            key.chars().all(|c| c.is_ascii_hexdigit()) && key == key.to_lowercase(),
+            "config class is not lowercase hex: {key:?}"
+        );
+        assert_eq!(class, ConfigClass::from_inventory(keys.clone()));
+        // (b) the identity key is CONSUMED, not silently dropped: changing only the
+        // hostname changes the class (so a vacuous "ignored it" impl would fail here).
+        let other = ExternalInventory::new(vec![
+            "os:windows 11".to_string(),
+            "host:DESKTOP-OTHER99".to_string(),
+        ])
+        .config_class();
+        assert_ne!(class, other, "an identity key must affect the class");
+        // ...but the SAME facts in any order collide (order-independent hash).
+        let reordered = ExternalInventory::new(vec![
+            "host:DESKTOP-NATHAN01".to_string(),
+            "os:windows 11".to_string(),
+        ])
+        .config_class();
+        assert_eq!(class, reordered);
+    }
+
+    #[test]
+    fn diagnose_envelope_emits_no_candidate_free_text_so_request_prose_cannot_leak() {
+        // The envelope is a SEPARATE serialization path from the corpus de-id. A
+        // candidate's free-text rationale/title and a step description can carry the
+        // raw request prose (hostname/user/IP/serial); the envelope must ship only
+        // the de-identified action vocabulary. Plant identity in every free-text
+        // field and assert none survives serialization (the D1 regression guard).
+        let plant = "DESKTOP-NATHAN01 nathan 192.168.1.20 SN12345678";
+        let mut cand = heuristic_candidate("explorer.exe crashes on login 0x1234");
+        cand.rationale = format!("addresses {plant}");
+        cand.plan.title = format!("fix for {plant}");
+        for step in &mut cand.plan.steps {
+            step.description = format!("run against {plant}");
+        }
+        let sig =
+            FaultSignature::from_symptoms(extract_symptoms("explorer.exe crashes on login 0x1234"));
+        let cfg = CoarseHostInventory.config_class();
+        let env = diagnose_envelope(
+            &sig,
+            &cfg,
+            &Route::SoftwareState,
+            std::slice::from_ref(&cand),
+            0,
+            &Consent::AllowReversible,
+            &Escalation::HumanConfirm,
+        );
+        let blob = serde_json::to_string(&env).unwrap().to_lowercase();
+        for tok in ["desktop-nathan01", "nathan", "192.168.1.20", "sn12345678"] {
+            assert!(
+                !blob.contains(tok),
+                "identity {tok:?} leaked into the envelope: {blob}"
+            );
+        }
+        // The de-identified action vocabulary IS present (the plan shape the app renders).
+        let actions = env["candidates"][0]["actions"]
+            .as_array()
+            .expect("actions array");
+        assert!(!actions.is_empty());
+    }
+
+    #[test]
+    fn diagnose_envelope_has_the_cec_diagnose_v1_shape() {
+        let cand = heuristic_candidate("explorer.exe crashes on login 0x1234");
+        let sig =
+            FaultSignature::from_symptoms(extract_symptoms("explorer.exe crashes on login 0x1234"));
+        let cfg = CoarseHostInventory.config_class();
+        let env = diagnose_envelope(
+            &sig,
+            &cfg,
+            &Route::SoftwareState,
+            std::slice::from_ref(&cand),
+            0,
+            &Consent::AllowReversible,
+            &Escalation::HumanConfirm,
+        );
+        assert_eq!(env["schema_version"], "cec-diagnose/v1");
+        assert_eq!(env["executed"], false);
+        assert_eq!(env["config_class"], cfg.key());
+        let syms: Vec<String> = sig.symptoms.iter().map(|s| s.0.clone()).collect();
+        assert_eq!(env["fault"]["symptoms"], serde_json::json!(syms));
+        // selected index is in range
+        let selected = env["selected"].as_u64().unwrap() as usize;
+        let cands = env["candidates"].as_array().unwrap();
+        assert!(selected < cands.len());
+        // each candidate carries exactly the de-identified fields — no title/rationale
+        let c0 = &cands[0];
+        for f in ["plan_id", "source", "max_risk", "actions"] {
+            assert!(c0.get(f).is_some(), "envelope candidate missing {f}");
+        }
+        assert!(
+            c0.get("title").is_none() && c0.get("rationale").is_none(),
+            "envelope candidate must not carry free-text fields"
+        );
+    }
+
+    #[test]
+    fn read_inventory_keys_then_external_trims_and_drops_blanks() {
+        let path = std::env::temp_dir().join(format!("cec-invkeys-{}.txt", std::process::id()));
+        std::fs::write(&path, "os:windows 11\n\n  gpu:rtx-4070  \n").expect("write");
+        let raw = read_inventory_keys(path.to_str().unwrap()).expect("read");
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(
+            ExternalInventory::new(raw).inventory_keys(),
+            vec!["os:windows 11", "gpu:rtx-4070"]
+        );
+    }
+
     struct FakeSandbox {
         clean: bool,
     }
@@ -1231,15 +1489,15 @@ mod tests {
     async fn sandbox_validation_drives_the_validated_flag() {
         let best = heuristic_candidate("x");
         assert!(
-            !sandbox_validated_for(None, &best).await,
+            !sandbox_validated_for(None, &best, false).await,
             "no validator -> unvalidated (escalate)"
         );
         assert!(
-            sandbox_validated_for(Some(&FakeSandbox { clean: true }), &best).await,
+            sandbox_validated_for(Some(&FakeSandbox { clean: true }), &best, false).await,
             "a clean sandbox apply is positive validation evidence"
         );
         assert!(
-            !sandbox_validated_for(Some(&FakeSandbox { clean: false }), &best).await,
+            !sandbox_validated_for(Some(&FakeSandbox { clean: false }), &best, false).await,
             "a dirty apply stays unvalidated"
         );
     }
@@ -1329,7 +1587,7 @@ mod tests {
         let corpus = LocalCorpus::new();
         let signature =
             FaultSignature::from_symptoms(extract_symptoms("explorer.exe crashes on login 0x1234"));
-        let config_class = host_config_class();
+        let config_class = CoarseHostInventory.config_class();
         record_outcome(
             &corpus,
             &signature,
@@ -1340,6 +1598,7 @@ mod tests {
             Some(common::Verification::pass()),
             None,
             None,
+            false,
         )
         .await;
         // ...and run 2 facing the same signature retrieves it as precedent.
