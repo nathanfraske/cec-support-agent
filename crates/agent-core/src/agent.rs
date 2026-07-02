@@ -159,11 +159,20 @@ pub struct AgentRun {
 }
 
 /// One tool call made during an [`Agent::run`] loop.
+///
+/// In-flight only: like [`AgentRun`], `AgentStep` has no `Serialize`. `args` is
+/// the untyped `serde_json::Value` the methodology (§2 Layer 2c) flags — it stays
+/// `Value` deliberately: with no `Serialize` on `AgentStep`/`AgentRun` it **has
+/// no path to a serialize/print sink**, so the 2c serialization boundary is
+/// already closed by the Phase-1 type split. Its residual exposure is the
+/// agent-loop / model-prompt egress (leak class C2), the accepted-risk boundary
+/// deferred to §3.1 / Phase 4, not a corpus/print sink Phase 2 seals.
 #[derive(Debug, Clone)]
 pub struct AgentStep {
     /// The tool that was dispatched.
     pub tool: String,
-    /// The JSON arguments passed to it.
+    /// The JSON arguments passed to it (in-flight; see the type doc for why this
+    /// stays an untyped `Value` rather than a typed 2c summary).
     pub args: serde_json::Value,
     /// The outcome, or a stringified dispatch error (e.g. consent denied).
     pub outcome: Result<ToolOutcome, String>,
