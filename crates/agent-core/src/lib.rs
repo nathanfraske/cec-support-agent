@@ -344,6 +344,6 @@ mod tests {
         let result = execute_plan(&dispatcher, &plan, Consent::ReadOnlyOnly).await;
         assert!(!result.completed);
         assert!(!result.steps[0].ok);
-        assert!(result.steps[0].summary.contains("consent"));
+        assert!(result.steps[0].summary.as_str().contains("consent"));
     }
 }

@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::plan::Plan;
+use crate::Prose;
 
 /// Where a candidate plan came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
@@ -25,15 +26,17 @@ pub enum CandidateSource {
 pub struct Candidate {
     /// The plan to evaluate.
     pub plan: Plan,
-    /// Why the generator believes this plan addresses the fault.
-    pub rationale: String,
+    /// Why the generator believes this plan addresses the fault. Free-text
+    /// prose (a model often echoes the request into it), so it is [`Prose`]:
+    /// no `Serialize`/`Display`, and it never reaches the `--json`/API envelope.
+    pub rationale: Prose,
     /// Provenance of the candidate.
     pub source: CandidateSource,
 }
 
 impl Candidate {
     /// Wrap a plan with its rationale and source.
-    pub fn new(plan: Plan, rationale: impl Into<String>, source: CandidateSource) -> Self {
+    pub fn new(plan: Plan, rationale: impl Into<Prose>, source: CandidateSource) -> Self {
         Self {
             plan,
             rationale: rationale.into(),

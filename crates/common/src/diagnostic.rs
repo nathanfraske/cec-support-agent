@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::Prose;
+
 /// Severity of a diagnostic event, ordered from least to most urgent.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
@@ -41,8 +43,11 @@ pub struct DiagnosticEvent {
     pub kind: EventKind,
     /// Origin of the event (component, provider, or subsystem name).
     pub source: String,
-    /// The de-identified message body.
-    pub message: String,
+    /// The raw observation body. Free-text prose (request text in the
+    /// bootstrap), so it is [`Prose`]: it is reduced to a
+    /// [`FaultSignature`](crate::FaultSignature) by `extract_symptoms` before
+    /// anything is stored or emitted, and cannot reach a sink directly.
+    pub message: Prose,
     /// Severity of the event.
     pub severity: Severity,
     /// Milliseconds since the Unix epoch, as observed at collection time.
@@ -54,7 +59,7 @@ impl DiagnosticEvent {
     pub fn new(
         kind: EventKind,
         source: impl Into<String>,
-        message: impl Into<String>,
+        message: impl Into<Prose>,
         severity: Severity,
         timestamp_ms: u64,
     ) -> Self {

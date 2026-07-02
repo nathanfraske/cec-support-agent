@@ -46,7 +46,7 @@ pub async fn execute_plan(
             step: index + 1,
             action: step.action.clone(),
             ok,
-            summary,
+            summary: summary.into(),
         });
         if !ok {
             return result;

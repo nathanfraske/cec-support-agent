@@ -180,12 +180,12 @@ impl StoredPlan {
     pub fn to_plan(&self) -> Plan {
         Plan {
             id: self.id.clone(),
-            title: self.title.clone(),
+            title: self.title.clone().into(),
             steps: self
                 .steps
                 .iter()
                 .map(|step| PlanStep {
-                    description: step.description.clone(),
+                    description: step.description.clone().into(),
                     action: step.action.clone(),
                     risk: step.risk,
                 })

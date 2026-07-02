@@ -100,7 +100,10 @@ fn canonical(plan: &Plan) -> Vec<u8> {
     use std::fmt::Write as _;
     let mut s = String::from("cec-plan-canonical-v1\n");
     let _ = writeln!(s, "id:{}", plan.id);
-    let _ = writeln!(s, "title:{}", plan.title);
+    // The prose leaves are read through the explicit `as_str()` accessor: plan
+    // signing is an in-process HMAC over the exact bytes the judge saw, not an
+    // egress sink, so it is a sanctioned reader of the title/description.
+    let _ = writeln!(s, "title:{}", plan.title.as_str());
     for step in &plan.steps {
         // Length-prefix the free-text fields so they cannot be confused with the
         // field separators or with each other.
@@ -108,8 +111,8 @@ fn canonical(plan: &Plan) -> Vec<u8> {
             s,
             "step:action={};desc[{}]={};risk={:?}",
             step.action,
-            step.description.len(),
-            step.description,
+            step.description.as_str().len(),
+            step.description.as_str(),
             step.risk
         );
     }

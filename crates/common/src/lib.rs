@@ -18,6 +18,7 @@ mod fluency;
 mod hash;
 mod inventory;
 mod plan;
+mod prose;
 mod verification;
 
 pub use candidate::{Candidate, CandidateSource};
@@ -29,6 +30,7 @@ pub use fault::{FaultSignature, Symptom};
 pub use fluency::Fluency;
 pub use inventory::{CoarseHostInventory, ExternalInventory, InventoryProvider};
 pub use plan::{Plan, PlanStep, Risk};
+pub use prose::Prose;
 pub use verification::{Verification, VerificationClass, VerificationResult};
 
 #[cfg(test)]

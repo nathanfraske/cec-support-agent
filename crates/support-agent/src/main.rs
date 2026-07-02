@@ -538,8 +538,10 @@ async fn run(args: Args) -> anyhow::Result<()> {
         candidates.len(),
         best.source
     );
-    human!("  title:      {}", best.plan.title);
-    human!("  rationale:  {}", best.rationale);
+    // The human trace is a sanctioned operator-facing sink, so it reads the
+    // prose leaves through the explicit `as_str()` accessor.
+    human!("  title:      {}", best.plan.title.as_str());
+    human!("  rationale:  {}", best.rationale.as_str());
     human!("  risk:       {:?}", best.plan.risk());
     human!("  score:      {:.3}", score.total());
     human!("  escalation: {escalation:?}");
@@ -549,7 +551,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
             "    {}. [{:?}] {} -> {}",
             i + 1,
             step.risk,
-            step.description,
+            step.description.as_str(),
             step.action
         );
     }
@@ -670,7 +672,10 @@ async fn run(args: Args) -> anyhow::Result<()> {
             for (attempt, (_, candidate)) in ranked.iter().take(MAX_ATTEMPTS).enumerate() {
                 if attempt > 0 {
                     human!();
-                    human!("retry {attempt}: next-best plan '{}'", candidate.plan.title);
+                    human!(
+                        "retry {attempt}: next-best plan '{}'",
+                        candidate.plan.title.as_str()
+                    );
                 }
 
                 // Consent is to a rendered plan, never an opaque script:
@@ -717,7 +722,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
                         step.step,
                         if step.ok { "ok" } else { "fail" },
                         step.action,
-                        step.summary
+                        step.summary.as_str()
                     );
                 }
                 human!(
@@ -822,10 +827,13 @@ fn is_executable(plan: &Plan, dispatcher: &Dispatcher) -> bool {
 /// Consent to an opaque script is liability theater — and so is consent to
 /// jargon the user cannot evaluate.
 fn render_consent(plan: &Plan) -> String {
+    // Consent rendering is a sanctioned human-facing sink: it reads the plan's
+    // prose leaves through the explicit `as_str()` accessor to show the operator
+    // exactly what they are authorizing.
     let mut text = format!(
         "  Permission needed. The support agent would like to run these steps on this \
          computer (plan: '{}'):\n",
-        plan.title
+        plan.title.as_str()
     );
     for (i, step) in plan.steps.iter().enumerate() {
         let risk = match step.risk {
@@ -833,7 +841,11 @@ fn render_consent(plan: &Plan) -> String {
             Risk::Reversible => "this step makes a change that can be undone",
             Risk::Destructive => "CAUTION: this step makes a change that can NOT be easily undone",
         };
-        text.push_str(&format!("    {}. {} ({risk})\n", i + 1, step.description));
+        text.push_str(&format!(
+            "    {}. {} ({risk})\n",
+            i + 1,
+            step.description.as_str()
+        ));
     }
     text.push_str(
         "    Before anything is changed, a 'restore point' is saved. That is a snapshot \
@@ -1023,7 +1035,7 @@ fn recollect_post_signature() -> Option<FaultSignature> {
 fn signature_of(events: &[DiagnosticEvent]) -> FaultSignature {
     let mut symptoms: Vec<common::Symptom> = events
         .iter()
-        .flat_map(|event| extract_symptoms(&event.message))
+        .flat_map(|event| extract_symptoms(event.message.as_str()))
         .collect();
     symptoms.sort_unstable_by(|a, b| a.0.cmp(&b.0));
     symptoms.dedup();
@@ -1291,7 +1303,7 @@ impl Generator for HeuristicGenerator {
     async fn generate(&self, events: &[DiagnosticEvent]) -> Result<Vec<Candidate>, SwarmError> {
         let describe = events
             .first()
-            .map(|event| event.message.clone())
+            .map(|event| event.message.as_str().to_string())
             .unwrap_or_default();
         Ok(vec![heuristic_candidate(&describe)])
     }
@@ -1315,6 +1327,9 @@ impl Generator for ModelGenerator {
             .map(|event| event.message.as_str())
             .collect::<Vec<_>>()
             .join("\n");
+        // NOTE: `describe` is raw request prose. It is the model-inference egress
+        // (leak class C2), an accepted-risk boundary handled by §3.1/Phase 4, not
+        // a corpus/print sink — so it is read here deliberately.
         let system = format!(
             "You are a Windows support diagnostician. Working hypothesis: {}. \
              Intake interview findings: {}. Propose a single safe, reversible \
@@ -1345,7 +1360,7 @@ impl Generator for ModelGenerator {
             format!("Model-proposed first step ({})", self.hypothesis.slug),
         );
         plan.steps.push(PlanStep {
-            description: content,
+            description: content.into(),
             action: "review".to_string(),
             risk: Risk::ReadOnly,
         });
@@ -1363,12 +1378,12 @@ fn heuristic_candidate(describe: &str) -> Candidate {
         "Collect diagnostics and capture a restore point",
     );
     plan.steps.push(PlanStep {
-        description: "Gather logs, WER, WHEA, and CIM state".to_string(),
+        description: "Gather logs, WER, WHEA, and CIM state".into(),
         action: "cim_query".to_string(),
         risk: Risk::ReadOnly,
     });
     plan.steps.push(PlanStep {
-        description: "Create a system restore point before any change".to_string(),
+        description: "Create a system restore point before any change".into(),
         action: "create_restore_point".to_string(),
         risk: Risk::Reversible,
     });
@@ -1469,10 +1484,10 @@ mod tests {
         // poison set does.
         let mut cand = heuristic_candidate("explorer.exe crashes on login 0x1234");
         for tok in leakguard::POISON {
-            cand.rationale = format!("addresses {tok}");
-            cand.plan.title = format!("fix {tok}");
+            cand.rationale = format!("addresses {tok}").into();
+            cand.plan.title = format!("fix {tok}").into();
             for step in &mut cand.plan.steps {
-                step.description = format!("run {tok}");
+                step.description = format!("run {tok}").into();
             }
             let sig = FaultSignature::from_symptoms(extract_symptoms("explorer.exe 0x1234"));
             let env = diagnose_envelope(
@@ -1539,10 +1554,10 @@ mod tests {
         // field and assert none survives serialization (the D1 regression guard).
         let plant = "DESKTOP-NATHAN01 nathan 192.168.1.20 SN12345678";
         let mut cand = heuristic_candidate("explorer.exe crashes on login 0x1234");
-        cand.rationale = format!("addresses {plant}");
-        cand.plan.title = format!("fix for {plant}");
+        cand.rationale = format!("addresses {plant}").into();
+        cand.plan.title = format!("fix for {plant}").into();
         for step in &mut cand.plan.steps {
-            step.description = format!("run against {plant}");
+            step.description = format!("run against {plant}").into();
         }
         let sig =
             FaultSignature::from_symptoms(extract_symptoms("explorer.exe crashes on login 0x1234"));
