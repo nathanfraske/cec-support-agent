@@ -21,6 +21,10 @@ This repo runs under WSL2 with the agent-ops layer in `.claude/` and `docs/`. Be
   `docs/evidence-integrity-and-research-checklist.md` (the runnable checklist an agent ticks before any
   corpus write-back / before claiming a result is true). The research-discipline tree is `docs/research/`.
 - **Local inference** runs through the `cec-llm-broker` on `:8080` — see `docs/local-agent-infrastructure.md`.
+- **Agentic infrastructure** — the hook lifecycle, the four tracking files + the `.claude/memory` mirror, the
+  `projectops`/panels surface, and the **fully-blind audit** method are specified in `docs/AGENTIC_ADDENDUM.md`
+  (surfaced at every session start). Consult its **§7 before verifying any crypto/de-id kernel or frozen
+  constant** — a shared blind spot between the code and its tests hides defects a normal review inherits.
 
 ## Per-endpoint egress-sink checklist (binding)
 
