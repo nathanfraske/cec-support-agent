@@ -175,6 +175,10 @@ pub(crate) async fn serve(args: crate::Args) -> anyhow::Result<()> {
         .parse()
         .map_err(|e| anyhow::anyhow!("--bind {:?} is not a socket address: {e}", args.bind))?;
     validate_bind(&addr, args.allow_remote)?;
+    // Trusted calls only: the same loopback discipline the CLI applies to the
+    // model-inference egress (leak class C2) — a non-loopback endpoint carries
+    // raw request prose off the box only under an explicit, audited opt-in.
+    crate::validate_inference_endpoints(&args)?;
 
     // Same attestation posture as the CLI: enforce when a pubkey is present,
     // self-attest when the seed is held, derive enforcement from the seed so
@@ -585,6 +589,7 @@ mod tests {
                 serve: true,
                 bind: "127.0.0.1:0".into(),
                 allow_remote: false,
+                allow_remote_inference: false,
             },
             corpus: Box::new(LocalCorpus::new()),
             authority: None,

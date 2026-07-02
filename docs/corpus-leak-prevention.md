@@ -344,6 +344,13 @@ the methodology, not a footnote:
    explicit act** rather than a config default — critical because pointing `--endpoint` at a
    MyOwnLLM/MyOwnMesh peer is the active integration direction. This is **declared accepted-risk
    with controls**, not a hard guarantee that raw text never leaves the box.
+   **BUILT — (b) done (2026-07-02, owner decision "trusted calls only").** `--endpoint` and
+   `--fast-endpoint` are refused at startup on both the `diagnose` and `serve` paths when the
+   host is non-loopback (`localhost` / `127.0.0.0/8` / `[::1]`) unless `--allow-remote-inference`
+   is explicitly passed (`crates/support-agent/src/main.rs::validate_inference_endpoints`; the
+   refusal is a fixed message that never echoes the URL). Remote inference egress is now an
+   audited, explicit act, not a config default. **(a)** the sealed `PromptPayload` chokepoint
+   remains the type-level follow-on (Phase 4, item 14).
 
 2. **Unsalted FNV correlation handles (C7)** — `config_class.key()` and the fingerprint are
    emitted in the envelope and the `HttpCorpus` GET **URL**, and over an identity-bearing
@@ -412,7 +419,9 @@ all fail to compile.
 
 ### Phase 4 — Architectural decisions (C2/C7) + policy (L4)
 14. `PromptPayload` chokepoint **and/or** `--endpoint` localhost-allowlist with
-    `--allow-remote-inference` audit flag.
+    `--allow-remote-inference` audit flag. — **`--endpoint`/`--fast-endpoint` localhost-allowlist +
+    `--allow-remote-inference` DONE (2026-07-02); `validate_inference_endpoints` on both the
+    `diagnose` and `serve` paths. The `PromptPayload` chokepoint half remains.**
 15. Keyed/salted HMAC for `fingerprint_of`/`from_inventory`; retrieval keys out of GET URLs.
 16. `CODEOWNERS` + branch protection; `AGENTS.md` Agent Contract; `xtask scan-msg` follow-on.
 
