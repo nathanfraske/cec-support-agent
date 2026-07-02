@@ -423,6 +423,18 @@ See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementati
 
 ## Handoff log (reverse-chronological)
 
+- **2026-07-02 16:20 UTC** — **Wave 2: PRs #5/#6 merged; the engine's API face is built (B3/B4/H4).**
+  Both PRs went red on a NEW upstream RustSec advisory (anyhow 1.0.102 downcast_mut UB) — lockfile-bumped on
+  both branches, green, merged (owner's go-ahead). Then on the restarted work branch: **B4** `HttpCorpus::query`
+  read-side re-validation (a served plan must equal its own de-identified image; fails closed;
+  `GateError::ServedPlanInadmissible`; attestation-on-the-wire residual → FOLLOWUPS); **H4** exact toolchain pin
+  (1.96.1, lockstep note in ci.yml) + dependabot cargo ecosystem; **B3** `cec-support-agent serve` — loopback
+  HTTP API (`/v1/health`, `/v1/diagnose` → `cec-diagnose/v1` + additive `session_id`, `/v1/execute` two-phase
+  consent → **`cec-execute/v1`** with pinned label/verdict values), one-shot TTL'd sessions, escalation
+  re-checked server-side, declined consent recorded as Withdrawn, `plan_id` app-side retry, axum 0.8.
+  189 tests/clippy/fmt clean + live e2e smoke (health → diagnose → 409 under-escalated → honest escalated
+  execute). **Next:** leak-prevention Phases 1–2 (include the serve module in the egress-sink inventory), then
+  P1' (AllMyStuff API client) once Chris weighs in.
 - **2026-07-02 15:50 UTC** — **Stalled handoff resumed: repo-wide consolidation + first wave executed.**
   Scoped every branch/PR/doc (9-agent analysis + direct verification) → `docs/consolidated-work-plan.md`.
   Merged PR #2 (`2d9620a`) then PR #3 (`3b269f8`). Found the pushed leak-prevention tip `cf95d1c` did NOT
