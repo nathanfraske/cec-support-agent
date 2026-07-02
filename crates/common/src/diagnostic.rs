@@ -29,8 +29,13 @@ pub enum EventKind {
     EventLog,
 }
 
-/// A single de-identified diagnostic observation gathered from a machine.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// A single diagnostic observation gathered from a machine.
+///
+/// An **in-flight** type: `message` is the raw observation body (request text in
+/// the bootstrap), so `DiagnosticEvent` has no `Serialize` — it is reduced to a
+/// [`crate::FaultSignature`] by `extract_symptoms` before anything is stored or
+/// emitted.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiagnosticEvent {
     /// What kind of source produced this event.
     pub kind: EventKind,

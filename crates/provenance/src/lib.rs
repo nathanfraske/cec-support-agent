@@ -18,7 +18,6 @@
 use common::Plan;
 use ed25519_dalek::{Signature, Signer, SigningKey as Ed25519Key, Verifier, VerifyingKey};
 use hmac::{Hmac, Mac};
-use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use thiserror::Error;
 
@@ -34,7 +33,11 @@ pub enum ProvenanceError {
 }
 
 /// A plan together with the judge's signature over its canonical content.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// In-process only (judge → executor): it wraps a raw in-flight [`Plan`] and so
+/// has no `Serialize`/`Deserialize`. The signature binds the plan's canonical
+/// bytes; it never crosses a serialize boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SignedPlan {
     /// The plan exactly as the judge signed it.
     pub plan: Plan,

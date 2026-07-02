@@ -16,7 +16,12 @@ pub enum CandidateSource {
 }
 
 /// A proposed remediation produced for the judge panel to score.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// An **in-flight** type: `rationale` is free-text prose (a model often echoes
+/// the request into it), so `Candidate` has no `Serialize` — `to_string(&cand)`
+/// or `json!({"why": c.rationale})` is a compile error. Only the de-identified
+/// action vocabulary of its plan reaches a sink (see `diagnose_envelope`).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Candidate {
     /// The plan to evaluate.
     pub plan: Plan,

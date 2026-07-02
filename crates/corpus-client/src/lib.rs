@@ -25,6 +25,7 @@
 mod gate;
 mod schema;
 mod store;
+mod stored;
 
 pub use gate::{ensure_attested, ensure_evidence_integrity, ensure_signed_off, GateError};
 pub use schema::{
@@ -32,6 +33,7 @@ pub use schema::{
     SignOff, SignOffAttestation,
 };
 pub use store::{CorpusError, CorpusStore, FileCorpus, HttpCorpus, LocalCorpus};
+pub use stored::{StoredOutcome, StoredPlan, StoredSignature, StoredStep, StoredSymptom};
 
 // The sign-off authority types live in `provenance`; re-export them so a caller
 // configuring a store with `.with_authority(...)` (and attesting via

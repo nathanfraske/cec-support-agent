@@ -16,7 +16,11 @@ pub enum Risk {
 }
 
 /// A single ordered step within a [`Plan`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// An **in-flight** type: it carries free-text prose and therefore has no
+/// `Serialize` — it cannot reach a corpus row or any serialize boundary. The
+/// de-identified, serializable counterpart is [`corpus-client`'s `StoredStep`].
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanStep {
     /// Human-readable description of what the step does.
     pub description: String,
@@ -27,7 +31,12 @@ pub struct PlanStep {
 }
 
 /// A candidate remediation: an ordered list of steps with an overall risk.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// An **in-flight** type: `title` (and each step's `description`) is free-text
+/// prose, so `Plan` has no `Serialize` — a raw plan cannot be written to a
+/// corpus row, printed, or put on the `--json`/API wire. It reaches a row only
+/// via `de_identify_plan`, which mints the serializable `StoredPlan`.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Plan {
     /// Stable identifier for the plan within a run.
     pub id: String,

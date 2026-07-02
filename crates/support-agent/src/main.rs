@@ -421,8 +421,10 @@ async fn run(args: Args) -> anyhow::Result<()> {
     let mut candidates: Vec<Candidate> = known
         .iter()
         .map(|mapping| {
+            // Rehydrate the served (de-identified) StoredPlan into an in-flight
+            // plan for the judge/consent/execute pipeline.
             Candidate::new(
-                mapping.plan.clone(),
+                mapping.plan.to_plan(),
                 format!(
                     "Corpus precedent: resolved this signature at this config class \
                      ({} confirmation(s))",
@@ -592,7 +594,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
             let row_provenance = RowProvenance {
                 run_id: run_id(),
                 retrieval_first,
-                primed_from: known.iter().map(|m| m.plan.id.clone()).collect(),
+                primed_from: known.iter().map(|m| m.plan.id().to_string()).collect(),
             };
 
             // The sign-off must meet the judge's required escalation: a
@@ -1824,7 +1826,7 @@ mod tests {
             .expect("query");
         assert_eq!(known.len(), 1);
         let primed = Candidate::new(
-            known[0].plan.clone(),
+            known[0].plan.to_plan(),
             "Corpus precedent",
             CandidateSource::CorpusPrimed,
         );

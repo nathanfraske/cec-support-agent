@@ -1,10 +1,14 @@
 use async_trait::async_trait;
 use common::Risk;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use thiserror::Error;
 
 /// The result of running a tool.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+///
+/// In-flight only: `summary` is tool prose and `data` is raw tool payload, so
+/// `ToolOutcome` has no `Serialize` — it cannot be written to a row or the wire.
+/// (It keeps `Deserialize` for reading tool fixtures; nothing serializes it.)
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct ToolOutcome {
     /// Whether the tool achieved its effect.
     pub ok: bool,
