@@ -10,6 +10,7 @@ description = "Corpus API client, schema, and cold-start store. Enforces the ver
 [dependencies]
 common = { workspace = true }
 provenance = { workspace = true }
+deid = { path = "../deid" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 reqwest = { workspace = true }
@@ -19,3 +20,4 @@ sha2 = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
+leakguard = { path = "../leakguard" }

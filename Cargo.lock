@@ -19,9 +19,9 @@ dependencies = [
 
 [[package]]
 name = "anyhow"
-version = "1.0.102"
+version = "1.0.103"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
+checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
 
 [[package]]
 name = "async-trait"
@@ -120,6 +120,8 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "common",
+ "deid",
+ "leakguard",
  "provenance",
  "reqwest",
  "serde",
@@ -173,6 +175,13 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "deid"
+version = "0.1.0"
+dependencies = [
+ "common",
 ]
 
 [[package]]
@@ -575,6 +584,13 @@ dependencies = [
  "cfg-if",
  "futures-util",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "leakguard"
+version = "0.1.0"
+dependencies = [
+ "deid",
 ]
 
 [[package]]
@@ -1056,9 +1072,11 @@ dependencies = [
  "async-trait",
  "common",
  "corpus-client",
+ "deid",
  "getrandom 0.2.17",
  "inference",
  "intake",
+ "leakguard",
  "panel",
  "provenance",
  "serde_json",

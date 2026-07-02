@@ -879,7 +879,11 @@ async fn record_outcome(
     authority: Option<&corpus_client::SignOffAuthority>,
     json: bool,
 ) {
-    let mut contribution = Contribution::new(
+    // The validating de-id mints run inside `Contribution::new`: a plan whose
+    // action/id is not admissible vocabulary is REFUSED here (the row never
+    // forms), rather than de-identified in name only. A refusal is a guard hit,
+    // not a normal outcome — surface it and do not record.
+    let mut contribution = match Contribution::new(
         Outcome {
             signature: signature.clone(),
             plan: plan.clone(),
@@ -888,7 +892,16 @@ async fn record_outcome(
         },
         config_class.clone(),
         sign_off,
-    );
+    ) {
+        Ok(contribution) => contribution,
+        Err(reject) => {
+            tprintln!(
+                json,
+                "  corpus: row REFUSED by the leak guard ({reject}); not recorded"
+            );
+            return;
+        }
+    };
     if let Some(provenance) = provenance {
         contribution = contribution.with_provenance(provenance);
     }
@@ -1340,6 +1353,56 @@ heuristic and an empty in-memory corpus. No CEC-hosted service is required.",
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- Leak-prevention (Phase 0): the action-vocabulary drift guard.
+
+    #[test]
+    fn every_registered_tool_is_in_the_frozen_action_vocabulary() {
+        // The de-id mint admits only `deid::ACTION_VOCABULARY` into a corpus row.
+        // If a new dispatcher tool is registered without being added to that frozen
+        // list, its de-identified plans would be REFUSED at write time. This drift
+        // guard keeps the live registry and the frozen vocabulary in lockstep, so
+        // the two cannot silently diverge.
+        let mut dispatcher = Dispatcher::new();
+        for tool in windows_tools() {
+            dispatcher.register(tool);
+        }
+        for name in dispatcher.tool_names() {
+            assert!(
+                deid::ACTION_VOCABULARY.binary_search(&name).is_ok(),
+                "registered tool {name:?} is not in deid::ACTION_VOCABULARY — add it (keep the list sorted)"
+            );
+        }
+    }
+
+    #[test]
+    fn diagnose_envelope_rejects_every_leakguard_poison_token() {
+        // The envelope de-id guard, driven by the canonical poison set (single
+        // source of truth) instead of a local token list — so it widens as the
+        // poison set does.
+        let mut cand = heuristic_candidate("explorer.exe crashes on login 0x1234");
+        for tok in leakguard::POISON {
+            cand.rationale = format!("addresses {tok}");
+            cand.plan.title = format!("fix {tok}");
+            for step in &mut cand.plan.steps {
+                step.description = format!("run {tok}");
+            }
+            let sig = FaultSignature::from_symptoms(extract_symptoms("explorer.exe 0x1234"));
+            let env = diagnose_envelope(
+                &sig,
+                &CoarseHostInventory.config_class(),
+                &Route::SoftwareState,
+                std::slice::from_ref(&cand),
+                0,
+                &Consent::AllowReversible,
+                &Escalation::HumanConfirm,
+            );
+            leakguard::assert_no_poison(
+                &serde_json::to_string(&env).unwrap(),
+                "cec-diagnose/v1 envelope",
+            );
+        }
+    }
 
     // --- Inventory seam (P0): external keys are de-identified into the config class.
 

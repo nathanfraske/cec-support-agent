@@ -1,0 +1,11 @@
+[package]
+name = "leakguard"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Canonical identity-poison set and structural de-id assertions — the single source of truth for the leak-prevention test harness."
+
+[dependencies]
+deid = { path = "../deid" }
