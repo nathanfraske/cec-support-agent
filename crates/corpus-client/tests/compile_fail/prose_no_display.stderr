@@ -1,0 +1,10 @@
+error[E0277]: `Prose` doesn't implement `std::fmt::Display`
+ --> tests/compile_fail/prose_no_display.rs:7:27
+  |
+7 |     let _ = format!("{}", prose);
+  |                      --   ^^^^^ `Prose` cannot be formatted with the default formatter
+  |                      |
+  |                      required by this formatting parameter
+  |
+  = help: the trait `std::fmt::Display` is not implemented for `Prose`
+  = note: in format strings you may be able to use `{:?}` (or {:#?} for pretty-print) instead
