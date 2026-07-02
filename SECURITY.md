@@ -55,6 +55,18 @@ Security-relevant invariants this repo upholds, and which a report may concern:
   A silent path that sends request prose to a non-loopback host without that opt-in is a
   security issue.
 
+## Network exposure and AGPL §13
+
+The `serve` API is **hard-loopback by default**. Remote exposure is **mesh-only**:
+there is no bearer-token auth tier, and none will be built — a non-loopback bind is
+authenticated by MyOwnMesh rostered identity, not a shared secret. `--allow-remote`
+is the deliberate, audited act that permits a non-loopback bind; on startup it prints
+a one-line notice, because **binding beyond loopback makes this a network service, and
+AGPL-3.0 §13 then requires offering that service's users the Corresponding Source** of
+the engine they interact with. The auth posture and the §13 source-offer duty move
+together: the same flag that opens the surface arms the obligation. Loopback,
+single-operator use is not "remote network interaction" and triggers nothing.
+
 ## Supported versions
 
 The project is pre-1.0; security fixes target the `main` branch. Pin a commit if

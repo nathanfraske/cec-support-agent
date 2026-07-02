@@ -194,6 +194,19 @@ pub(crate) async fn serve(args: crate::Args) -> anyhow::Result<()> {
     // raw request prose off the box only under an explicit, audited opt-in.
     crate::validate_inference_endpoints(&args)?;
 
+    // AGPL §13: the auth posture and the source-offer duty move together. The API
+    // stays hard-loopback by default and remote exposure is mesh-only (no
+    // bearer-token tier is built). When the operator opts into `--allow-remote`,
+    // binding beyond loopback makes this a network service, which arms the §13
+    // obligation — say so, once, at startup.
+    if args.allow_remote {
+        eprintln!(
+            "serve: NOTICE — --allow-remote binds this engine beyond loopback, making it a \
+             network service. Under AGPL-3.0 §13 you must offer this service's users the \
+             Corresponding Source of the engine they interact with."
+        );
+    }
+
     // Same attestation posture as the CLI: enforce when a pubkey is present,
     // self-attest when the seed is held, derive enforcement from the seed so
     // single-operator mode never attests without enforcing.
