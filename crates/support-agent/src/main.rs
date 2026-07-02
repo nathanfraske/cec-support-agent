@@ -40,6 +40,8 @@ use provenance::SigningKey;
 use swarm::{Generator, SandboxValidator, Swarm, SwarmError};
 use tools_windows::{firmware_advisory, windows_tools, BoardIdentity};
 
+mod serve;
+
 /// Parsed command-line arguments for the `diagnose` flow.
 struct Args {
     describe: String,
@@ -58,12 +60,26 @@ struct Args {
     /// `--json`: emit a machine-readable `cec-diagnose/v1` result envelope on
     /// stdout (for an embedder driving the engine as a sidecar).
     json: bool,
+    /// `serve`: run the engine as its API face — a loopback HTTP service
+    /// (`/v1/diagnose`, `/v1/execute`, `/v1/health`) for embedding apps.
+    serve: bool,
+    /// `--bind <addr>`: the serve socket address (default 127.0.0.1:8127).
+    bind: String,
+    /// `--allow-remote`: permit a non-loopback bind (deliberate exposure).
+    allow_remote: bool,
 }
 
 #[tokio::main]
 async fn main() -> ExitCode {
     match parse_args() {
         Ok(None) => ExitCode::SUCCESS,
+        Ok(Some(args)) if args.serve => match serve::serve(args).await {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("error: {error:#}");
+                ExitCode::FAILURE
+            }
+        },
         Ok(Some(args)) => match run(args).await {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => {
@@ -92,6 +108,9 @@ fn parse_args() -> Result<Option<Args>, String> {
     let mut sign_off = None;
     let mut inventory_keys = None;
     let mut json = false;
+    let mut serve = false;
+    let mut bind = "127.0.0.1:8127".to_string();
+    let mut allow_remote = false;
 
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -142,6 +161,12 @@ fn parse_args() -> Result<Option<Args>, String> {
             "--json" => json = true,
             // The single verb; accepted for readability of the command line.
             "diagnose" => {}
+            // The engine's API face: a loopback HTTP service for embedders.
+            "serve" => serve = true,
+            "--bind" => {
+                bind = args.next().ok_or("--bind requires a value")?;
+            }
+            "--allow-remote" => allow_remote = true,
             // Generate a sign-off authority key pair. The PUBLIC key goes on the
             // engine (CEC_SIGNOFF_PUBKEY) to ENFORCE attestation; the SECRET seed
             // (CEC_SIGNOFF_SEED) is held only where sign-off is performed — never
@@ -180,6 +205,9 @@ fn parse_args() -> Result<Option<Args>, String> {
         sign_off,
         inventory_keys,
         json,
+        serve,
+        bind,
+        allow_remote,
     }))
 }
 

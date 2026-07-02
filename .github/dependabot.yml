@@ -8,3 +8,13 @@ updates:
       interval: weekly
     commit-message:
       prefix: ci
+  # Watch the Rust dependency tree too — the ed25519 signing chain and the new
+  # HTTP server dependencies are security-sensitive, and cargo-deny's advisory
+  # job only FAILS on a published advisory (e.g. the anyhow 1.0.102 UB advisory
+  # that broke every branch); dependabot proposes the bump.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: deps
