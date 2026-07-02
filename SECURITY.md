@@ -39,6 +39,21 @@ Security-relevant invariants this repo upholds, and which a report may concern:
 - **No mandatory outbound connection.** The engine must cold-start with no
   CEC-hosted service. Unexpected exfiltration or hidden network calls are a
   security issue.
+- **Never-routable capabilities.** The `serve` API (`crates/support-agent/src/serve.rs`)
+  exposes exactly three routes — `GET /v1/health`, `POST /v1/diagnose`, `POST /v1/execute`
+  — frozen by the `router_surface_is_frozen` pinning test. Three capabilities MUST
+  NEVER be reachable over the socket: sign-off **attestation** and **key generation**
+  (`gen-signoff-key`), and corpus **write** (submit). The evidence-integrity keystone
+  is the asymmetric split — the authority holds the ed25519 seed and the engine embeds
+  only the public key — so a network-reachable attest/keygen oracle, or a corpus-write
+  endpoint reachable without a rostered owner identity, would let anyone who reaches the
+  socket mint or admit forged `HumanConfirmed` rows. A route (or any other change) that
+  makes attestation, key generation, or corpus write network-reachable is a security issue.
+- **Inference-egress opt-in.** A non-loopback `--endpoint`/`--fast-endpoint` (the
+  model-inference egress carries raw request prose) is refused at startup on both the
+  `diagnose` and `serve` paths unless `--allow-remote-inference` is explicitly passed.
+  A silent path that sends request prose to a non-loopback host without that opt-in is a
+  security issue.
 
 ## Supported versions
 

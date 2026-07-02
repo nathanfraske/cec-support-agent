@@ -24,6 +24,20 @@
 //! API is a new egress sink, exactly the class of surface the leak-prevention
 //! methodology warns about, so its responses carry vocabulary tokens and
 //! pinned enum strings, never candidate/step free text or tool output prose.
+//!
+//! Never-routable invariant (a security boundary, not a convenience): three
+//! capabilities MUST NEVER be reachable over this socket — sign-off ATTESTATION
+//! and KEY GENERATION (`gen-signoff-key`), and corpus WRITE (submit). The
+//! evidence-integrity keystone is the asymmetric split: the human/verifier
+//! authority holds the ed25519 seed and the engine embeds only the public key,
+//! so an `attest`/keygen endpoint would put the seed — or a network-reachable
+//! signing oracle — inside the serve process and let anyone who reaches the
+//! socket mint `HumanConfirmed` rows (precisely the forgery the gate exists to
+//! refuse). Corpus write is rung-2 (rostered identity + owner authority), never
+//! a rung-0 loopback capability. The exact route set is frozen by
+//! [`route_surface`] and the `router_surface_is_frozen` test: adding ANY route
+//! is a deliberate test edit, and a route that exposed attest, keygen, or corpus
+//! write is a reportable security issue (see `SECURITY.md`).
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -32,7 +46,7 @@ use std::time::{Duration, Instant};
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{get, post, MethodRouter};
 use axum::{Json, Router};
 use serde::Deserialize;
 
@@ -217,16 +231,37 @@ pub(crate) async fn serve(args: crate::Args) -> anyhow::Result<()> {
         sessions: Mutex::new(HashMap::new()),
     });
 
-    let router = Router::new()
-        .route("/v1/health", get(health))
-        .route("/v1/diagnose", post(diagnose))
-        .route("/v1/execute", post(execute))
-        .with_state(state);
+    let router = build_router(state);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     eprintln!("serve: listening on http://{addr} (cec-diagnose/v1, cec-execute/v1)");
     axum::serve(listener, router).await?;
     Ok(())
+}
+
+/// The engine's ENTIRE network-reachable route surface, as `(method, path,
+/// handler)`. This list is the single source of truth for what `serve` exposes:
+/// [`build_router`] folds it into the axum router, and the `router_surface_is_frozen`
+/// test pins the `(method, path)` set — so ADDING A ROUTE is a deliberate edit to
+/// that test, never a silent new surface. The never-routable invariant in the
+/// module docs (attest, keygen, corpus write) is the standing reason this list
+/// must not grow without a security decision.
+fn route_surface() -> Vec<(&'static str, &'static str, MethodRouter<Arc<AppState>>)> {
+    vec![
+        ("GET", "/v1/health", get(health)),
+        ("POST", "/v1/diagnose", post(diagnose)),
+        ("POST", "/v1/execute", post(execute)),
+    ]
+}
+
+/// Fold the frozen [`route_surface`] into the axum router. The pinned surface and
+/// the live router are built from one list, so they cannot drift.
+fn build_router(state: Arc<AppState>) -> Router {
+    let mut router = Router::new();
+    for (_method, path, handler) in route_surface() {
+        router = router.route(path, handler);
+    }
+    router.with_state(state)
 }
 
 async fn health() -> Json<serde_json::Value> {
@@ -759,6 +794,33 @@ mod tests {
             !serialized.to_lowercase().contains("desktop-nathan01")
                 && !serialized.contains("SN12345678"),
             "planted identity leaked into the API execute response"
+        );
+    }
+
+    #[test]
+    fn router_surface_is_frozen() {
+        // The engine's route surface is FROZEN. Adding, removing, or renaming a
+        // route is a deliberate security decision, so it must be an explicit edit
+        // HERE — never a silent new network-reachable surface. In particular
+        // attest, keygen, and corpus WRITE must NEVER be routable (see the module
+        // invariant + SECURITY.md); a route that exposed one is a reportable
+        // security issue.
+        let mut surface: Vec<(&str, &str)> = route_surface()
+            .iter()
+            .map(|(method, path, _)| (*method, *path))
+            .collect();
+        surface.sort_unstable();
+        assert_eq!(
+            surface,
+            vec![
+                ("GET", "/v1/health"),
+                ("POST", "/v1/diagnose"),
+                ("POST", "/v1/execute"),
+            ],
+            "the engine's route surface changed. Adding/removing/renaming a route \
+             is a deliberate decision: attest, keygen, and corpus WRITE must NEVER \
+             be network-reachable. If this change is intended, edit this test AND \
+             confirm the new route honors the §2.5 egress-sink checklist."
         );
     }
 
