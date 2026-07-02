@@ -997,6 +997,55 @@ fn signature_of(events: &[DiagnosticEvent]) -> FaultSignature {
 /// prose (hostname/user/IP/serial) — the app maps the action vocabulary to its
 /// own human-readable labels. Returns the JSON value; the caller emits the
 /// single stdout line so the function stays unit-testable.
+/// Pinned `cec-diagnose/v1` wire values for the envelope's enum fields.
+///
+/// The envelope is a versioned contract (additive-only within a major), so its
+/// enum fields must not ride on `Debug` formatting — a Rust-side variant rename
+/// would silently change the wire with no schema bump. Each mapping below IS
+/// the v1 grammar (mechanical snake_case of the variant name); the exhaustive
+/// matches force every new variant to receive an explicit wire value, and the
+/// pinning test freezes each value so a change fails loudly and demands a
+/// version decision.
+fn wire_source(source: &CandidateSource) -> &'static str {
+    match source {
+        CandidateSource::ColdModel => "cold_model",
+        CandidateSource::CorpusPrimed => "corpus_primed",
+        CandidateSource::Human => "human",
+    }
+}
+
+fn wire_risk(risk: Risk) -> &'static str {
+    match risk {
+        Risk::ReadOnly => "read_only",
+        Risk::Reversible => "reversible",
+        Risk::Destructive => "destructive",
+    }
+}
+
+fn wire_route(route: &Route) -> &'static str {
+    match route {
+        Route::SoftwareState => "software_state",
+        Route::HardwareEvidenced { .. } => "hardware_evidenced",
+        Route::Ambiguous => "ambiguous",
+    }
+}
+
+fn wire_consent(consent: &Consent) -> &'static str {
+    match consent {
+        Consent::ReadOnlyOnly => "read_only_only",
+        Consent::AllowReversible => "allow_reversible",
+        Consent::AllowDestructive => "allow_destructive",
+    }
+}
+
+fn wire_escalation(escalation: &Escalation) -> &'static str {
+    match escalation {
+        Escalation::Auto => "auto",
+        Escalation::VerifierConfirm => "verifier_confirm",
+        Escalation::HumanConfirm => "human_confirm",
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn diagnose_envelope(
     signature: &FaultSignature,
@@ -1012,26 +1061,34 @@ fn diagnose_envelope(
         .map(|c| {
             serde_json::json!({
                 "plan_id": c.plan.id,
-                "source": format!("{:?}", c.source),
-                "max_risk": format!("{:?}", c.plan.risk()),
+                "source": wire_source(&c.source),
+                "max_risk": wire_risk(c.plan.risk()),
                 "actions": c.plan.steps.iter().map(|s| s.action.clone()).collect::<Vec<_>>(),
             })
         })
         .collect();
-    serde_json::json!({
+    let mut envelope = serde_json::json!({
         "schema_version": "cec-diagnose/v1",
         "fault": {
             "fingerprint": signature.fingerprint,
             "symptoms": signature.symptoms.iter().map(|s| s.0.clone()).collect::<Vec<_>>(),
         },
         "config_class": config_class.key(),
-        "route": format!("{route:?}"),
+        "route": wire_route(route),
         "candidates": cands,
         "selected": selected,
-        "consent_required": format!("{consent:?}"),
-        "escalation": format!("{escalation:?}"),
+        "consent_required": wire_consent(consent),
+        "escalation": wire_escalation(escalation),
         "executed": false,
-    })
+    });
+    // The implicated part class rides as a sibling field only on a
+    // hardware-evidenced route (additive-optional under the v1 policy). It is
+    // a fixed taxonomy token ("psu", "storage", …), never request prose — and
+    // it was already on the wire embedded in the old Debug-formatted route.
+    if let Route::HardwareEvidenced { part_class } = route {
+        envelope["part_class"] = serde_json::json!(part_class);
+    }
+    envelope
 }
 
 fn host_config_class(args: &Args) -> anyhow::Result<ConfigClass> {
@@ -1452,6 +1509,74 @@ mod tests {
         assert!(
             c0.get("title").is_none() && c0.get("rationale").is_none(),
             "envelope candidate must not carry free-text fields"
+        );
+    }
+
+    #[test]
+    fn envelope_enum_wire_values_are_pinned_for_cec_diagnose_v1() {
+        // v1 freezes these exact strings. A Rust-side variant rename must fail
+        // HERE, not silently change the wire: within a major the values are
+        // immutable, and changing one demands a schema-major decision.
+        assert_eq!(wire_source(&CandidateSource::ColdModel), "cold_model");
+        assert_eq!(wire_source(&CandidateSource::CorpusPrimed), "corpus_primed");
+        assert_eq!(wire_source(&CandidateSource::Human), "human");
+        assert_eq!(wire_risk(Risk::ReadOnly), "read_only");
+        assert_eq!(wire_risk(Risk::Reversible), "reversible");
+        assert_eq!(wire_risk(Risk::Destructive), "destructive");
+        assert_eq!(wire_route(&Route::SoftwareState), "software_state");
+        assert_eq!(
+            wire_route(&Route::HardwareEvidenced {
+                part_class: "psu".into()
+            }),
+            "hardware_evidenced"
+        );
+        assert_eq!(wire_route(&Route::Ambiguous), "ambiguous");
+        assert_eq!(wire_consent(&Consent::ReadOnlyOnly), "read_only_only");
+        assert_eq!(wire_consent(&Consent::AllowReversible), "allow_reversible");
+        assert_eq!(
+            wire_consent(&Consent::AllowDestructive),
+            "allow_destructive"
+        );
+        assert_eq!(wire_escalation(&Escalation::Auto), "auto");
+        assert_eq!(
+            wire_escalation(&Escalation::VerifierConfirm),
+            "verifier_confirm"
+        );
+        assert_eq!(wire_escalation(&Escalation::HumanConfirm), "human_confirm");
+
+        // The envelope carries the pinned tokens, and a hardware-evidenced
+        // route hoists its part class into the additive sibling field.
+        let cand = heuristic_candidate("explorer.exe crashes on login 0x1234");
+        let sig =
+            FaultSignature::from_symptoms(extract_symptoms("explorer.exe crashes on login 0x1234"));
+        let env = diagnose_envelope(
+            &sig,
+            &CoarseHostInventory.config_class(),
+            &Route::HardwareEvidenced {
+                part_class: "psu".into(),
+            },
+            std::slice::from_ref(&cand),
+            0,
+            &Consent::AllowReversible,
+            &Escalation::HumanConfirm,
+        );
+        assert_eq!(env["route"], "hardware_evidenced");
+        assert_eq!(env["part_class"], "psu");
+        assert_eq!(env["consent_required"], "allow_reversible");
+        assert_eq!(env["escalation"], "human_confirm");
+        assert_eq!(env["candidates"][0]["source"], "cold_model");
+        let software = diagnose_envelope(
+            &sig,
+            &CoarseHostInventory.config_class(),
+            &Route::SoftwareState,
+            std::slice::from_ref(&cand),
+            0,
+            &Consent::AllowReversible,
+            &Escalation::Auto,
+        );
+        assert!(
+            software.get("part_class").is_none(),
+            "part_class rides only on a hardware-evidenced route"
         );
     }
 

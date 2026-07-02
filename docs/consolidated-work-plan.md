@@ -164,10 +164,12 @@ Work items:
   P1/P2 (below); Q1–Q5 stand. Note for Chris that Q2 sharpens: the engine itself is now a
   network surface, so inference egress and API exposure are separate knobs.
 - **B2 (S). Pin the envelope's enum wire values** before any app codes against them:
-  `route`/`source`/`max_risk`/`consent_required`/`escalation` are currently emitted via
-  `Debug` formatting — a variant rename would silently break the wire without a schema
-  bump. Pin explicit serde string values (byte-identical to today's output) + a
-  regression test. Cheap now, expensive after P1'.
+  `route`/`source`/`max_risk`/`consent_required`/`escalation` were emitted via `Debug`
+  formatting — a variant rename would silently break the wire without a schema bump, and
+  `Route::HardwareEvidenced{part_class}` leaked Rust struct syntax onto the wire. Pinned
+  (2026-07-02) as mechanical snake_case tokens with exhaustive matches + a pinning test;
+  `part_class` hoisted to an additive sibling field. A deliberate one-time adjustment made
+  while the envelope has zero consumers — the last cheap moment.
 - **B3 (M). `cec-support-agent serve`** — the API v1:
   - `POST /v1/diagnose` → body `{describe, inventory_keys?, options?}` → **exactly the
     `cec-diagnose/v1` envelope** (reuse `diagnose_envelope()`; no new serialization path).
