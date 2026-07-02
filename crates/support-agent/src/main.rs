@@ -1129,14 +1129,10 @@ fn signature_of(events: &[DiagnosticEvent]) -> FaultSignature {
 /// matches force every new variant to receive an explicit wire value, and the
 /// pinning test freezes each value so a change fails loudly and demands a
 /// version decision.
-fn wire_source(source: &CandidateSource) -> &'static str {
-    match source {
-        CandidateSource::ColdModel => "cold_model",
-        CandidateSource::CorpusPrimed => "corpus_primed",
-        CandidateSource::Human => "human",
-    }
-}
-
+///
+/// A candidate's `source` (cold-model vs corpus-primed) is deliberately NOT a
+/// wire field — it is a corpus membership oracle (leak-C10,
+/// `docs/corpus-cartography-threat.md`). See [`diagnose_envelope`].
 fn wire_risk(risk: Risk) -> &'static str {
     match risk {
         Risk::ReadOnly => "read_only",
@@ -1182,9 +1178,14 @@ fn diagnose_envelope(
     let cands: Vec<_> = candidates
         .iter()
         .map(|c| {
+            // `source` (cold_model vs corpus_primed) is deliberately absent: it is a
+            // corpus MEMBERSHIP oracle (leak-C10, docs/corpus-cartography-threat.md) —
+            // present iff the corpus holds a confirmed fix for this exact key. The
+            // consumer never needs it (actions/max_risk/consent/escalation drive the
+            // UI), so emitting it would gratuitously turn every diagnose into a yes/no
+            // membership probe. Do not re-add it (a negative pin guards this).
             serde_json::json!({
                 "plan_id": c.plan.id,
-                "source": wire_source(&c.source),
                 "max_risk": wire_risk(c.plan.risk()),
                 "actions": c.plan.steps.iter().map(|s| s.action.clone()).collect::<Vec<_>>(),
             })
@@ -1781,12 +1782,18 @@ mod tests {
         assert!(selected < cands.len());
         // each candidate carries exactly the de-identified fields — no title/rationale
         let c0 = &cands[0];
-        for f in ["plan_id", "source", "max_risk", "actions"] {
+        for f in ["plan_id", "max_risk", "actions"] {
             assert!(c0.get(f).is_some(), "envelope candidate missing {f}");
         }
         assert!(
             c0.get("title").is_none() && c0.get("rationale").is_none(),
             "envelope candidate must not carry free-text fields"
+        );
+        // Negative pin: `source` is a corpus membership oracle (leak-C10) and must
+        // never ride the wire. If a future change re-adds it, this fails.
+        assert!(
+            c0.get("source").is_none(),
+            "envelope candidate must not carry `source` (corpus membership oracle, leak-C10)"
         );
     }
 
@@ -1795,9 +1802,6 @@ mod tests {
         // v1 freezes these exact strings. A Rust-side variant rename must fail
         // HERE, not silently change the wire: within a major the values are
         // immutable, and changing one demands a schema-major decision.
-        assert_eq!(wire_source(&CandidateSource::ColdModel), "cold_model");
-        assert_eq!(wire_source(&CandidateSource::CorpusPrimed), "corpus_primed");
-        assert_eq!(wire_source(&CandidateSource::Human), "human");
         assert_eq!(wire_risk(Risk::ReadOnly), "read_only");
         assert_eq!(wire_risk(Risk::Reversible), "reversible");
         assert_eq!(wire_risk(Risk::Destructive), "destructive");
@@ -1842,7 +1846,6 @@ mod tests {
         assert_eq!(env["part_class"], "psu");
         assert_eq!(env["consent_required"], "allow_reversible");
         assert_eq!(env["escalation"], "human_confirm");
-        assert_eq!(env["candidates"][0]["source"], "cold_model");
         let software = diagnose_envelope(
             &sig,
             &CoarseHostInventory.config_class(),
