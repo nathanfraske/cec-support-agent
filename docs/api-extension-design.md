@@ -348,3 +348,44 @@ Everything here is additive-only under D2; nothing forces a v2.
 RFC.** The load-bearing recommendation: build **B6 + B7** now (cheap, pre-consumer); treat **B12** as the
 real W8 and gate it on **B4 + Q1**; and hold the line that **attestation/keygen never cross the network**
 (§1.6, §3) — that is the invariant the whole evidence model rests on.
+
+---
+
+## 5. Decision log
+
+### 2026-07-02 — API posture (owner: Nathan)
+
+The owner's decisions on the questions this document raises, recorded so the constraints are auditable
+against the code that now enforces them.
+
+- **Attestation / keygen / corpus write are never network-reachable — enforced (§1.6, §3).** The anti-scope
+  is now a *mechanical* guard, not just prose: the `serve` router's exact route set — `GET /v1/health`,
+  `POST /v1/diagnose`, `POST /v1/execute` — is frozen by the `router_surface_is_frozen` pinning test, so
+  adding ANY route is a deliberate test edit. The never-routable invariant (attest, keygen, corpus write) is
+  stated in `serve.rs`'s module docs and in `SECURITY.md`; a route that makes any of the three
+  network-reachable is a reportable security issue.
+
+- **Anything that can access the corpus must be attested + encrypted, trusted-box only, trusted calls only
+  (§1.1, §2.2 rung 2).** A corpus-over-API endpoint, *if ever built*, ships **only** over a MyOwnMesh
+  **rostered identity** or **loopback** — **never token-auth public HTTP** (there is no bearer-token tier;
+  see the auth-ladder decision below). **Served rows must carry per-row attestation** so the consumer runs
+  `ensure_attested` itself; today `HttpCorpus::query`'s `FixMapping` aggregate carries none (the read-wire
+  gap tracked in FOLLOWUPS / B4), so **that gap must close first** — ship attested rows, not aggregates.
+  **Encryption expectation:** the transport is encrypted end-to-end (mesh transport, or TLS), never cleartext
+  HTTP. **No corpus endpoint exists yet** — this is a doc-level decision; the route-pinning test above is the
+  mechanical guard that one is not added without this bar being met.
+
+- **Trusted calls only (leak C2) — built now.** `--endpoint`/`--fast-endpoint` refuse a non-loopback host
+  (loopback = `localhost` / `127.0.0.0/8` / `[::1]`) unless `--allow-remote-inference` is passed, on both the
+  `diagnose` and `serve` paths (`validate_inference_endpoints`). This builds the pragmatic minimum of
+  `corpus-leak-prevention.md` §3.1(b). See §1.7: a caller may hint a *tier*, never supply an endpoint — where
+  raw prose egresses stays an audited operator flag.
+
+- **Auth ladder resolved (§2.2).** The API stays **hard-loopback by default**; remote exposure is
+  **mesh-only**. The **bearer-token rung (§2.2 rung 1) will not be built** — rung 0 (loopback) climbs
+  straight to rung 2 (mesh rostered identity). `--allow-remote` prints an AGPL §13 network-service notice at
+  startup, because binding beyond loopback arms the operator's §13 Corresponding-Source duty (the auth
+  posture and the §13 obligation are the same knob; §2.6, `SECURITY.md`).
+
+- **The §2.5 egress-sink checklist is binding policy** — copied into `AGENTS.md`; it must be satisfied in the
+  same PR as any new response type.
