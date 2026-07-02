@@ -25,7 +25,7 @@ pub use candidate::{Candidate, CandidateSource};
 pub use config_class::ConfigClass;
 pub use diagnostic::{DiagnosticEvent, EventKind, Severity};
 pub use execution::{ExecutionResult, StepResult};
-pub use extract::extract_symptoms;
+pub use extract::{extract_symptoms, is_symptom_token};
 pub use fault::{FaultSignature, Symptom};
 pub use fluency::Fluency;
 pub use inventory::{CoarseHostInventory, ExternalInventory, InventoryProvider};
