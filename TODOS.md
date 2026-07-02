@@ -138,6 +138,19 @@ blocked commit — NOT discipline.
 - [ ] [added 2026-06-15 03:30 UTC] **Phase 2 — read-side re-de-id + closed dictionaries**: `from_served` re-validates served rows (`#[serde(try_from)]`); replace `is_stop_code_name`/`module_name` shape heuristics with frozen dictionaries; ban `serde_json::Value` on boundary types.
 - [ ] [added 2026-06-15 03:30 UTC] **[downstream]** The private repo `corpus-ingest` calls `Contribution::new` (now `Result`) — it must adapt when it next bumps the engine pin → FOLLOWUPS.
 
+### Session 2026-07-02 — consolidation, merges, leak-fix, API steer (remote session)
+
+- [x] [added 2026-07-02 15:50 UTC · done 2026-07-02 15:50 UTC] Repo/branch-wide scope + consolidated plan of record → `docs/consolidated-work-plan.md` (9-agent analysis + direct verification; owner's engine-as-API steer folded in, supersedes RFC D1)
+- [x] [added 2026-07-02 15:50 UTC · done 2026-07-02 15:50 UTC] Merge PR #2 (`2d9620a`) then PR #3 (`3b269f8`) into `main` (patch-identical CI clones merged clean, as predicted)
+- [x] [added 2026-07-02 15:50 UTC · done 2026-07-02 15:50 UTC] **Repair `feat/corpus-leak-prevention`:** pushed tip `cf95d1c` did NOT compile (missing `schema.rs` keystone edit — verified twice in fresh worktrees); rebased onto main, restored `de_identify_plan`/`Contribution::new` → `Result` wiring the `deid` mints, re-verified (180 tests, clippy, fmt), force-pushed `0855884`, opened **PR #5**
+- [x] [added 2026-07-02 15:50 UTC · done 2026-07-02 15:50 UTC] Rescue final-session tracking state (TODOS/FOLLOWUPS/HANDOFFS + `.claude/memory/*`) from `ops/agent-handoff` onto a real branch
+- [x] [added 2026-07-02 15:50 UTC · done 2026-07-02 15:50 UTC] De-stale governance docs: checklist §3/§6 flips + §9 Increments 3–10 changelog, SECURITY.md attestation-is-enforced, negative-results NR-2/3/4 fixed-since notes, C-namespace disambiguation
+- [x] [added 2026-07-02 15:50 UTC · done 2026-07-02 15:50 UTC] Record the **engine-as-API** supersession of RFC D1 in `docs/integration-rfc-for-chris.md` + `docs/integration-myown-family.md` (open question #1 resolved; Q2 sharpened; Q1–Q5 still awaiting Chris)
+- [x] [added 2026-07-02 15:50 UTC · done 2026-07-02 15:50 UTC] Pin `cec-diagnose/v1` enum wire grammar (snake_case tokens, exhaustive matches, pinning test, `part_class` additive sibling) — zero consumers yet, last cheap moment (`ec1e388`); 171 tests green
+- [ ] [added 2026-07-02 15:50 UTC] **B3/B4 — engine API v1:** `cec-support-agent serve` (loopback-bound; `POST /v1/diagnose` → `cec-diagnose/v1`; `POST /v1/execute` two-phase consent → `cec-execute/v1` post-execution envelope; poison-token contract tests on the HTTP surface) + `HttpCorpus::query` re-verifies attestation/`admit()` on every received row — see `docs/consolidated-work-plan.md` §3
+- [ ] [added 2026-07-02 15:50 UTC] Merge PR #5 (leak Phase 0, repaired) + the housekeeping PR once CI is green; then rebase any in-flight work
+- [ ] [added 2026-07-02 15:50 UTC] H4 — pin an exact Rust toolchain (or a tested-version CI job) + extend dependabot to the `cargo` ecosystem (the `channel = "stable"` drift already broke CI once, `538cd43`)
+
 ## Done / obsolete (history)
 
 _(completed items stay above, in place, with their `· done` tombstone)_

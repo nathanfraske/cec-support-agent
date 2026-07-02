@@ -15,6 +15,33 @@ Below "Pick up here", keep a reverse-chronological **handoff log** of dated entr
 
 ## Current state
 
+**As of 2026-07-02 ~15:50 UTC.** The 2.5-week-stalled handoff was picked up (remote Claude session,
+owner-directed): the full repo/branch scope is consolidated in **`docs/consolidated-work-plan.md`** (read it
+first — it is the plan of record), and the first wave is executed:
+
+- **PR #2 and PR #3 are MERGED to `main`** (`2d9620a`, `3b269f8`) — main now carries the evidence-integrity
+  layer + MyOwn P0 (171 tests after the wire-pinning below).
+- **`feat/corpus-leak-prevention` was BROKEN as pushed and is now repaired:** the pushed `cf95d1c` did not
+  compile — the keystone `schema.rs` edit (`de_identify_plan`/`Contribution::new` → `Result` calling the
+  `deid` mints) was lost with the ephemeral `/tmp/cec-leak` worktree, so "closes C1" was false on origin.
+  Rebased onto main, edit restored inside the Phase 0 commit (`0855884`), re-verified (180 tests, clippy,
+  fmt), force-pushed, **PR #5 open** → main. Phases 1–2 remain the next big increment.
+- **Owner architecture decision (2026-07-02): the engine presents as an API** consumed by
+  AllMyStuff/MyOwnMesh (supersedes RFC D1 — recorded in `docs/integration-rfc-for-chris.md` +
+  `docs/integration-myown-family.md`). `cec-support-agent serve`: `POST /v1/diagnose` → the
+  `cec-diagnose/v1` envelope; `POST /v1/execute` → a post-execution `cec-execute/v1` envelope (un-defers
+  that FOLLOWUPS item); loopback-bound by default. P1/P2 reshape into API client + service lifecycle;
+  `HttpCorpus::query` read-path attestation hardening is promoted (B4). Not yet implemented — B3/B4 in the
+  plan.
+- **Envelope enum wire values are PINNED** (`ec1e388`, on the housekeeping PR): snake_case tokens via
+  exhaustive matches + a pinning test replace `Debug` formatting; `part_class` hoisted to an additive
+  sibling field. Done now because the envelope still has zero consumers.
+- **Tracking state rescued + docs de-staled** (this branch): the final-session TODOS/FOLLOWUPS/HANDOFFS +
+  `.claude/memory/*` now live on a real branch; checklist §3/§6/§9, SECURITY.md, and negative-results
+  NR-2/3/4 no longer understate the code.
+
+--- previous (superseded) ---
+
 **As of 2026-06-15 ~03:55 UTC.** Two workstreams in flight; main working dir is on `feat/myown-integration-p0`.
 
 **(A) Corpus leak-prevention methodology — ACTIVE (owner: implement Phases 0–2).** On branch
@@ -138,6 +165,13 @@ commit on branch `feat/agent-ops-evidence-integrity`.
 
 ## Pick up here
 
+> **Update 2026-07-02:** the branch state below has moved — `feat/corpus-leak-prevention` is rebased onto
+> main (PRs #2/#3 merged), the missing Phase-0 `schema.rs` edit is restored (`0855884`), and **PR #5** is
+> open. The worktree advice stands. Phases 1–2 below remain the primary engine increment; sequence them
+> against the **engine-as-API work (B3/B4)** per `docs/consolidated-work-plan.md` §9 — B3/B4 first is the
+> recommended order (small, unblocks app-side work; Phase 1 must then include the API module in its
+> egress-sink inventory).
+
 ### PRIMARY — Corpus leak-prevention Phases 1–2 (owner chose Phases 0–2; Phase 0 DONE)
 
 **Branch:** `feat/corpus-leak-prevention` on origin at `cf95d1c` (= the P0 tip `673a381` + the methodology
@@ -250,6 +284,14 @@ license-checks clean. Build loop: `. "$HOME/.cargo/env"` then `cargo build/test/
 See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementation status.
 
 ## Lessons learned (append-only)
+
+- **(2026-07-02) A "DONE + verified" claim is about a LOCAL tree until the pushed tip is rebuilt.** The
+  session-end mirror captured the tracking files but not the code worktree: the Phase-0 keystone edit died
+  with `/tmp/cec-leak`, origin got a non-compiling tip whose commit message claimed a CRITICAL leak class
+  closed, and no PR existed so CI never looked. Rules: (1) ephemeral worktrees push (or at least
+  `cargo check` the pushed sha in a fresh worktree) before session end; (2) open the PR immediately — an
+  unreviewed "done" branch with no CI is where false claims survive; (3) when resuming any handoff, re-verify
+  its central claims against origin before building on them.
 
 - [2026-06-14 19:46 UTC] The local `CEC_AutoDiagnoser` working dir was an empty, non-git folder; the GitHub
   repo of that exact name is also empty. The actual engine is the **`cec-support-agent`** repo. If a CEC
@@ -381,6 +423,17 @@ See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementati
 
 ## Handoff log (reverse-chronological)
 
+- **2026-07-02 15:50 UTC** — **Stalled handoff resumed: repo-wide consolidation + first wave executed.**
+  Scoped every branch/PR/doc (9-agent analysis + direct verification) → `docs/consolidated-work-plan.md`.
+  Merged PR #2 (`2d9620a`) then PR #3 (`3b269f8`). Found the pushed leak-prevention tip `cf95d1c` did NOT
+  compile (9 errors; `schema.rs` keystone edit never committed — lost with the ephemeral worktree; "closes
+  C1" was false on origin): rebased, restored the edit in-commit (`0855884`), re-verified 180 tests/clippy/
+  fmt, opened **PR #5**. Recorded the owner's **engine-as-API** supersession of RFC D1 in both integration
+  docs. Pinned the `cec-diagnose/v1` enum wire grammar (snake_case, exhaustive matches, pinning test,
+  `part_class` sibling field) while the envelope has zero consumers (`ec1e388`). Rescued the final-session
+  tracking files from `ops/agent-handoff` onto a real branch; de-staled checklist/SECURITY/negative-results.
+  Housekeeping PR opened from `claude/repo-scope-work-plan-h93qx5`. **Next:** B3/B4 (serve API v1 +
+  `HttpCorpus` read hardening), then leak Phases 1–2.
 - **2026-06-15 03:55 UTC** — **Corpus leak-prevention: methodology designed + Phase 0 implemented + verified.**
   Owner asked to codify prevention of all corpus leaks incl. agent-accidental ones. Ran a 15-agent workflow
   (`wf_148ceb35-f02`, 57 vectors, 11 critical): wrote `docs/corpus-leak-prevention.md` (4 layers, red-teamed,
