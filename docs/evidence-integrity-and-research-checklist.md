@@ -2,6 +2,21 @@
 
 *Adapted from CEC-Platform's EVIDENCE-INTEGRITY policy (EI-01..EI-08) and RESEARCH CHECKLIST (PP-01..PP-13), re-aimed at the inverted-ground-truth corpus.*
 
+> **Status correction (2026-07-02).** The `GAP` labels in §3/§6 below predate Increments 3–10
+> and the adversarial-audit pass (see §9) — the code is authoritative. As of PR #2/#3 (merged
+> 2026-07-02): MH-2, MH-4, MH-8, EI-01, EI-02, EI-03, EI-05, EI-06 are **implemented and
+> tested**; MH-1 including operator wiring is **done** (rotation/key-registry deferred);
+> MH-3/NR-1 has the `Unverified`-verdict safety half (real post-fix re-collection still pends
+> a Windows host); MH-6 has the honest-derivation seam (`--inventory-keys`; engine-native CIM
+> enrichment pends a Windows host); MH-5 risk reconciliation is done (de-id-at-generation
+> deferred); MH-7 remains open. Individual entries below are flipped where done, with the
+> original spec text kept.
+>
+> **ID-namespace disambiguation.** Three unrelated `C1..Cn` schemes coexist in this repo:
+> leak-prevention threat classes C1–C9 (`docs/corpus-leak-prevention.md` §1.2), adversarial-audit
+> findings C1–C14 (`.claude/audit/confirmed-findings.txt`), and research-draft claim IDs C1/C2
+> (`docs/research/claims.md`). Always cite the source file with a bare `C`-number.
+
 > **Scope.** This repository (`cec-support-agent`) is the **open engine**. It ships **no corpus and no weights** — those live in a separate private repo. The engine ships only the corpus client + schema. Its truth is the **inverted corpus**: signed-off `(FaultSignature, Plan, OutcomeLabel)` triples earned at the sign-off gate and read back **retrieval-first**. Because CEC-Platform's server-side custody (CODEOWNERS, branch protection, two git zones) does not exist for an engine whose corpus lives elsewhere and grows **in-process one row at a time**, every adaptation below re-expresses a CEC-Platform mechanism as an **in-code runtime gate inside `corpus-client`** plus a **paired adversarial CI test** — never as a CI lint on a repo the corpus does not live in.
 
 ---
@@ -39,15 +54,15 @@ But the boundary is **hollow**: `ensure_signed_off` checks exactly one bit — `
 
 Each item is tagged **ENFORCED-NOW**, **PARTIAL**, or **GAP**, with its code hook point. GAP/PARTIAL items are the work the unified `ensure_evidence_integrity()` (§7) must do.
 
-- [ ] **EI-01 — Provenance pin (which knowledge state produced this truth).** `GAP`. Add a provenance pin to `Contribution` — `{retrieval_first, primed_from_plan_ids, verification_class, generator_kind, run_id}` — derived from **observable facts (did `query()` return a hit), not an agent-supplied flag**, so a confirmation can be traced to independent vs corpus-primed origin. *Hook:* `crates/corpus-client/src/schema.rs:91-101`; lane derived at `crates/support-agent/src/main.rs:289` (`corpus.query`) and `:318` (`retrieval_first`).
+- [x] **EI-01 — Provenance pin (which knowledge state produced this truth).** `IMPLEMENTED (Increment 3 — RowProvenance{run_id, retrieval_first, primed_from}; see §9)`. Original spec: Add a provenance pin to `Contribution` — `{retrieval_first, primed_from_plan_ids, verification_class, generator_kind, run_id}` — derived from **observable facts (did `query()` return a hit), not an agent-supplied flag**, so a confirmation can be traced to independent vs corpus-primed origin. *Hook:* `crates/corpus-client/src/schema.rs:91-101`; lane derived at `crates/support-agent/src/main.rs:289` (`corpus.query`) and `:318` (`retrieval_first`).
 
-- [ ] **EI-02 — Control vs augmented lane.** `GAP`. Stamp each row with a **deterministic, signature-indexed lane tag** (control = `query()` returned no hit and generation was de novo; augmented = a `CorpusPrimed` candidate was scored), computed in `corpus-client` so the agent cannot choose which rows are controls. *Hook:* `crates/support-agent/src/main.rs:289-332`; `crates/panel/src/lib.rs:248-254`.
+- [x] **EI-02 — Control vs augmented lane.** `IMPLEMENTED (Increment 3 — retrieval_first derived from the observable query result, primed_from recorded; the --no-retrieval control-lane toggle for the prereg experiment remains open — see docs/research/prereg-control-lane.md §0)`. Original spec: Stamp each row with a **deterministic, signature-indexed lane tag** (control = `query()` returned no hit and generation was de novo; augmented = a `CorpusPrimed` candidate was scored), computed in `corpus-client` so the agent cannot choose which rows are controls. *Hook:* `crates/support-agent/src/main.rs:289-332`; `crates/panel/src/lib.rs:248-254`.
 
-- [ ] **EI-03 — Untainted-only corroboration.** `GAP`. `fix_mappings` increments `confirmations` for **any** matching resolved row (`store.rs:39-50`) — a corpus-primed plan can inflate its own confirmation count (laundering). Increment **only** from rows whose pin shows the plan was generated independently (not `primed_from` this mapping's `plan_id`); corpus-primed confirmations are tracked separately and never alone promote a mapping. The test `confirmations_aggregate_per_plan` (`store.rs:411-423`) submits the **identical row twice and asserts `confirmations==2`** — exactly the self-corroboration this forbids. *Hook:* `crates/corpus-client/src/store.rs:39-50`.
+- [x] **EI-03 — Untainted-only corroboration.** `IMPLEMENTED (Increment 3 — confirmation counting keyed on run_id, self-primed rows excluded, tested; see §9)`. Original spec: `fix_mappings` increments `confirmations` for **any** matching resolved row (`store.rs:39-50`) — a corpus-primed plan can inflate its own confirmation count (laundering). Increment **only** from rows whose pin shows the plan was generated independently (not `primed_from` this mapping's `plan_id`); corpus-primed confirmations are tracked separately and never alone promote a mapping. The test `confirmations_aggregate_per_plan` (`store.rs:411-423`) submits the **identical row twice and asserts `confirmations==2`** — exactly the self-corroboration this forbids. *Hook:* `crates/corpus-client/src/store.rs:39-50`.
 
-- [ ] **EI-05 — Corroboration budget / dormancy.** `GAP`. A mapping is offered on **any** resolved row regardless of how many `Reopened`/failed rows for the same `(signature, config_class, plan.id)` followed it (`store.rs:35`). Offer a mapping only when its **net evidence** (resolved confirmations minus `Reopened`/failed rows for the same key) stays positive; a plan crossing a configurable failure budget with no net positive goes **dormant** and is no longer retrieval-preferred. *Hook:* `crates/corpus-client/src/store.rs:26-53`; labels at `schema.rs:51-61`.
+- [x] **EI-05 — Corroboration budget / dormancy.** `IMPLEMENTED (Increment 4 — net-evidence offer, run-deduped Reopened demotion; see §9)`. Original spec: A mapping is offered on **any** resolved row regardless of how many `Reopened`/failed rows for the same `(signature, config_class, plan.id)` followed it (`store.rs:35`). Offer a mapping only when its **net evidence** (resolved confirmations minus `Reopened`/failed rows for the same key) stays positive; a plan crossing a configurable failure budget with no net positive goes **dormant** and is no longer retrieval-preferred. *Hook:* `crates/corpus-client/src/store.rs:26-53`; labels at `schema.rs:51-61`.
 
-- [ ] **EI-06 — Owner-only source revocation / retraction.** `GAP`. `FileCorpus` is append-only JSONL with no revocation; a bad row, once written, is served retrieval-first forever. Provide an **owner-only revocation** (`HumanConfirmed`-level, not agent-settable): a revoked plan-id/source is consulted in `fix_mappings` and at the checkpoint, refused on read with a **named reason**, and cannot accrue further confirmations; a revoked source **poisons every dependent row**. An `OutcomeLabel::Reopened` (`schema.rs:37`) must demote the prior resolved mapping. *(This is the T-104 "a retracted claim must not become truth" case.)* *Hook:* `crates/corpus-client/src/store.rs:26-53`; `gate.rs:15`.
+- [x] **EI-06 — Owner-only source revocation / retraction.** `IMPLEMENTED (Increment 4 — .with_revoked() + Reopened demotion (T-104); see §9)`. Original spec: `FileCorpus` is append-only JSONL with no revocation; a bad row, once written, is served retrieval-first forever. Provide an **owner-only revocation** (`HumanConfirmed`-level, not agent-settable): a revoked plan-id/source is consulted in `fix_mappings` and at the checkpoint, refused on read with a **named reason**, and cannot accrue further confirmations; a revoked source **poisons every dependent row**. An `OutcomeLabel::Reopened` (`schema.rs:37`) must demote the prior resolved mapping. *(This is the T-104 "a retracted claim must not become truth" case.)* *Hook:* `crates/corpus-client/src/store.rs:26-53`; `gate.rs:15`.
 
 - [ ] **EI-07 — Monotone-tightening law (raise-only on the safety bar).** `ENFORCED-NOW` — the one EI with a real in-code analog. `required_escalation` only ever raises the bar via `.max()` (a non-software route → `HumanConfirm`, an unvalidated state-changing plan → `HumanConfirm`, independent of judge confidence, `panel/src/lib.rs:324-329`); the corpus prior raises only `likelihood`, never safety/reversibility (`lib.rs:240-254`). **One GAP to lock:** assert it as an **invariant** so a future edit cannot let a `CorpusPrimed` prior lower escalation or touch the safety axis, and so `required_escalation` is provably never below `escalation_for`'s base. *Hook:* `crates/panel/src/lib.rs:240-254, 317-331`.
 
@@ -55,7 +70,7 @@ Each item is tagged **ENFORCED-NOW**, **PARTIAL**, or **GAP**, with its code hoo
 
 **The unified checkpoint (the must-have that binds EI-01..EI-08):**
 
-- [ ] **ONE funnel.** Replace the hollow `ensure_signed_off(&Contribution){ sign_off.is_confirmed() }` with **`ensure_evidence_integrity(&EvidenceBundle)`** that all three stores call before any state change (`store.rs:116`, `store.rs:184`, `store.rs:251`), reporting **which** of (a)–(e) failed via a structured per-item `GateError` (mirroring EI-06's named-reason refusals). It admits a row ONLY when it jointly binds:
+- [x] *(IMPLEMENTED, Increment 1 — see §9.)* **ONE funnel.** Replace the hollow `ensure_signed_off(&Contribution){ sign_off.is_confirmed() }` with **`ensure_evidence_integrity(&EvidenceBundle)`** that all three stores call before any state change (`store.rs:116`, `store.rs:184`, `store.rs:251`), reporting **which** of (a)–(e) failed via a structured per-item `GateError` (mirroring EI-06's named-reason refusals). It admits a row ONLY when it jointly binds:
   - **(a)** a real **Verdict** (`Pass`/`ProvisionalPass`, `crates/agent-core/src/verify.rs`) over a **re-collected** post-signature — rejecting the bootstrap-trivial case where `post` is re-derived from the same request text (`main.rs:558-559`), which structurally cannot observe a fix;
   - **(b)** a **judge/provenance attestation** over `(signature, plan, label, sign_off, config_class)` from a **non-ephemeral, identified** key (closing `provenance/src/lib.rs:11-16`);
   - **(c)** a **de-id proof**: leakage-suite-green for the current schema/vocabulary version **+** a structural re-check that the stored plan equals `de_identify_plan(plan)`;
@@ -135,18 +150,18 @@ The ordered list an agent/contributor literally ticks. **Checklist A** is enforc
 
 | # | Attack on the inverted corpus | Defense (checklist item) | Code hook | Status |
 |---|---|---|---|---|
-| MH-1 | Construct `Contribution{sign_off: HumanConfirmed}` directly — the gate passes (one forgeable enum) | **Sign-off attested, not asserted**: gate requires a verifiable ed25519 attestation by an authority whose private key the submitting process does not hold | `gate.rs` `ensure_attested`; `provenance` `SignOffAuthority` | **DONE (library, Increment 2)** — store `.with_authority(pubkey)`; operator wiring + rotation deferred |
-| MH-2 | Flip/forge a label; a "resolved" row is unauditable because no evidence is stored | **Verdict bound into the row** (`Pass`/`ProvisionalPass` + `VerificationClass` + recurring-symptom diff); gate rejects an `is_resolved()` row whose verdict isn't a pass | `schema.rs:91-101`; `verify.rs` | GAP |
-| MH-3 | Every completed software-state run auto-mints `ResolvedConfirmed` (post re-derived from request text, diff always empty) | **Resolved requires a real re-collection** from a live instrument, attested by a distinct collection-run id; bootstrap-echo rows are advisory-only | `main.rs:558-559` | GAP |
-| MH-4 | Hand-edit a confirmed JSONL precedent; it is reloaded and served retrieval-first, bypassing the gate | **Per-row tamper-evidence + re-validate on load**: `FileCorpus::open` re-runs the integrity check; append-only by signature/hash-chain, not OS perms | `store.rs:138-144,181-197` | GAP |
-| MH-5 | Untrusted model prose enters a `PlanStep` with unreconciled risk (claims `ReadOnly` for a destructive action) | **Model output is not a source**: risk-vs-action reconciliation + de-id at generation; advisory (out-of-vocabulary) plans never back a `FixMapping` or count as executed/resolved | `main.rs:878-886`; `schema.rs:122-141` | GAP |
-| MH-6 | Coarse/forged `config_class` collapses distinct hardware; a fix laundered across unverified contexts | **Config-class honestly derived + attested**; scoping preserved (`store.rs:33-34`) | `main.rs:742-747` | PARTIAL (scoping tested) |
+| MH-1 | Construct `Contribution{sign_off: HumanConfirmed}` directly — the gate passes (one forgeable enum) | **Sign-off attested, not asserted**: gate requires a verifiable ed25519 attestation by an authority whose private key the submitting process does not hold | `gate.rs` `ensure_attested`; `provenance` `SignOffAuthority` | **DONE (Increments 2+9)** — `.with_authority(pubkey)`; operator wiring (`gen-signoff-key`, env vars) done; rotation/key-registry deferred |
+| MH-2 | Flip/forge a label; a "resolved" row is unauditable because no evidence is stored | **Verdict bound into the row** (`Pass`/`ProvisionalPass` + `VerificationClass` + recurring-symptom diff); gate rejects an `is_resolved()` row whose verdict isn't a pass | `schema.rs:91-101`; `verify.rs` | **DONE (Increment 3)** — VerificationClass + verdict bound, gate-enforced |
+| MH-3 | Every completed software-state run auto-mints `ResolvedConfirmed` (post re-derived from request text, diff always empty) | **Resolved requires a real re-collection** from a live instrument, attested by a distinct collection-run id; bootstrap-echo rows are advisory-only | `main.rs:558-559` | PARTIAL (Increment 7) — `Unverified` verdict escalates an unobserved outcome; real re-collection pends a Windows host |
+| MH-4 | Hand-edit a confirmed JSONL precedent; it is reloaded and served retrieval-first, bypassing the gate | **Per-row tamper-evidence + re-validate on load**: `FileCorpus::open` re-runs the integrity check; append-only by signature/hash-chain, not OS perms | `store.rs:138-144,181-197` | **DONE (Increment 4 + audit fix A)** — hash chain, `verify_chain`, open-time re-admission fails closed |
+| MH-5 | Untrusted model prose enters a `PlanStep` with unreconciled risk (claims `ReadOnly` for a destructive action) | **Model output is not a source**: risk-vs-action reconciliation + de-id at generation; advisory (out-of-vocabulary) plans never back a `FixMapping` or count as executed/resolved | `main.rs:878-886`; `schema.rs:122-141` | PARTIAL (Increment 6) — risk reconciliation done; de-id-at-generation deferred (FOLLOWUPS) |
+| MH-6 | Coarse/forged `config_class` collapses distinct hardware; a fix laundered across unverified contexts | **Config-class honestly derived + attested**; scoping preserved (`store.rs:33-34`) | `main.rs:742-747` | PARTIAL (Increment 8 + P0 `--inventory-keys` seam) — engine-native CIM enrichment pends a Windows host |
 | MH-7 | An eval/holdout case admitted as a signed row contaminates train/serve (system retrieves the case it's measured on) | **No eval/holdout case admitted**: origin tag; served set provably disjoint from holdout (CL-19 analog) | `schema.rs:91-101`; `gate.rs:15` | GAP |
-| MH-8 | A retracted/proven-wrong fix stays permanent truth and keeps being preferred (T-104) | **Retraction/revocation poisons dependents**: owner-only revocation withdraws the row + its `FixMappings`/confirmations; `Reopened` demotes the prior mapping | `store.rs:26-53`; `schema.rs:37` | GAP |
+| MH-8 | A retracted/proven-wrong fix stays permanent truth and keeps being preferred (T-104) | **Retraction/revocation poisons dependents**: owner-only revocation withdraws the row + its `FixMappings`/confirmations; `Reopened` demotes the prior mapping | `store.rs:26-53`; `schema.rs:37` | **DONE (Increment 4 + audit fix C)** — owner-only revocation; run-deduped `Reopened` demotion |
 | MH-9 | A schema/vocabulary change opens a leak the suite does not cover | **Standing leakage gate**: suite stays green in CI and is **extended** on every schema/vocabulary/plan-shape change; no item ships without an adversarial test | `corpus-client/src/lib.rs:34-127` | PARTIAL (suite green; obligation new) |
-| EI-03/A5 | Re-submit the identical row to manufacture false confidence (`confirmations==2` from one run) | **Independent-confirmation guard** keyed on `run_id`/lane | `store.rs:39-50,411-423` | GAP |
+| EI-03/A5 | Re-submit the identical row to manufacture false confidence (`confirmations==2` from one run) | **Independent-confirmation guard** keyed on `run_id`/lane | `store.rs:39-50,411-423` | **DONE (Increment 3)** — independence guard keyed on run_id, duplicate-row test |
 
-**Sequencing:** **MH-1 is the keystone — now DONE at the library level (Increment 2, ed25519).** With the attestation in place, MH-2/3/4/7/8 can bind verdict/origin/revocation to a row that a caller cannot forge. Remaining keystone work is operator wiring (supplying/holding the authority key) and rotation — see §8 / FOLLOWUPS.
+**Sequencing:** **MH-1 is the keystone — DONE including operator wiring (Increments 2+9, ed25519).** MH-2/4/8 and EI-03/05/06 are bound onto it (Increments 3–4, audit-hardened `11f0609`). Remaining keystone work is rotation / the key-id registry — see §8 / FOLLOWUPS.
 
 ---
 
@@ -171,8 +186,8 @@ The ordered list an agent/contributor literally ticks. **Checklist A** is enforc
 - [ ] **[Canonicalization]** Replace serde field-order canonicalization with a sorted/canonical-JSON encoder before signatures are cross-version/cross-language verified. Resume: `crates/provenance/src/lib.rs:88-91`.
 - [ ] **[MH-3 / NR-1]** Wire a real post-fix re-collection that replaces the bootstrap echo `signature_of(&collect_diagnostics(&args.describe))` so the bound verdict reflects a genuine post-state diff and `ResolvedConfirmed` cannot be trivially minted. Resume: `crates/support-agent/src/main.rs:558-559`.
 - [x] ~~**[MH-2 / EI-01]** ...bind the `verify.rs` Verdict + recurring-symptom diff into `Outcome`...~~ **PARTIALLY DONE (Increment 1)**: the Verdict + recurring diff are bound (`Outcome.verification: Option<common::Verification>`) and the gate rejects a resolved label without a matching pass. Remaining: carry `VerificationClass` + a provenance/lane pin — see §9 and FOLLOWUPS.
-- [ ] **[EI-03 / A5]** Add a run-independence guard to confirmation aggregation keyed on `run_id`/lane, with a test that a duplicate row does not inflate the count. Resume: `crates/corpus-client/src/store.rs:39-50,411-423`.
-- [ ] **[MH-4 / MH-8 / EI-06]** Add per-row tamper-evidence (signature or hash chain) + an owner-only revocation/retraction list to `FileCorpus`; re-verify on `FileCorpus::open`; have `fix_mappings` honor revocation and let `OutcomeLabel::Reopened` demote a prior resolved mapping. Resume: `crates/corpus-client/src/store.rs:26-53,136-157,181-197`.
+- [x] ~~**[EI-03 / A5]** Add a run-independence guard to confirmation aggregation keyed on `run_id`/lane, with a test that a duplicate row does not inflate the count.~~ **DONE (Increment 3, commit `9efaa20`)** — see §9.
+- [x] ~~**[MH-4 / MH-8 / EI-06]** Add per-row tamper-evidence (signature or hash chain) + an owner-only revocation/retraction list to `FileCorpus`; re-verify on `FileCorpus::open`; have `fix_mappings` honor revocation and let `OutcomeLabel::Reopened` demote a prior resolved mapping.~~ **DONE (Increment 4, commit `8cc57a8`; audit-hardened `11f0609`)** — see §9.
 - [ ] **[MH-6 / A7]** Derive `config_class` from real CIM hardware/driver inventory (or BOM revision) instead of OS+ARCH, attested to the producing machine. Resume: `crates/support-agent/src/main.rs:742-747`.
 - [ ] **[MH-5]** Validate model-generated steps (claimed-risk-vs-actual-action reconciliation) and de-identify at generation; add inference-channel provenance (no cert pinning / endpoint / model attestation today) so a swapped endpoint is visible on the row. Resume: `crates/support-agent/src/main.rs:878-886`.
 - [ ] **[Sandbox evidence]** Provide a production `SandboxValidator` impl (the `swarm` trait has none; the CLI hardcodes `sandbox_validated=false`, `main.rs:376`) and decide whether sandbox evidence is bound into the row, so "unvalidated equals escalate" is backed by positive validation evidence.
@@ -213,3 +228,29 @@ the tools report unsupported); it is covered by unit tests.
 MH-2 remainder (`VerificationClass` + lane pin); MH-3 (real post-fix re-collection, NR-1); EI-03/A5 (independent
 confirmations); MH-4/8/EI-06 (tamper-evidence + revocation); MH-5 (model-output validation); MH-6 (honest
 config-class); canonical-JSON plan encoding; sandbox-validation evidence; filling the research tree.
+
+*(The "still open" list above is Increment 2's snapshot; most of it landed in Increments 3–10 below.
+`FOLLOWUPS.md` is authoritative for what actually remains.)*
+
+### Increments 3–10 + adversarial audit + P0 (recorded 2026-07-02, retro-logging the 2026-06-14/15 session)
+
+- **Increment 3** (`9efaa20`) — MH-2/EI-01/EI-02/EI-03: `VerificationClass`, `RowProvenance{run_id,
+  retrieval_first, primed_from}` (derived from observable facts), independence-guarded confirmation counting.
+- **Increment 4** (`8cc57a8`) — MH-4/MH-8/EI-05/EI-06: sha256 hash-chain tamper-evidence + `verify_chain`,
+  owner-only `.with_revoked()`, `Reopened` demotion (T-104), net-evidence offer.
+- **Increment 5** (`02635e3`) — serde-independent canonical encoding for attestation/plan signatures.
+- **Increment 6** (`32ccb20`) — MH-5 `Dispatcher::reconcile_risk` (model-claimed risk never lowers tool risk).
+- **Increment 7** (`af654e2`) — MH-3/NR-1 safety half: `Verdict::Unverified` — an unobserved outcome
+  escalates instead of self-minting `ResolvedConfirmed`.
+- **Increment 8** (`cd2db18`) — MH-6 `host_inventory()` extension point (PARTIAL: engine-native CIM pends
+  a Windows host).
+- **Increment 9** (`7c5d9b3`) — MH-1 operator wiring: `gen-signoff-key`, `CEC_SIGNOFF_PUBKEY` (enforce),
+  `CEC_SIGNOFF_SEED` (self-attest).
+- **Increment 10** (`2d48299`) — sandbox-validation evidence wired into `required_escalation` (no
+  production validator yet; CLI wires `None`).
+- **Adversarial audit** (`11f0609`) — 14 confirmed findings (audit-C1..C14) fixed and independently
+  re-verified, incl. the CRITICAL open-time re-admission bypass (`with_authority` fails closed). 159 tests.
+- **MyOwn P0** (`d61b962`, `ddd1145`) — `InventoryProvider`/`--inventory-keys` (closes the A7/MH-6 seam),
+  `--json` `cec-diagnose/v1` envelope (de-identified by construction), stdout purity. 165 tests.
+- **Merged to `main` 2026-07-02** (PR #2 `2d9620a`, PR #3 `3b269f8`). The leak-prevention line
+  (`docs/corpus-leak-prevention.md` + Phase 0 validating mints) continues on `feat/corpus-leak-prevention`.
