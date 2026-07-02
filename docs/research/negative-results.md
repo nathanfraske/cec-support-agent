@@ -26,17 +26,32 @@ only `is_confirmed()` (`crates/corpus-client/src/gate.rs:15-21`). A library embe
 rows" property is therefore a **discipline** today, not a cryptographic guarantee — it must be claimed as
 such until EI-08/MH-1 attestation lands.
 
+> **Fixed since (2026-06-14, Increments 2+9, commits `7919e56`/`7c5d9b3`; audit-hardened `11f0609`).**
+> ed25519 attestation landed: with `.with_authority(pubkey)` a constructed `HumanConfirmed` is refused at
+> submit and at `open`-time re-admission. The negative stands as a true observation of the pre-Increment-2
+> engine and still applies to a store run **without** an authority configured (cold start).
+
 ## NR-3 — The verification verdict is computed but never bound into the row
 
 `verify_outcome`'s `Verdict` (`crates/agent-core/src/verify.rs`, computed at `main.rs:560`) is used only to
 pick an `OutcomeLabel`; the corpus row stores the label, **not** the recurring-symptom diff or the
 `VerificationClass`. A `resolved` row cannot later be audited against the evidence that justified it.
 
+> **Fixed since (2026-06-14, Increments 1+3, commits `c9af199`/`9efaa20`).** `common::Verification`
+> (result + recurring diff) and `VerificationClass` are bound onto the row and gate-enforced: a resolved
+> label without a matching passing verdict is refused. The negative stands as a true pre-Increment-1
+> observation; any claim citing it must scope it historically.
+
 ## NR-4 — `FileCorpus` has no per-row tamper-evidence
 
 Rows are plain appended JSONL (`crates/corpus-client/src/store.rs:181-197`) with no per-row signature or
 hash chain — append-only is enforced only by OS file permissions. An operator can hand-edit a confirmed
 precedent, which is then served **retrieval-first** as an authoritative fix on the next run.
+
+> **Fixed since (2026-06-14, Increment 4, commit `8cc57a8`; audit-hardened `11f0609`).** `FileCorpus` now
+> hash-chains every row (`chain_hash`, `verify_chain`) and `with_authority` re-runs the full gate over every
+> at-rest row at `open`, failing closed. Residual (still open, FOLLOWUPS): the keyless chain head/tail
+> anchor — a full-file rewrite by a party with file access is detectable only with an authority configured.
 
 ## NR-5 — Self-evaluation (the headline)
 

@@ -3,6 +3,19 @@
 **For:** Chris · **From:** Nathan (+ agent) · **Status:** draft, awaiting input
 **Companion:** the full plan is in [`integration-myown-family.md`](integration-myown-family.md).
 
+> **Supersession (2026-07-02, Nathan).** **D1 is reversed: the engine presents as an API**
+> consumed by AllMyStuff / MyOwnMesh — a `cec-support-agent serve` service speaking versioned
+> HTTP on loopback — instead of a spawn-per-diagnosis CLI sidecar. Everything D1 protected
+> survives: the process boundary (and with it the MIT/AGPL firewall — AGPL §13 is the lever
+> *designed* for a network service), the `cec-diagnose/v1` envelope (it becomes the
+> `POST /v1/diagnose` response verbatim), cold start, and the sign-off/consent gates. The
+> single-shot CLI remains for self-host parity. Execution becomes a second endpoint
+> (`POST /v1/execute`, two-phase consent preserved) returning a post-execution
+> `cec-execute/v1` envelope — which un-defers that FOLLOWUPS item. Q1–Q5 below still stand;
+> **Q2 sharpens**: the engine itself is now a network surface, so API exposure
+> (loopback-only by default, explicit flag to bind wider) and inference egress are separate
+> knobs. Plan details: `docs/consolidated-work-plan.md` §3.
+
 ## The frame (30 seconds)
 
 We're wiring the **cec-support-agent** diagnostic engine (AGPL) into the MyOwn family:
@@ -20,9 +33,11 @@ code.) The engine stays standalone/cold-start; integration is additive trait sea
 
 ## Decided — please sanity-check
 
-- **D1. Single-shot CLI, not a daemon.** AllMyStuff spawns `cec-support-agent diagnose
-  --json …` per diagnosis (nothing to orphan, simplest). A persistent daemon can come
-  later if latency demands it. *(Nathan's call.)*
+- **D1. ~~Single-shot CLI, not a daemon~~ — SUPERSEDED 2026-07-02 (see banner): the engine
+  presents as an API service.** Original rationale kept for the record: AllMyStuff spawns
+  `cec-support-agent diagnose --json …` per diagnosis (nothing to orphan, simplest); a
+  persistent daemon can come later if latency demands it. *(Nathan's call — and Nathan's
+  reversal.)*
 - **D2. Result-envelope versioning = `cec-diagnose/v1`.** The `--json` envelope carries
   `"schema_version": "cec-diagnose/v1"`. **Within a major (`v1`), changes are additive
   only** (new optional fields; consumers ignore unknowns). A breaking change (remove /
@@ -88,14 +103,21 @@ debugging). The envelope carries only de-identified data: vocabulary symptoms (n
 raw request text), the **hashed** config class, the plan's action vocabulary, route,
 consent level, and escalation. Fields:
 `{schema_version, fault:{fingerprint,symptoms[]}, config_class, route, candidates[],
-selected, consent_required, escalation, executed}`, where each **candidate** carries ONLY
+selected, consent_required, escalation, executed}` (+ additive `part_class` beside `route`
+when it is `hardware_evidenced`), where each **candidate** carries ONLY
 `{plan_id, source, max_risk, actions[]}` — the `actions` are tool-name vocabulary (e.g.
 `cim_query`, `create_restore_point`) that **AllMyStuff maps to its own human-readable
 labels**. The envelope deliberately omits a candidate's free-text `title`/`rationale` and
 a step's `description`, because those can carry the raw request prose (hostname/user/IP/
 serial); this is enforced by a de-id regression test + a process-level stdout-contract
 test. Per D2, within `v1` new fields are additive-only; a breaking change bumps the major
-and the consumer errors on an unknown one.
+and the consumer errors on an unknown one. **Enum wire grammar (pinned 2026-07-02, before
+any consumer exists):** the enum-valued fields carry frozen snake_case tokens — `route`:
+`software_state | hardware_evidenced | ambiguous`; candidate `source`:
+`cold_model | corpus_primed | human`; `max_risk`: `read_only | reversible | destructive`;
+`consent_required`: `read_only_only | allow_reversible | allow_destructive`; `escalation`:
+`auto | verifier_confirm | human_confirm` — mapped explicitly in code (never `Debug`
+formatting, which a Rust rename could silently change) and frozen by a pinning test.
 
 Next: P1 (AllMyStuff-side de-id allowlist + the serde-only `diagnose` contract) — which is
 where AllMyStuff first touches the engine, and where Q1–Q5 start to bite.

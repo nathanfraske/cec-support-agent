@@ -10,6 +10,18 @@ boundary, or AllMyStuff's MIT license.
 > reuses patterns AllMyStuff *already* uses for the MyOwnMesh daemon, so it is
 > additive, not speculative.
 
+> **Supersession (2026-07-02, Nathan): the engine presents as an API.** The app→engine hop
+> is `cec-support-agent serve` speaking versioned HTTP on loopback (`POST /v1/diagnose` →
+> the `cec-diagnose/v1` envelope; `POST /v1/execute` → a post-execution `cec-execute/v1`
+> envelope with two-phase consent preserved), not a spawn-per-diagnosis stdio child. The
+> **process boundary and the license resolution below are unchanged** — nothing links; the
+> serde-only wire mirror now mirrors the HTTP schemas; AGPL §13 is the lever designed for
+> exactly this shape. P1/P2 are reshaped accordingly (client + service lifecycle instead of
+> stdio driver + per-run spawn); P0's envelope and inventory seams carry over verbatim.
+> Sidecar *bundling* may still be reused to ship/manage the service binary — the interface
+> is the API. See `docs/integration-rfc-for-chris.md` (banner) and
+> `docs/consolidated-work-plan.md` §3.
+
 ## Cardinal rules (non-negotiable)
 
 1. **The engine stays standalone.** Cold-start (empty `LocalCorpus`, no endpoint, no
@@ -162,9 +174,11 @@ degrade when no engine binary is bundled.
 
 ## Open questions (need the owner's call)
 
-1. **Single-shot CLI vs persistent daemon** — P2 drives a per-diagnose child
+1. **Single-shot CLI vs persistent daemon** — RESOLVED 2026-07-02 (owner): the engine
+   presents as an API service (see the supersession banner above); the single-shot CLI
+   remains for self-host parity. Original text: P2 drives a per-diagnose child
    (`diagnose --json`, nothing to orphan, simplest); a long-lived daemon is faster but
-   adds lifecycle. Recommend single-shot first.
+   adds lifecycle.
 2. **Result-envelope versioning** — `--json` becomes a contract the moment AllMyStuff
    parses it; confirm it carries a `schema_version` and a compatibility policy.
 3. **Identity-unification scope** — sharing one ed25519 seed across the mesh `DeviceId`

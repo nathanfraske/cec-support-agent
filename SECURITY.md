@@ -27,9 +27,13 @@ Security-relevant invariants this repo upholds, and which a report may concern:
   and a **resolved** outcome must carry a **matching passing verification verdict**
   and — when its plan is destructive — **human** sign-off. A way to admit an
   unconfirmed row, a resolved row with no/contradicting verdict, or a destructive
-  "fix" without human sign-off is a security issue. (Cryptographic attestation of
-  the sign-off itself, so a constructed `HumanConfirmed` enum cannot pass, is
-  tracked as the keystone follow-up; see `docs/evidence-integrity-and-research-checklist.md`.)
+  "fix" without human sign-off is a security issue. The sign-off itself is
+  cryptographically attested (ed25519): a store configured with
+  `.with_authority(pubkey)` refuses any confirmed row whose attestation is
+  missing or invalid — a constructed `HumanConfirmed` enum cannot pass, at
+  submit or at `open`-time re-admission. A bypass of `ensure_attested`, the
+  hash-chain tamper-evidence, or owner-only revocation is likewise a security
+  issue; see `docs/evidence-integrity-and-research-checklist.md` §9.
 - **Consent gate.** `agent-core` must not run a state-changing tool without
   consent appropriate to its risk. A bypass is a security issue.
 - **No mandatory outbound connection.** The engine must cold-start with no
