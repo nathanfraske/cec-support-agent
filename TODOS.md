@@ -275,9 +275,12 @@ corpus-hardening items. PR #15 merged first (docs/python-only, kept clean); bran
 `main` (`ac14edf`); babysitter cron `69d7ae77` retired. Plan: `scratchpad/lane2-implementation-plan.md`.
 Sequencing PR-A(item1) · PR-B(item2) · PR-C(item3) · PR-D(item5) · PR-E(items4+6, bundled migration).
 
-- [ ] [added 2026-07-03 01:47 UTC] **Item 1** — gated-MCP-wrapper spec doc over `/v1/execute` (frozen
-  `{diagnose,execute}` verb contract + egress-sink inheritance + T-1..T-7 as normative requirements). Pure
-  doc.
+- [x] [added 2026-07-03 01:47 UTC · done 2026-07-03 02:17 UTC] **Item 1** — gated-MCP-wrapper spec landed as
+  `docs/execution-mcp-wrapper-spec.md` (normative MUST/MUST NOT: one gated verb pair, wrap-the-gates,
+  destructive-floor-unforgeable, risk-reconciled-on-box, out-of-vocab advisory-only, egress-sink inheritance,
+  one audit record per execute, off-box = --allow-remote+mesh+TLS, never-routable caps) + a verb contract, an
+  anti-scope, a conformance checklist, and the Q7/Q1 forks that gate the distributed variant. Cross-linked
+  from the fleet design §5. Completes the execution-zone trio (items 1/2/3) → open PR-1.
 - [x] [added 2026-07-03 01:47 UTC · done 2026-07-03 01:47 UTC] **Item 2** — `SandboxValidator` production
   CONTRACT + "can't-mint-truth" test. Strengthened the trait + `ValidationReport` docs in
   `crates/swarm/src/lib.rs` with the normative "a sandbox LOWERS an escalation, never MINTS truth" contract;

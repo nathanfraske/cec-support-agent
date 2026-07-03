@@ -358,7 +358,8 @@ gate on the entire fleet producing usable data.**
 - **The gated MCP wrapper spec over `/v1/execute`** — the frozen verb contract (`{diagnose, execute}`
   only), the egress-sink checklist inheritance, and the T-1..T-7 gate map above. This is a design
   doc + a trait/route shape, and it hardens the existing serve surface regardless of whether a
-  volunteer ever exists.
+  volunteer ever exists. **Landed as the normative `docs/execution-mcp-wrapper-spec.md`** (binding
+  MUST/MUST NOT + a conformance checklist).
 - **The `SandboxValidator` production contract** — nail the "lowers-only, never raises-without-a-
   signature" rule and the disposable/isolated/reproducible requirements in the trait's doc, and add a
   test that a clean report cannot produce a resolved row. No VM needed to specify it.
