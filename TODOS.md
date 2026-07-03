@@ -240,9 +240,13 @@ tested; the two guards proven red-on-revert. Not pushed (orchestrator opens the 
   `tools/projectops_server.py` (minimal MCP stdio server, raw JSON-RPC, no SDK dep) + `.mcp.json`. Server
   handshake + tools/list + tools/call e2e-tested; invariants pass on the tree and bite on a re-added
   `source`/rogue route/unsorted vocab.
-- [ ] [added 2026-07-03 00:07 UTC] Remaining addendum standup (deferred, owner's call): the review panels
-  (§4, now unblocked — they render projectops JSON), the Stop verify-gate via `projectops verify --checks`,
-  and deepening `projectops invariants` (raw-type-Serialize + full vocab/registry drift). See FOLLOWUPS.
+- [x] [added 2026-07-03 00:07 UTC · done 2026-07-03 01:01 UTC] **Review panels built** (PR #15):
+  `tools/projectops_panel.py` renders projectops JSON into a self-contained theme-aware HTML dashboard
+  (verification/invariants/backlog/blind-audit, summary tiles, status pills + severity stripe); live
+  instance rendered as an Artifact; dogfooding fixed a `verify` deny/gitleaks skip-vs-fail bug.
+- [ ] [added 2026-07-03 01:01 UTC] Remaining addendum refinements (deferred): Stop verify-gate via
+  `projectops verify --checks`, scheduled/Stop panel regen (it is a manual snapshot today), deeper
+  `projectops invariants` (raw-type-Serialize + full vocab/registry drift). See FOLLOWUPS.
 
 ### Session 2026-07-02 — corpus cartography (leak-C10) threat model + non-mappability policy
 

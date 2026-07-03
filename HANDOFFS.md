@@ -671,6 +671,20 @@ See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementati
 
 ## Handoff log (reverse-chronological)
 
+- **2026-07-03 01:01 UTC** — **Review panels (Tier 3) built; the addendum standup Tiers 0-3 are complete.**
+  Merged PR #14 (projectops) to `main`, restarted the branch, then built `tools/projectops_panel.py` (PR
+  #15): it runs the projectops checks and renders one self-contained, theme-aware HTML dashboard
+  (verification / security-invariants / backlog / blind-audit; summary tiles; status pills + a severity
+  stripe on failing rows; both light/dark themes via tokens; static snapshot since the CSP forbids a
+  rendered page calling MCP). A live instance was rendered as a claude.ai Artifact for the owner. Dogfooding
+  the panel surfaced + fixed a real `projectops verify` bug: a missing cargo SUBCOMMAND (`cargo deny` not
+  installed) exits non-127, so it read `fail`; `verify` now treats "no such command" as `skipped` (matching
+  gitleaks). **Standup status:** Tier 0 (provision.sh), Tier 1 (invariant guards + freshness), Tier 2
+  (projectops server), Tier 3 (panels) all DONE. **Pick up here:** the remaining refinements (FOLLOWUPS) —
+  a Stop verify-gate via `projectops verify --checks`, scheduled/Stop panel regen, and deeper `invariants`.
+  ALSO NEW (owner question 2026-07-03): whether to stand up (a) the client-PC-access MCP the diagnosis
+  agents drive and (b) the sandboxed-environment MCP test harness — both are the ENGINE's runtime surface,
+  a different track from the agentic dev-tooling above; scoping pending.
 - **2026-07-03 00:07 UTC** — **projectops server (Tier 2) built; PR #13 merged first.** Merged PR #13
   (addendum spec + Tier-1 guards, all green) to `main`, restarted the branch, then built the `projectops`
   keystone as a fresh PR #14: `tools/projectops.py` (pure-stdlib CLI — `verify` the cargo/gitleaks suite as
