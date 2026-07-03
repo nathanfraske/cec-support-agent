@@ -87,9 +87,13 @@ def cmd_verify(args):
         if only and name not in only:
             continue
         rc, out, err = run(cmd)
-        if rc == 127:  # tool absent (cargo-deny / gitleaks not installed)
+        combined = ((err or "") + (out or "")).lower()
+        # A missing binary (rc 127, e.g. gitleaks) OR a missing cargo subcommand
+        # ("no such command: `deny`", i.e. cargo-deny not installed) means the
+        # optional tool is absent -> skipped, not failed.
+        if rc == 127 or "no such command" in combined:
             checks.append({"check": name, "status": "skipped", "pass": True,
-                           "detail": "%s not installed" % cmd[0]})
+                           "detail": "%s not installed" % name})
             continue
         checks.append({"check": name, "status": "pass" if rc == 0 else "fail",
                        "pass": rc == 0, "detail": "" if rc == 0 else tail(err or out)})

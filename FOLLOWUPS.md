@@ -252,12 +252,17 @@ recommends that are NOT yet built, each attributed to the threat doc's §3 contr
   projectops_server.py` (minimal MCP stdio server, raw JSON-RPC 2.0, no SDK dep) wired in `.mcp.json`.
   Validated: server initialize/tools-list/tools-call e2e; invariants pass on the real tree and provably
   bite on a re-added `source`/rogue route/unsorted vocab. STILL OPEN → re-filed below.
-- [ ] [added 2026-07-03 00:07 UTC] **[AGENTIC ADDENDUM — remaining standup: panels + Stop verify-gate +
-  deeper invariants]** (a) the review panels (§4) — verification / backlog / invariants / blind-audit —
-  which are now unblocked (they render `projectops` JSON) but not built; (b) fold the cargo `verify` suite
-  into the Stop gate by having it call `projectops verify` selectively (the fast tracking-freshness half is
-  already built; the full-suite half was deferred as impractical per turn — `projectops verify --checks`
-  makes a fast subset callable now); (c) deepen `projectops invariants` with a real `no raw type derives
-  Serialize` check and the full `ACTION_VOCABULARY` == dispatcher-registry drift (today the type system + the
-  in-tree drift test cover them). — why deferred: the server keystone is done; these build ON it. Resume:
-  `docs/AGENTIC_ADDENDUM.md` §4 + §2d; `tools/projectops.py`.
+- [x] [added 2026-07-03 00:07 UTC · closed 2026-07-03 01:01 UTC → PR #15: panels built] **[AGENTIC ADDENDUM
+  — review panels (§4)]** BUILT: `tools/projectops_panel.py` renders the `projectops` JSON into one
+  self-contained, theme-aware HTML dashboard (verification / security-invariants / backlog / blind-audit
+  sections; summary tiles; status pills + severity stripe; both themes; static snapshot per the CSP). Live
+  instance rendered as an Artifact. Dogfooding it fixed a `verify` bug (a missing cargo SUBCOMMAND like
+  `cargo deny` exits non-127 → was read `fail`; now treated `skipped`). STILL OPEN → re-filed below.
+- [ ] [added 2026-07-03 01:01 UTC] **[AGENTIC ADDENDUM — remaining: Stop verify-gate, scheduled panel
+  regen, deeper invariants]** (a) fold the cargo `verify` suite into the Stop gate via `projectops verify
+  --checks <fast subset>` (the fast tracking-freshness half is built; the full-suite half stays out of every
+  turn-end as impractical); (b) nothing yet regenerates the panel on a schedule or Stop — it is a manual
+  snapshot; wire a regen (a cron, or a Stop hook writing `panel.html`); (c) deepen `projectops invariants`
+  with a real `no raw type derives Serialize` check and the full `ACTION_VOCABULARY` == dispatcher-registry
+  drift (today the type system + the in-tree drift test cover them). — why deferred: the panels/server are
+  done; these are refinements. Resume: `docs/AGENTIC_ADDENDUM.md` §2d/§4; `tools/projectops.py`.
