@@ -296,6 +296,16 @@ recommends that are NOT yet built, each attributed to the threat doc's §3 contr
   record is emitted (no admissible id to log); consider an id-less "execution refused" marker so a refusal is
   still attributable. — why deferred: skeleton is the greenlit scope; these are rung-2/identity work. Resume:
   `crates/support-agent/src/audit.rs`; `record_outcome` in `main.rs`; `docs/test-validation-fleet-design.md` §2.2.
+- [ ] [added 2026-07-03 03:15 UTC] **[B4 — attested read path, Q6-gated]** `HttpCorpus::query`
+  (`corpus-client/src/store.rs:470`) serves bare `FixMapping`s that carry **no attestation** (`schema.rs:86`;
+  attestation is on `Contribution:198`), and the read path only re-validates the plan's de-id image. To
+  re-verify the ed25519 attestation on served rows, the wire contract must serve an **attested row type**
+  (attested `StoredOutcome` + attestation), which is **RFC Q6** (served-row provenance minimization — still
+  OPEN) and also needs the corpus service to exist. So B4 is part of the larger corpus-over-HTTP/mesh service
+  build, not a small independent item. — why deferred: on inspection it is Q6-gated + service-gated, not the
+  add-a-verify-call I'd scoped. Resume: decide RFC Q6, define the served-row type, then
+  `HttpCorpus::query` calls `ensure_attested`/`admit` against `self.authority`. Ref: `consolidated-work-plan.md`
+  B4; `corpus-cartography-threat.md` V6; RFC Q6.
 - [ ] [added 2026-07-03 01:22 UTC] **[fleet — the hard data/infra gates F4/F5 + volunteer framework]** **F4**
   real post-fix re-collection (`recollect_post_signature() -> None` stub, `main.rs`; NR-1) — until it lands
   every run is `Verdict::Unverified` and can back no resolved row, so it gates the *value* of the entire

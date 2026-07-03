@@ -61,6 +61,15 @@ corpus sign-off authority — or keep them **separate**?
 - **Lean:** unified for the single-operator case, with the seam left open for a split
   deployment. **Blocks:** the corpus-mesh-adapter's authority wiring (Phase P3/P4).
 
+> **DECIDED 2026-07-03 (owner, Nathan) — the volunteer-role half:** a volunteer is a **pure
+> execution target**, NOT an identity that holds a sign-off authority. A **central** human/verifier
+> authority holds the ed25519 sign-off seed and attests every outcome; the volunteer's machine runs
+> the plan and never holds the seed, so a compromised volunteer cannot mint a resolved row. This
+> keeps the sign-off authority centralized (no per-volunteer key), which **narrows Q1 toward the
+> single-authority model** for the corpus side. The remaining open Q1 sub-question is unchanged: for
+> the OPERATOR, unify the mesh `DeviceId` with the corpus sign-off authority (one key) or keep them
+> separate. Pairs with Q7's custodied judge key — both custodied ed25519 keys held centrally.
+
 **Q2. Inference over the mesh — loopback only, or fan out to a peer's MyOwnLLM?** Raw
 symptom free-text (the user's description) is **NOT** de-identified before it reaches the
 model — only the *corpus row* is. So sending inference to a peer's MyOwnLLM over the mesh
@@ -112,6 +121,15 @@ which topology? It forks the whole access-MCP shape and pairs with Q1 (is a volu
 identity that can *hold* a sign-off authority, or purely an execution target whose outcomes a
 central authority attests?). Full analysis: `docs/test-validation-fleet-design.md` §2.1 T-6, §5.
 Gated on the access-MCP design landing; no code depends on it yet.
+
+> **DECIDED 2026-07-03 (owner, Nathan):** topology **(b) — plan signing goes ed25519 with a
+> persistent, custodied judge key**, like sign-off attestation. The distributed access-MCP will
+> have an off-box central judge that signs plans with a custodied ed25519 private key; the executor
+> on the target verifies with the embedded public key. This **pairs with F3** (key custody +
+> rotation + a key-id → key registry) — the judge key is now a second custodied ed25519 key
+> alongside the sign-off authority, and both need the same registry/rotation machinery. Domain-tag
+> separation keeps a judge signature from ever being a valid corpus attestation. No code yet; this
+> is the target the distributed wrapper builds to (the loopback wrapper stays in-process HMAC).
 
 ## What's already built (P0 — no decisions needed, additive + cold-start-safe)
 
