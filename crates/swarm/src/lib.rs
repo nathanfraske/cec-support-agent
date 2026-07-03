@@ -47,13 +47,19 @@ impl<T: Generator + ?Sized> Generator for Box<T> {
     }
 }
 
-/// The verdict from validating a candidate inside a sandbox VM with no user
-/// data.
+/// The escalation evidence from applying a candidate inside a sandbox VM with no
+/// user data. Deliberately NOT a corpus verdict: it reports only whether the
+/// plan applied cleanly, never a post-fix signature. The corpus verdict is a
+/// separate quantity, computed from a real re-collection on the real target —
+/// see the [`SandboxValidator`] contract. Do not extend this type with a
+/// post-state signature or a pass/fail verdict; that would blur the two.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ValidationReport {
     /// The candidate plan id this report is about.
     pub candidate_id: String,
-    /// Whether the plan applied cleanly in the sandbox.
+    /// Whether the plan applied cleanly in the sandbox. Escalation evidence
+    /// only — a clean apply LOWERS a reversible software-state plan's bar; it is
+    /// never a `Verdict::Pass` and never mints a resolved corpus row.
     pub applied_cleanly: bool,
     /// Free-text notes from the sandbox run.
     pub notes: String,
@@ -61,9 +67,33 @@ pub struct ValidationReport {
 
 /// Coordinates running a candidate in a disposable sandbox VM. The actual VM
 /// backend is provided by the host; this is only the coordination surface.
+///
+/// # Contract: a sandbox LOWERS an escalation, it never MINTS truth
+///
+/// A clean [`ValidationReport`] (`applied_cleanly == true`) is *escalation
+/// evidence only*. Its entire authority is to lower a **reversible,
+/// software-state** plan's bar from human sign-off to verifier sign-off (via
+/// `panel::required_escalation`). It does nothing else. Specifically, a clean
+/// report:
+///
+/// - is NOT a `Verdict::Pass`. The corpus verdict comes only from
+///   `agent_core::verify_outcome` over a *real* post-fix re-collection on the
+///   actual target machine — never from the sandbox. Sandbox evidence and the
+///   corpus verdict are different quantities from different machines.
+/// - cannot lower a destructive plan (always human) or a hardware/ambiguous
+///   route (always human).
+/// - cannot, by itself, produce a resolved corpus row. A resolved row is gated
+///   on a matching passing verdict + sign-off + ed25519 attestation, none of
+///   which the sandbox supplies.
+///
+/// A rigged or flaky sandbox can therefore waste a verifier's time; it can never
+/// admit a fix. A dirty apply or a validation error is treated conservatively
+/// (unvalidated ⇒ escalate). See `docs/test-validation-fleet-design.md` §3.
 #[async_trait]
 pub trait SandboxValidator: Send + Sync {
-    /// Validate `candidate`, returning the sandbox's verdict.
+    /// Validate `candidate` in a disposable sandbox, returning escalation
+    /// evidence (a clean/dirty apply), never a corpus verdict — see the trait
+    /// contract above.
     async fn validate(&self, candidate: &Candidate) -> Result<ValidationReport, SwarmError>;
 }
 

@@ -1934,6 +1934,49 @@ mod tests {
         );
     }
 
+    /// The load-bearing sandbox invariant (design doc §3): a clean sandbox report
+    /// is escalation evidence ONLY — it can never mint a resolved corpus row. The
+    /// sandbox flag feeds `required_escalation` (the lowering is proven in
+    /// `panel`); it is NOT an input to the corpus verdict, which comes solely from
+    /// a real post-fix re-collection. This pins that separation so no future
+    /// change can let a clean sandbox launder an unverified fix into truth.
+    #[tokio::test]
+    async fn a_clean_sandbox_can_never_mint_a_resolved_row() {
+        let best = heuristic_candidate("x");
+
+        // A clean apply is positive validation evidence...
+        assert!(
+            sandbox_validated_for(Some(&FakeSandbox { clean: true }), &best, false).await,
+            "clean apply is positive evidence"
+        );
+
+        // ...but it does NOT feed the corpus verdict. With no live re-collection
+        // (`recollect_post_signature()` is `None`), the verdict is `Unverified`
+        // no matter how cleanly the plan applied in the sandbox.
+        let signature = signature_of(&collect_diagnostics("x"));
+        let verdict = verify_outcome(
+            &signature,
+            recollect_post_signature().as_ref(),
+            VerificationClass::Deterministic,
+        );
+        assert_eq!(
+            verdict,
+            Verdict::Unverified,
+            "no live re-collection is Unverified, never a sandbox-derived pass"
+        );
+
+        // ...so even a fully-completed execution labels `EscalatedHumanUnresolved`,
+        // not a resolved row. A clean sandbox cannot admit a fix.
+        let mut execution = ExecutionResult::new(&best.plan.id);
+        execution.completed = true;
+        let label = label_for(&Route::SoftwareState, &execution, &verdict);
+        assert_eq!(label, OutcomeLabel::EscalatedHumanUnresolved);
+        assert!(
+            !label.is_resolved(),
+            "a clean sandbox can never back a fix mapping"
+        );
+    }
+
     #[test]
     fn heuristic_plan_is_reversible_and_needs_consent() {
         let candidate = heuristic_candidate("disk is full");
