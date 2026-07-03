@@ -252,12 +252,45 @@ recommends that are NOT yet built, each attributed to the threat doc's §3 contr
   projectops_server.py` (minimal MCP stdio server, raw JSON-RPC 2.0, no SDK dep) wired in `.mcp.json`.
   Validated: server initialize/tools-list/tools-call e2e; invariants pass on the real tree and provably
   bite on a re-added `source`/rogue route/unsorted vocab. STILL OPEN → re-filed below.
-- [ ] [added 2026-07-03 00:07 UTC] **[AGENTIC ADDENDUM — remaining standup: panels + Stop verify-gate +
-  deeper invariants]** (a) the review panels (§4) — verification / backlog / invariants / blind-audit —
-  which are now unblocked (they render `projectops` JSON) but not built; (b) fold the cargo `verify` suite
-  into the Stop gate by having it call `projectops verify` selectively (the fast tracking-freshness half is
-  already built; the full-suite half was deferred as impractical per turn — `projectops verify --checks`
-  makes a fast subset callable now); (c) deepen `projectops invariants` with a real `no raw type derives
-  Serialize` check and the full `ACTION_VOCABULARY` == dispatcher-registry drift (today the type system + the
-  in-tree drift test cover them). — why deferred: the server keystone is done; these build ON it. Resume:
-  `docs/AGENTIC_ADDENDUM.md` §4 + §2d; `tools/projectops.py`.
+- [x] [added 2026-07-03 00:07 UTC · closed 2026-07-03 01:01 UTC → PR #15: panels built] **[AGENTIC ADDENDUM
+  — review panels (§4)]** BUILT: `tools/projectops_panel.py` renders the `projectops` JSON into one
+  self-contained, theme-aware HTML dashboard (verification / security-invariants / backlog / blind-audit
+  sections; summary tiles; status pills + severity stripe; both themes; static snapshot per the CSP). Live
+  instance rendered as an Artifact. Dogfooding it fixed a `verify` bug (a missing cargo SUBCOMMAND like
+  `cargo deny` exits non-127 → was read `fail`; now treated `skipped`). STILL OPEN → re-filed below.
+- [ ] [added 2026-07-03 01:01 UTC] **[AGENTIC ADDENDUM — remaining: Stop verify-gate, scheduled panel
+  regen, deeper invariants]** (a) fold the cargo `verify` suite into the Stop gate via `projectops verify
+  --checks <fast subset>` (the fast tracking-freshness half is built; the full-suite half stays out of every
+  turn-end as impractical); (b) nothing yet regenerates the panel on a schedule or Stop — it is a manual
+  snapshot; wire a regen (a cron, or a Stop hook writing `panel.html`); (c) deepen `projectops invariants`
+  with a real `no raw type derives Serialize` check and the full `ACTION_VOCABULARY` == dispatcher-registry
+  drift (today the type system + the in-tree drift test cover them). — why deferred: the panels/server are
+  done; these are refinements. Resume: `docs/AGENTIC_ADDENDUM.md` §2d/§4; `tools/projectops.py`.
+- [ ] [added 2026-07-03 01:22 UTC] **[doc reconcile — stale cross-reference]** `docs/corpus-cartography-
+  threat.md` §2 V6 still asserts *"there is no 'Q6' defined anywhere in the tree"* and recommends filing one,
+  but `docs/integration-rfc-for-chris.md` now HAS a **Q6** ("how much provenance does a served row expose?")
+  — the recommendation is already actioned, so the cartography claim is stale. Reconcile: update the V6 note
+  to point at the now-existing RFC Q6 (and Q7). — why deferred: caught by the fleet-design surface-map as a
+  file-content disagreement, not blocking the design landing; a 2-line doc edit. Resume:
+  `docs/corpus-cartography-threat.md` §2 V6 ~`:149-151`.
+- [ ] [added 2026-07-03 01:22 UTC] **[fleet — the three greenlightable pure-engine items]** From
+  `docs/test-validation-fleet-design.md` §5, greenlightable now (no infra, no Chris) once the owner says go:
+  (1) the gated-MCP-wrapper spec over `/v1/execute` (frozen `{diagnose,execute}` verb contract + egress-sink
+  inheritance); (2) the `SandboxValidator` production *contract* + a "clean report cannot mint a resolved row"
+  test; (3) an execution audit-log skeleton (hashed key + plan-id + timestamp — the exec twin of the
+  cartography V7 / MH-1 query-log gap). — why deferred: design-first steer; awaiting the owner's greenlight
+  before any code. Resume: `docs/test-validation-fleet-design.md` §5.
+- [ ] [added 2026-07-03 01:22 UTC] **[fleet — owner-gated forks Q7 + Q1]** **Q7** (plan-signing topology
+  across the execution boundary: judge-on-target keeps HMAC in-process vs ed25519 with a persistent custodied
+  judge key) and **Q1** (is a volunteer a rostered identity that can hold a sign-off authority, or a pure
+  execution target a central authority attests) both block the access-MCP topology. — why deferred:
+  owner/Chris decisions, no code depends on them yet. Resume: `docs/integration-rfc-for-chris.md` Q1/Q7;
+  `docs/test-validation-fleet-design.md` §2.1 T-6 / §5.
+- [ ] [added 2026-07-03 01:22 UTC] **[fleet — the hard data/infra gates F4/F5 + volunteer framework]** **F4**
+  real post-fix re-collection (`recollect_post_signature() -> None` stub, `main.rs`; NR-1) — until it lands
+  every run is `Verdict::Unverified` and can back no resolved row, so it gates the *value* of the entire
+  fleet; needs a Windows host. **F5** a production `SandboxValidator` VM backend (the seam is wired `None` in
+  both callers). The **volunteer enrollment + scoped/revocable consent + legal framework** — no volunteer
+  concept exists in code at all; largest greenfield, mostly policy/legal not engine. — why deferred: infra +
+  legal + owner sequencing, all downstream of the greenlight items and the Q7/Q1 forks. Resume:
+  `docs/test-validation-fleet-design.md` §5; `docs/consolidated-work-plan.md` F4/F5.

@@ -202,30 +202,37 @@ MCP URL, so panels read `projectops` through the harness, not via `fetch()`.
 
 ---
 
-## 4. Panels and the one feature they require
+## 4. Panels (built)
 
-Panels are review surfaces the harness renders for the maintainer. Each needs the same one
-thing: structured data from `projectops` plus stable, parseable document formats.
+The review surface is built as **`tools/projectops_panel.py`** — it runs the §3 checks and
+renders their JSON into one self-contained, theme-aware HTML dashboard. Because the harness
+CSP forbids a rendered page from calling an MCP URL, the panel is a **static snapshot**: the
+data is baked in at generation time, and you regenerate to refresh (`python3
+tools/projectops_panel.py --verify -o panel.html`). It is content-only HTML, so it drops
+straight into the harness Artifact wrapper and also opens on its own. Its sections:
 
-- **Verification panel.** Live pass/fail of the suite: fmt, clippy `-D warnings`, build, test
-  across the three OSes, `cargo deny`, the gitleaks scan, plus the invariant checks. The most
-  important to implement, because it is what the Stop gate and the maintainer both rely on.
-- **Backlog panel.** The open TODOS/FOLLOWUPS items in working order, each with its deferral
-  gate, and the deferred crypto-dep bumps (getrandom/hmac/sha2) alongside.
-- **Invariants panel.** The six runtime invariants and the four corpus properties —
-  **admissibility** (the sign-off/attestation gate), **authenticity** (the de-id type
-  barrier + attestation), **access** (loopback/mesh auth ladder), **non-mappability**
-  (leak-C10) — each with status, plus the frozen constants (§7's reserved-value analogues)
-  and whether each still matches its guard.
-- **Blind-audit panel.** For a kernel run (§7): the packet, the panel verdicts, and the
-  convergence — which findings survived independent blind auditors and were then verified
-  against the source.
+- **Verification.** Each suite check (fmt, clippy `-D warnings`, build, test, `cargo deny`,
+  gitleaks) as a pass/fail/skipped pill with its failing lines; an absent optional tool
+  (cargo-deny, gitleaks) reads `skipped`, not failed. `--verify` runs the full suite; without
+  it the panel marks verification "not run in this snapshot."
+- **Security invariants.** The six fast `projectops invariants` guards (no exfil tracked; no
+  `source` membership label; frozen `/v1` route surface; sorted `ACTION_VOCABULARY`; wire pins
+  present; hooks executable), each a named pass/fail.
+- **Backlog.** The open `TODOS.md`/`FOLLOWUPS.md` items with counts and UTC stamps.
+- **Blind audit.** The §7 method with an idle "no active run" state (a run is on demand); the
+  surface reports the packet, the verdicts, and which findings survived and were source-verified.
 
-The common requirement, stated once: the verification suite must exist as a callable tool
-emitting structured output (not ad-hoc greps), and the parseable artifacts (the tracking
-files, `ACTION_VOCABULARY`, the wire grammar, the `GateError` variants) must hold stable
-formats. Those two things are the agentic features that make panels function; the rest is
-rendering.
+A summary tile row (verify · invariants N/M · open backlog · hooks) puts the health read
+before the detail, state is encoded in form (status pills, a severity stripe on a failing
+row) as well as number, and the semantic good/warn/crit palette is kept separate from the
+teal accent. The common requirement stands: the panel is only as good as `projectops`
+emitting structured output and the tracking/constant formats staying parseable (§5).
+
+*Still open (FOLLOWUPS): the panels render a snapshot but nothing yet regenerates them on a
+schedule or a Stop; and the invariants set can deepen (a real no-raw-`Serialize` check, the
+full vocabulary/registry drift). Building the panel dogfood-surfaced and fixed a `verify`
+bug — a missing cargo **subcommand** (`cargo deny` absent) exits non-127, so it was read as
+`fail` rather than `skipped`; `projectops.py` now treats "no such command" as skipped too.*
 
 ---
 

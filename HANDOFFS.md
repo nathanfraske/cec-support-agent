@@ -15,6 +15,44 @@ Below "Pick up here", keep a reverse-chronological **handoff log** of dated entr
 
 ## Current state
 
+**As of 2026-07-03 ~01:22 UTC.** **The test-and-validation-fleet model is now DESIGNED (decision-ready,
+no code)** on branch **`claude/repo-scope-work-plan-h93qx5`**. This scoped the two highest-risk *runtime*
+surfaces the owner asked to stand up: **(a)** the target-environment access MCP (how a diagnosis agent
+reaches a client/volunteer PC) and **(b)** the sandbox test-harness MCP. Per the owner's design-first steer,
+this is a threat model + contract, **not** an implementation — these are the on-machine execution zone and
+must be modeled before built.
+
+- **`docs/test-validation-fleet-design.md` landed.** The cardinal rule: **both MCP surfaces WRAP the
+  existing gates (two-phase consent, ed25519 sign-off, HMAC plan-provenance, risk reconciliation,
+  escalation-recompute, advisory-only rail) — they never expose a raw on-machine tool.** The verb is a gated
+  `diagnose`/`execute` over `/v1/execute`, never `registry_set`/`download_file`/shell/the internal
+  `{tool,args}` loop. Contents: the 6-stage loop mapped onto existing code (§1); the T-1..T-7 execution-boundary
+  threat model, each mapped to the gate that stops it + the NEW wire-boundary guard (§2); the `SandboxValidator`
+  "lowers-an-escalation-never-raises-trust-without-a-signature" contract (§3); **§3.1 the Windows-reproduction
+  mechanism** (see below); the volunteer fleet as a de-identified execution *target* with no volunteer-id on the
+  row (§4); greenlight-now vs infra-gated vs Chris-gated sequencing (§5); anti-scope (§6); honest gaps (§7).
+- **§3.1 answers the owner's live question** ("a golden image per Windows update?"): **No.** `ConfigClass`
+  (`common/src/config_class.rs`) is the image key and keys on `{release branch} × {hardware/driver inventory}`
+  (shipped test uses `"os:windows 11 23h2"`, not a monthly build) — a cumulative update mints no new class.
+  When a patched image *is* needed, the KB is injected **offline via DISM from the Update Catalog** (no box
+  "downloads" it); images are demand-driven. The hard boundary: a VM reproduces *software-state* cheaply/offline
+  but **cannot synthesize real silicon** (OEM driver stack/firmware) — that dimension is exactly why the
+  volunteer fleet exists (sandbox = software-state classes; volunteers = hardware classes).
+- **RFC Q7 filed** (`docs/integration-rfc-for-chris.md`): plan-provenance signing across the *execution*
+  boundary — the current per-run symmetric HMAC assumes judge==executor in one process; off-box that breaks.
+  Fork: **(a)** judge-runs-on-target (HMAC stays in-process) vs **(b)** ed25519 with a persistent custodied
+  judge key. Pairs with Q1 (is a volunteer a rostered identity that holds an authority, or a pure target?).
+- **The three hard gates the design surfaces (all pre-existing, now named as fleet-blocking):** **F4** real
+  post-fix re-collection (`recollect_post_signature() -> None` stub, NR-1) — *gates the value of the entire
+  fleet*, since every run is `Unverified` until it lands; **F5** a production `SandboxValidator` VM backend
+  (seam wired `None` in both callers); the **volunteer enrollment + scoped/revocable consent framework**
+  (no volunteer concept exists in code at all — the largest greenfield, mostly policy/legal not engine).
+
+**No `.rs` code changed this pass** — three docs only (`test-validation-fleet-design.md` new; `integration-rfc-
+for-chris.md` +Q7; the design doc's §5 points at Q7). 210 tests unchanged.
+
+--- previous (superseded by the fleet-design state above) ---
+
 **As of 2026-07-02 ~18:54 UTC.** **Corpus cartography (leak-C10) is now the fourth enforced corpus
 property** — after **admissibility** (the sign-off/attestation gate), **authenticity** (de-id + the leak
 Phase 0-2 type barrier), and **access** (the auth ladder + loopback/mesh posture) — **non-mappability /
@@ -289,6 +327,22 @@ commit on branch `feat/agent-ops-evidence-integrity`.
   - Recon + design panel artifacts under `.claude/recon/*.json` and `.claude/wf-*.js`.
 
 ## Pick up here
+
+> **Update 2026-07-03 ~01:22 UTC (the live front):** the **test-and-validation-fleet design is landed and
+> decision-ready** (`docs/test-validation-fleet-design.md`; RFC gained **Q7**). It is DESIGN ONLY — do **not**
+> start building the MCP surfaces; the owner's confirmed steer is design/threat-model-first for the
+> execution zone. **Next step: present the doc + await the owner's call** on two owner-gated forks — **Q7**
+> (plan-signing topology across the execution boundary: judge-on-target vs ed25519 custodied key) and **Q1**
+> (is a volunteer a rostered identity or a pure execution target). Three items are **greenlightable now,
+> pure-engine, no infra/no Chris** if the owner says go (design doc §5): (1) the gated-MCP-wrapper spec over
+> `/v1/execute` (frozen `{diagnose,execute}` verb contract + egress-sink inheritance) — hardens serve
+> regardless of any volunteer; (2) the `SandboxValidator` production *contract* + a "clean report cannot mint
+> a resolved row" test; (3) an execution audit-log skeleton (hashed key + plan-id + timestamp — the twin of
+> the cartography V7 gap). The hard data gate under everything is **F4** (real post-fix re-collection; until
+> it lands every run is `Unverified`). The corpus-leak-prevention / API-posture / cartography work below is
+> all SHIPPED (see the log) — it is history, not the next step.
+
+--- superseded corpus-leak-prevention resume notes below (Phase 2 is DONE — see the handoff log) ---
 
 > **Update 2026-07-02:** the branch state below has moved — `feat/corpus-leak-prevention` is rebased onto
 > main (PRs #2/#3 merged), the missing Phase-0 `schema.rs` edit is restored (`0855884`), and **PR #5** is
@@ -671,6 +725,40 @@ See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementati
 
 ## Handoff log (reverse-chronological)
 
+- **2026-07-03 01:22 UTC** — **Test-and-validation-fleet model designed (decision-ready, no code).** Scoped
+  the two highest-risk runtime surfaces the owner asked to stand up — (a) the target-environment access MCP,
+  (b) the sandbox test-harness MCP — via a sonnet ground-truth surface-map (read-only, every fact `file:line`)
+  + an opus threat-model/design pass, cross-checked against each other. Landed `docs/test-validation-fleet-
+  design.md`: cardinal rule (both surfaces WRAP the existing gates, never expose a raw tool; verb is gated
+  `diagnose`/`execute` over `/v1/execute`); the T-1..T-7 execution-boundary threat model; the SandboxValidator
+  "lowers-an-escalation, never raises-trust-without-a-signature" contract; **§3.1 the Windows-reproduction
+  mechanism** (config_class = image key at `{release branch}×{hw/driver inventory}` granularity → a monthly
+  update mints no new class; offline DISM injection so no box "downloads" an update; the VM-can't-synthesize-
+  silicon boundary that splits sandbox=software-state from volunteers=hardware); volunteer machine as a
+  de-identified execution target with no volunteer-id on the row (leak-C10 extended); greenlight-now vs
+  infra-gated vs Chris-gated sequencing. Filed **RFC Q7** (plan-signing across the execution boundary:
+  judge-on-target vs ed25519 custodied key; pairs with Q1). Named F4 (real re-collection) as the hard gate on
+  the whole fleet's value. Docs-only; 210 tests unchanged. **Next: present + await owner on Q7/Q1 and whether
+  to greenlight the three pure-engine items (MCP wrapper spec, SandboxValidator contract, exec audit-log
+  skeleton).** **Lesson:** a design agent's "no Q6 exists" style claim can go stale against a doc that gained
+  the item later — always cross-check a design doc's cross-references against the *current* file content (the
+  surface-map caught exactly this: the cartography doc still says "no Q6 defined anywhere" but the RFC now has
+  Q6). Filed as a FOLLOWUPS reconcile.
+
+- **2026-07-03 01:01 UTC** — **Review panels (Tier 3) built; the addendum standup Tiers 0-3 are complete.**
+  Merged PR #14 (projectops) to `main`, restarted the branch, then built `tools/projectops_panel.py` (PR
+  #15): it runs the projectops checks and renders one self-contained, theme-aware HTML dashboard
+  (verification / security-invariants / backlog / blind-audit; summary tiles; status pills + a severity
+  stripe on failing rows; both light/dark themes via tokens; static snapshot since the CSP forbids a
+  rendered page calling MCP). A live instance was rendered as a claude.ai Artifact for the owner. Dogfooding
+  the panel surfaced + fixed a real `projectops verify` bug: a missing cargo SUBCOMMAND (`cargo deny` not
+  installed) exits non-127, so it read `fail`; `verify` now treats "no such command" as `skipped` (matching
+  gitleaks). **Standup status:** Tier 0 (provision.sh), Tier 1 (invariant guards + freshness), Tier 2
+  (projectops server), Tier 3 (panels) all DONE. **Pick up here:** the remaining refinements (FOLLOWUPS) —
+  a Stop verify-gate via `projectops verify --checks`, scheduled/Stop panel regen, and deeper `invariants`.
+  ALSO NEW (owner question 2026-07-03): whether to stand up (a) the client-PC-access MCP the diagnosis
+  agents drive and (b) the sandboxed-environment MCP test harness — both are the ENGINE's runtime surface,
+  a different track from the agentic dev-tooling above; scoping pending.
 - **2026-07-03 00:07 UTC** — **projectops server (Tier 2) built; PR #13 merged first.** Merged PR #13
   (addendum spec + Tier-1 guards, all green) to `main`, restarted the branch, then built the `projectops`
   keystone as a fresh PR #14: `tools/projectops.py` (pure-stdlib CLI — `verify` the cargo/gitleaks suite as
