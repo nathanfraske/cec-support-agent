@@ -248,6 +248,26 @@ tested; the two guards proven red-on-revert. Not pushed (orchestrator opens the 
   `projectops verify --checks`, scheduled/Stop panel regen (it is a manual snapshot today), deeper
   `projectops invariants` (raw-type-Serialize + full vocab/registry drift). See FOLLOWUPS.
 
+### Session 2026-07-03 — test-and-validation-fleet model (design/threat-model, no code)
+
+Owner asked to stand up the two runtime MCP surfaces of the fleet model: (a) the target-environment access
+MCP (agent → client/volunteer PC) and (b) the sandbox test-harness MCP. Owner's steer: design/threat-model
+first (highest-risk execution zone). Owner's live question this session: "a golden image per Windows update?"
+
+- [x] [added 2026-07-03 00:40 UTC · done 2026-07-03 01:22 UTC] Map the existing execution/validation/corpus
+  surfaces as read-only ground truth (sonnet agent) → `scratchpad/exec-validation-surface-map.md` (every fact
+  `file:line`); confirmed the 8 stated gaps (no SandboxValidator impl, `recollect_post_signature -> None`, no
+  mesh/roster in code, no volunteer/telemetry/fleet concept, prereg-lane VOID unless filled first,
+  `driver_rollback` vocab-without-tool, no serve caller-auth, ephemeral per-run signing key).
+- [x] [added 2026-07-03 00:40 UTC · done 2026-07-03 01:22 UTC] Design the two MCP surfaces + threat model
+  (opus agent), cross-checked against the ground-truth map, and land `docs/test-validation-fleet-design.md`:
+  cardinal WRAP-the-gates rule; T-1..T-7 execution-boundary threat map; SandboxValidator lowers-only contract;
+  §3.1 Windows-reproduction mechanism folded in per the owner's question; volunteer = de-identified target,
+  no volunteer-id on the row; greenlight/infra/Chris sequencing; F4 named as the fleet's hard data gate.
+- [x] [added 2026-07-03 01:22 UTC · done 2026-07-03 01:22 UTC] File **RFC Q7** (plan-signing across the
+  execution boundary — judge-on-target vs ed25519 custodied key; pairs with Q1) in
+  `docs/integration-rfc-for-chris.md`, and point the design doc §5 at it.
+
 ### Session 2026-07-02 — corpus cartography (leak-C10) threat model + non-mappability policy
 
 Owner-raised threat (2026-07-02): "Can a surface expose the internal corpus by mapping it out through

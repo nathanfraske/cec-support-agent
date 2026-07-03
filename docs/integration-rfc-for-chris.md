@@ -98,6 +98,21 @@ needs to verify and use a row (attested `StoredOutcome` + attestation), never `p
 or raw `confirmations`, unless a decision log entry explicitly authorizes it. **Decision:**
 confirm this bar before B4's wire contract ships; gated on B4.
 
+**Q7. Plan-provenance signing across the *execution* boundary.** Plan signing today is
+symmetric HMAC with a **fresh, ephemeral per-run key**, sound *only* because the judge and
+executor are the same process (`provenance/src/lib.rs:141-154`; `SignedPlan` is in-process,
+never serialized). A distributed access MCP — where the diagnosing agent/judge is off-box and
+the executor runs on the target (client or volunteer) — **breaks that same-process
+assumption**: a symmetric key shared across the wire is a signing oracle, and an ephemeral
+per-run key has no persistent judge custody to attribute a signature to. Two topologies close
+it: **(a)** the **judge runs on the target box** — the off-box agent sends diagnostics, the
+target judges + signs + executes locally, and HMAC stays in-process; or **(b)** plan signing
+goes **ed25519 with a persistent, custodied judge key**, like sign-off attestation. **Decision:**
+which topology? It forks the whole access-MCP shape and pairs with Q1 (is a volunteer a rostered
+identity that can *hold* a sign-off authority, or purely an execution target whose outcomes a
+central authority attests?). Full analysis: `docs/test-validation-fleet-design.md` §2.1 T-6, §5.
+Gated on the access-MCP design landing; no code depends on it yet.
+
 ## What's already built (P0 — no decisions needed, additive + cold-start-safe)
 
 - `common::InventoryProvider` trait + `CoarseHostInventory` (today's os/arch/family

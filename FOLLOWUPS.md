@@ -266,3 +266,31 @@ recommends that are NOT yet built, each attributed to the threat doc's §3 contr
   with a real `no raw type derives Serialize` check and the full `ACTION_VOCABULARY` == dispatcher-registry
   drift (today the type system + the in-tree drift test cover them). — why deferred: the panels/server are
   done; these are refinements. Resume: `docs/AGENTIC_ADDENDUM.md` §2d/§4; `tools/projectops.py`.
+- [ ] [added 2026-07-03 01:22 UTC] **[doc reconcile — stale cross-reference]** `docs/corpus-cartography-
+  threat.md` §2 V6 still asserts *"there is no 'Q6' defined anywhere in the tree"* and recommends filing one,
+  but `docs/integration-rfc-for-chris.md` now HAS a **Q6** ("how much provenance does a served row expose?")
+  — the recommendation is already actioned, so the cartography claim is stale. Reconcile: update the V6 note
+  to point at the now-existing RFC Q6 (and Q7). — why deferred: caught by the fleet-design surface-map as a
+  file-content disagreement, not blocking the design landing; a 2-line doc edit. Resume:
+  `docs/corpus-cartography-threat.md` §2 V6 ~`:149-151`.
+- [ ] [added 2026-07-03 01:22 UTC] **[fleet — the three greenlightable pure-engine items]** From
+  `docs/test-validation-fleet-design.md` §5, greenlightable now (no infra, no Chris) once the owner says go:
+  (1) the gated-MCP-wrapper spec over `/v1/execute` (frozen `{diagnose,execute}` verb contract + egress-sink
+  inheritance); (2) the `SandboxValidator` production *contract* + a "clean report cannot mint a resolved row"
+  test; (3) an execution audit-log skeleton (hashed key + plan-id + timestamp — the exec twin of the
+  cartography V7 / MH-1 query-log gap). — why deferred: design-first steer; awaiting the owner's greenlight
+  before any code. Resume: `docs/test-validation-fleet-design.md` §5.
+- [ ] [added 2026-07-03 01:22 UTC] **[fleet — owner-gated forks Q7 + Q1]** **Q7** (plan-signing topology
+  across the execution boundary: judge-on-target keeps HMAC in-process vs ed25519 with a persistent custodied
+  judge key) and **Q1** (is a volunteer a rostered identity that can hold a sign-off authority, or a pure
+  execution target a central authority attests) both block the access-MCP topology. — why deferred:
+  owner/Chris decisions, no code depends on them yet. Resume: `docs/integration-rfc-for-chris.md` Q1/Q7;
+  `docs/test-validation-fleet-design.md` §2.1 T-6 / §5.
+- [ ] [added 2026-07-03 01:22 UTC] **[fleet — the hard data/infra gates F4/F5 + volunteer framework]** **F4**
+  real post-fix re-collection (`recollect_post_signature() -> None` stub, `main.rs`; NR-1) — until it lands
+  every run is `Verdict::Unverified` and can back no resolved row, so it gates the *value* of the entire
+  fleet; needs a Windows host. **F5** a production `SandboxValidator` VM backend (the seam is wired `None` in
+  both callers). The **volunteer enrollment + scoped/revocable consent + legal framework** — no volunteer
+  concept exists in code at all; largest greenfield, mostly policy/legal not engine. — why deferred: infra +
+  legal + owner sequencing, all downstream of the greenlight items and the Q7/Q1 forks. Resume:
+  `docs/test-validation-fleet-design.md` §5; `docs/consolidated-work-plan.md` F4/F5.
