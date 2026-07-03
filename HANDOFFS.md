@@ -15,6 +15,23 @@ Below "Pick up here", keep a reverse-chronological **handoff log** of dated entr
 
 ## Current state
 
+**As of 2026-07-03 ~01:47 UTC.** **Lane ② (pure-engine work) is UNDERWAY.** PR #15 (panels + fleet-design
+docs) merged to `main` (`ac14edf`); branch **`claude/repo-scope-work-plan-h93qx5`** restarted from the new
+`main`; babysitter cron `69d7ae77` retired. Owner greenlit the whole of Lane ② ("both, together") from
+`docs/test-validation-fleet-design.md` §5 — 3 fleet contracts + 3 corpus-hardening items — to land as green
+PRs. **Plan of record:** `scratchpad/lane2-implementation-plan.md` (6 items, PR split, the two migration
+risks). **Item 2 DONE (committed on-branch, not yet PR'd):** the `SandboxValidator` "lowers-an-escalation,
+never mints truth" contract is now normative in `crates/swarm/src/lib.rs` docs, pinned by a new
+`support-agent` test (`a_clean_sandbox_can_never_mint_a_resolved_row`) proving clean-apply + `None`
+re-collection → `Unverified` → `EscalatedHumanUnresolved`. Workspace green (clippy -D, all tests; unit 35→36).
+**Remaining Lane ② (see TODOS + plan):** item 1 (MCP-wrapper spec doc), item 3 (exec audit-log skeleton),
+item 5/B4 (HttpCorpus read-path attestation re-verify), items 4+6 bundled (F2 canonical `chain_hash` +
+leak-C7 keyed fingerprint — one corpus-migration moment, needs a salt-custody micro-decision). **PR strategy:**
+accumulate the execution-zone trio (items 1/2/3) then open PR-1; keep the migration bundle its own PR. Do NOT
+build the off-box/distributed access-MCP parts — those are Q7/Q1-gated.
+
+--- previous (superseded by the Lane ② state above) ---
+
 **As of 2026-07-03 ~01:22 UTC.** **The test-and-validation-fleet model is now DESIGNED (decision-ready,
 no code)** on branch **`claude/repo-scope-work-plan-h93qx5`**. This scoped the two highest-risk *runtime*
 surfaces the owner asked to stand up: **(a)** the target-environment access MCP (how a diagnosis agent
@@ -724,6 +741,21 @@ See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementati
   PREDICATE, not the type tag.
 
 ## Handoff log (reverse-chronological)
+
+- **2026-07-03 01:47 UTC** — **PR #15 merged; Lane ② started; item 2 (sandbox contract) landed on-branch.**
+  Merged PR #15 (all 10 checks green, no review threads) via merge-commit (`ac14edf`), restarted the branch
+  from the new `main`, retired babysitter cron `69d7ae77`. Owner picked "both, together" for Lane ②, so I
+  wrote the plan (`scratchpad/lane2-implementation-plan.md`) and started with the safety pin: the
+  `SandboxValidator` contract now normatively states "a sandbox LOWERS an escalation, never MINTS truth" (in
+  `crates/swarm/src/lib.rs` trait + `ValidationReport` docs), pinned by a new red-on-revert test in
+  `support-agent` that proves a clean sandbox apply + `None` re-collection yields `Verdict::Unverified` →
+  `OutcomeLabel::EscalatedHumanUnresolved` (never resolved). Full workspace green. **Next:** item 3 (exec
+  audit-log skeleton), item 1 (MCP-wrapper spec doc), then open PR-1 for the execution-zone trio; the
+  hash-migration bundle (F2 + leak-C7) stays a separate final PR. **Lesson:** when writing an
+  invariant-pinning test, do NOT couple it to a judge score you don't control (`heuristic_candidate`'s score
+  could dip below the Reversible→VerifierConfirm 0.6 threshold and flake the assertion) — the escalation
+  *lowering* is already proven in `panel`; the new test asserts only the sandbox≠verdict separation, which
+  has no score dependency.
 
 - **2026-07-03 01:22 UTC** — **Test-and-validation-fleet model designed (decision-ready, no code).** Scoped
   the two highest-risk runtime surfaces the owner asked to stand up — (a) the target-environment access MCP,

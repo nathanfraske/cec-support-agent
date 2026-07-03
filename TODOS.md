@@ -268,6 +268,30 @@ first (highest-risk execution zone). Owner's live question this session: "a gold
   execution boundary — judge-on-target vs ed25519 custodied key; pairs with Q1) in
   `docs/integration-rfc-for-chris.md`, and point the design doc §5 at it.
 
+### Session 2026-07-03 — Lane ② pure-engine work (owner: "both, together"; land as green PRs)
+
+Owner greenlit the whole of Lane ② from `docs/test-validation-fleet-design.md` §5: 3 fleet contracts + 3
+corpus-hardening items. PR #15 merged first (docs/python-only, kept clean); branch restarted from the new
+`main` (`ac14edf`); babysitter cron `69d7ae77` retired. Plan: `scratchpad/lane2-implementation-plan.md`.
+Sequencing PR-A(item1) · PR-B(item2) · PR-C(item3) · PR-D(item5) · PR-E(items4+6, bundled migration).
+
+- [ ] [added 2026-07-03 01:47 UTC] **Item 1** — gated-MCP-wrapper spec doc over `/v1/execute` (frozen
+  `{diagnose,execute}` verb contract + egress-sink inheritance + T-1..T-7 as normative requirements). Pure
+  doc.
+- [x] [added 2026-07-03 01:47 UTC · done 2026-07-03 01:47 UTC] **Item 2** — `SandboxValidator` production
+  CONTRACT + "can't-mint-truth" test. Strengthened the trait + `ValidationReport` docs in
+  `crates/swarm/src/lib.rs` with the normative "a sandbox LOWERS an escalation, never MINTS truth" contract;
+  added `a_clean_sandbox_can_never_mint_a_resolved_row` to `support-agent` proving a clean apply + `None`
+  re-collection → `Verdict::Unverified` → `EscalatedHumanUnresolved` (not resolved). Workspace green
+  (clippy -D, all tests; support-agent unit 35→36).
+- [ ] [added 2026-07-03 01:47 UTC] **Item 3** — execution audit-log skeleton (de-identified: run_id/hashed
+  caller + plan_id + timestamp + outcome_label; never `describe`/prose). Exec twin of the cartography V7 gap.
+- [ ] [added 2026-07-03 01:47 UTC] **Item 5 (B4)** — `HttpCorpus::query` read-path hardening: re-verify the
+  ed25519 attestation on each served row before trusting it (client holds the pubkey).
+- [ ] [added 2026-07-03 01:47 UTC] **Items 4+6 (BUNDLED migration)** — F2 canonical (serde-independent)
+  `chain_hash` + leak-C7 keyed/salted HMAC fingerprint. Both invalidate stored hashes → one corpus-rebuild
+  moment; needs a salt-custody micro-decision + an operator re-ingest note. Do LAST.
+
 ### Session 2026-07-02 — corpus cartography (leak-C10) threat model + non-mappability policy
 
 Owner-raised threat (2026-07-02): "Can a surface expose the internal corpus by mapping it out through
