@@ -15,6 +15,21 @@ Below "Pick up here", keep a reverse-chronological **handoff log** of dated entr
 
 ## Current state
 
+**As of 2026-07-03 ~02:17 UTC.** **Lane ② underway — items 2 and 3 done on-branch (not yet PR'd).** Branch
+`claude/repo-scope-work-plan-h93qx5` (restarted from `main` @ `ac14edf`). **Item 3 (exec audit-log skeleton)
+just landed:** new `crates/support-agent/src/audit.rs` — `ExecutionRecord` (closed de-identified field set:
+minted plan_id, opaque run_id, unix ts, outcome-label token, `caller_key: None` until rung-2), `to_line()`,
+`AuditSink` trait + `NullSink` default. Emitted at the single `record_outcome` funnel (every outcome incl.
+declines), using the MINTED id read back from the contribution (never the raw pre-mint id) + reused
+`serve::wire_label`. Injection seam: `AppState.audit` (serve) / `&NullSink` (CLI). 3 new tests; workspace
+green (fmt/clippy -D/tests; support-agent unit 36→39, 223 pass total). Rung-2 wiring (persistent sink,
+caller_key, CLI seam, refuse-path marker) → FOLLOWUPS. **Remaining Lane ②:** item 1 (MCP-wrapper spec doc)
+→ then open **PR-1** for the execution-zone trio (items 1/2/3); item 5/B4 (HttpCorpus read attestation);
+items 4+6 bundled migration (F2 `chain_hash` + leak-C7 keyed fingerprint). Plan:
+`scratchpad/lane2-implementation-plan.md`.
+
+--- previous (superseded by the item-3 state above) ---
+
 **As of 2026-07-03 ~01:47 UTC.** **Lane ② (pure-engine work) is UNDERWAY.** PR #15 (panels + fleet-design
 docs) merged to `main` (`ac14edf`); branch **`claude/repo-scope-work-plan-h93qx5`** restarted from the new
 `main`; babysitter cron `69d7ae77` retired. Owner greenlit the whole of Lane ② ("both, together") from
@@ -741,6 +756,22 @@ See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementati
   PREDICATE, not the type tag.
 
 ## Handoff log (reverse-chronological)
+
+- **2026-07-03 02:17 UTC** — **Lane ② item 3: execution audit-log skeleton landed on-branch.** New
+  `crates/support-agent/src/audit.rs` (`ExecutionRecord` + `to_line` + `AuditSink`/`NullSink`), wired at the
+  `record_outcome` funnel so every outcome (incl. declined-consent Withdrawn) emits one de-identified record
+  built from the MINTED plan id (read back via `contribution.outcome().plan().id()`), the opaque run id, and
+  the reused `serve::wire_label` token — no prose/tool-output/raw id can cross (closed field set). Injection
+  seam added: `AppState.audit: Arc<dyn AuditSink>` (serve) defaulting to `NullSink`; CLI passes `&NullSink`.
+  3 tests incl. a capturing-sink proof that one record per outcome carries the minted id and no title prose.
+  Green (fmt/clippy -D/tests). Rung-2 (persistent sink, caller_key, CLI seam, refuse-path marker) → FOLLOWUPS.
+  **Next:** item 1 (MCP-wrapper spec doc) → open PR-1 (items 1/2/3). **Lessons:** (1) a `\| tail` on
+  `cargo fmt -- --check` MASKS fmt's non-zero exit (pipeline exit = tail's 0), so `&& echo OK` runs even when
+  fmt is DIRTY — check fmt with `> /dev/null; echo $?`, never through a pipe. (2) a `pub fn` used only by
+  tests in a BIN crate still trips `dead_code` under clippy `-D warnings` (bin crates don't treat `pub` as a
+  public API) — mark it `#[allow(dead_code)]` with a "used by tests + <future caller>" note, the existing
+  `signature_of` convention. (3) naming a param `audit` shadows the `audit` MODULE — reference the module as
+  `crate::audit::` inside that fn.
 
 - **2026-07-03 01:47 UTC** — **PR #15 merged; Lane ② started; item 2 (sandbox contract) landed on-branch.**
   Merged PR #15 (all 10 checks green, no review threads) via merge-commit (`ac14edf`), restarted the branch
