@@ -40,7 +40,10 @@ use provenance::SigningKey;
 use swarm::{Generator, SandboxValidator, Swarm, SwarmError};
 use tools_windows::{firmware_advisory, windows_tools, BoardIdentity};
 
+mod audit;
 mod serve;
+
+use audit::AuditSink;
 
 /// Parsed command-line arguments for the `diagnose` flow.
 struct Args {
@@ -716,6 +719,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
                     Some(row_provenance.clone()),
                     signoff_authority.as_ref(),
                     args.json,
+                    &audit::NullSink,
                 )
                 .await;
                 return Ok(());
@@ -795,6 +799,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
                             Some(row_provenance.clone()),
                             signoff_authority.as_ref(),
                             args.json,
+                            &audit::NullSink,
                         )
                         .await;
                         final_label = Some(label);
@@ -875,6 +880,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
                     Some(row_provenance.clone()),
                     signoff_authority.as_ref(),
                     args.json,
+                    &audit::NullSink,
                 )
                 .await;
 
@@ -1014,6 +1020,7 @@ async fn record_outcome(
     provenance: Option<RowProvenance>,
     authority: Option<&corpus_client::SignOffAuthority>,
     json: bool,
+    audit: &dyn AuditSink,
 ) {
     // The validating de-id mints run inside `Contribution::new`: a plan whose
     // action/id is not admissible vocabulary is REFUSED here (the row never
@@ -1038,6 +1045,17 @@ async fn record_outcome(
             return;
         }
     };
+    // Execution audit (de-identified): record WHICH plan produced this outcome
+    // and WHEN, using the MINTED plan id read back from the contribution (never
+    // the raw pre-mint id) and the opaque run id. Emitted once the mint has
+    // succeeded — a refused row has no admissible id to log — and independent of
+    // whether the corpus `submit` below succeeds, since the execution already
+    // happened. No prose, tool output, or raw identifier crosses this seam.
+    audit.record(&crate::audit::ExecutionRecord::new(
+        contribution.outcome().plan().id(),
+        provenance.as_ref().map(|p| p.run_id.as_str()).unwrap_or(""),
+        serve::wire_label(&label),
+    ));
     if let Some(provenance) = provenance {
         contribution = contribution.with_provenance(provenance);
     }
@@ -1934,6 +1952,113 @@ mod tests {
         );
     }
 
+    /// The load-bearing sandbox invariant (design doc §3): a clean sandbox report
+    /// is escalation evidence ONLY — it can never mint a resolved corpus row. The
+    /// sandbox flag feeds `required_escalation` (the lowering is proven in
+    /// `panel`); it is NOT an input to the corpus verdict, which comes solely from
+    /// a real post-fix re-collection. This pins that separation so no future
+    /// change can let a clean sandbox launder an unverified fix into truth.
+    #[tokio::test]
+    async fn a_clean_sandbox_can_never_mint_a_resolved_row() {
+        let best = heuristic_candidate("x");
+
+        // A clean apply is positive validation evidence...
+        assert!(
+            sandbox_validated_for(Some(&FakeSandbox { clean: true }), &best, false).await,
+            "clean apply is positive evidence"
+        );
+
+        // ...but it does NOT feed the corpus verdict. With no live re-collection
+        // (`recollect_post_signature()` is `None`), the verdict is `Unverified`
+        // no matter how cleanly the plan applied in the sandbox.
+        let signature = signature_of(&collect_diagnostics("x"));
+        let verdict = verify_outcome(
+            &signature,
+            recollect_post_signature().as_ref(),
+            VerificationClass::Deterministic,
+        );
+        assert_eq!(
+            verdict,
+            Verdict::Unverified,
+            "no live re-collection is Unverified, never a sandbox-derived pass"
+        );
+
+        // ...so even a fully-completed execution labels `EscalatedHumanUnresolved`,
+        // not a resolved row. A clean sandbox cannot admit a fix.
+        let mut execution = ExecutionResult::new(&best.plan.id);
+        execution.completed = true;
+        let label = label_for(&Route::SoftwareState, &execution, &verdict);
+        assert_eq!(label, OutcomeLabel::EscalatedHumanUnresolved);
+        assert!(
+            !label.is_resolved(),
+            "a clean sandbox can never back a fix mapping"
+        );
+    }
+
+    #[derive(Default)]
+    struct CollectingSink {
+        records: std::sync::Mutex<Vec<audit::ExecutionRecord>>,
+    }
+
+    impl AuditSink for CollectingSink {
+        fn record(&self, record: &audit::ExecutionRecord) {
+            self.records
+                .lock()
+                .expect("audit lock")
+                .push(record.clone());
+        }
+    }
+
+    #[tokio::test]
+    async fn record_outcome_emits_one_de_identified_audit_record() {
+        let corpus = LocalCorpus::new();
+        let sink = CollectingSink::default();
+        let signature =
+            FaultSignature::from_symptoms(extract_symptoms("explorer.exe crashes 0x1234"));
+        let config_class = CoarseHostInventory.config_class();
+
+        // A plan whose id is a clean slug but whose TITLE carries raw prose
+        // (a hostname and a user) that must NEVER reach the audit line — the
+        // record is built from the minted id, not the title.
+        let mut plan = Plan::new("driver-regression", "reboot DESKTOP-NATHAN01 for jsmith");
+        plan.steps.push(PlanStep {
+            description: "make a restore point".into(),
+            action: "create_restore_point".into(),
+            risk: Risk::Reversible,
+        });
+
+        record_outcome(
+            &corpus,
+            &signature,
+            &plan,
+            OutcomeLabel::ResolvedConfirmed,
+            &config_class,
+            SignOff::HumanConfirmed,
+            Some(common::Verification::pass()),
+            None,
+            None,
+            false,
+            &sink,
+        )
+        .await;
+
+        let records = sink.records.lock().expect("audit lock");
+        assert_eq!(records.len(), 1, "exactly one audit record per outcome");
+        let record = &records[0];
+        assert_eq!(record.outcome, "resolved_confirmed");
+        assert_eq!(record.plan_id, "driver-regression", "the minted plan id");
+        assert!(record.caller_key.is_none(), "no caller identity at rung-1");
+        let line = record.to_line();
+        assert!(
+            !line.contains("NATHAN"),
+            "no raw hostname in the audit line: {line}"
+        );
+        assert!(
+            !line.contains("jsmith"),
+            "no raw user in the audit line: {line}"
+        );
+    }
+
     #[test]
     fn heuristic_plan_is_reversible_and_needs_consent() {
         let candidate = heuristic_candidate("disk is full");
@@ -2031,6 +2156,7 @@ mod tests {
             None,
             None,
             false,
+            &audit::NullSink,
         )
         .await;
         // ...and run 2 facing the same signature retrieves it as precedent.
