@@ -235,10 +235,14 @@ tested; the two guards proven red-on-revert. Not pushed (orchestrator opens the 
   without a HANDOFFS/TODOS update), and `ops/provision.sh` (Tier-0 activator). Wired in `.claude/settings.json`
   (PreToolUse/PostToolUse/Stop); validated block/allow/surface/self-reference; addendum §2b/2c/2d/2f updated
   to reflect built-not-proposed.
-- [ ] [added 2026-07-02 23:56 UTC] Remaining addendum standup (deferred, owner's call): the `projectops` MCP
-  server (§3, the structured-data keystone — incl. the proper structural home for the re-added-Serialize/
-  `source`/route checks the PreToolUse guard deliberately does not attempt), the review panels (§4), and
-  folding the cargo `verify` suite into the Stop gate via `projectops verify`. See FOLLOWUPS.
+- [x] [added 2026-07-02 23:56 UTC · done 2026-07-03 00:07 UTC] **projectops server built + validated**
+  (PR #14): `tools/projectops.py` (stdlib CLI: verify/invariants/backlog/leak_scan, structured JSON) +
+  `tools/projectops_server.py` (minimal MCP stdio server, raw JSON-RPC, no SDK dep) + `.mcp.json`. Server
+  handshake + tools/list + tools/call e2e-tested; invariants pass on the tree and bite on a re-added
+  `source`/rogue route/unsorted vocab.
+- [ ] [added 2026-07-03 00:07 UTC] Remaining addendum standup (deferred, owner's call): the review panels
+  (§4, now unblocked — they render projectops JSON), the Stop verify-gate via `projectops verify --checks`,
+  and deepening `projectops invariants` (raw-type-Serialize + full vocab/registry drift). See FOLLOWUPS.
 
 ### Session 2026-07-02 — corpus cartography (leak-C10) threat model + non-mappability policy
 

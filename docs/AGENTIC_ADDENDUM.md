@@ -167,29 +167,34 @@ hooks are the project's; the runner hooks are the harness's. Keep security-relev
 
 ---
 
-## 3. MCP and tooling standup
+## 3. MCP and tooling standup (built)
 
-The high-value server to stand up is a small **`projectops`** stdio server (configured in
-`.mcp.json`, project-scoped, addressed `mcp__projectops__<tool>`) that turns the verification
-suite and the project's structured data into callable tools, so hooks and panels consume
-structured results rather than re-deriving them from raw greps. A cardinal constraint: this
-server operates on the repository and the tracking docs **only**. It never reads, serves, or
-enumerates the private corpus — consistent with the never-routable invariant. Suggested
-surface:
+The **`projectops`** surface is built as two pieces: **`tools/projectops.py`** (a pure-stdlib
+CLI emitting structured JSON — the keystone everything else consumes) and
+**`tools/projectops_server.py`** (a minimal MCP stdio server, raw JSON-RPC 2.0 with no
+third-party SDK, wired in **`.mcp.json`** and addressed `mcp__projectops__<tool>`). A cardinal
+constraint, enforced by construction: it operates on the repository and the tracking docs
+**only** — it never reads, serves, or enumerates the private corpus (which does not live in
+this repo at all), consistent with the never-routable invariant. The surface:
 
-- **`verify`** — runs the full suite (`cargo fmt --all -- --check`, `cargo clippy --workspace
+- **`verify`** — runs the suite (`cargo fmt --all -- --check`, `cargo clippy --workspace
   --all-targets -- -D warnings`, `cargo build --workspace`, `cargo test --workspace`, `cargo
   deny check`, the gitleaks scan) and returns structured JSON: each check with name, pass or
-  fail, and the offending lines. This is what the Stop gate and the verification panel call.
-- **`invariants`** — checks the security invariants mechanically: no corpus/weights path in
-  the tree; no raw domain type derives `Serialize` (the de-id type barrier holds); the
-  `route_surface()` set is unchanged; the `cec-diagnose/v1`/`cec-execute/v1` enum grammar is
-  pinned; `ACTION_VOCABULARY` still equals the dispatcher registry (the drift test). Each
-  returns a named pass/fail so a regression is attributable.
-- **`backlog`** — parses `TODOS.md` and `FOLLOWUPS.md` into open items with their timestamps,
-  status, and deferral gate (Chris's RFC Q1–Q6, the F-track, E3).
-- **`leak_scan`** — runs the poison/leakage suite (`leakguard::POISON` planted through every
-  input, the trybuild compile-fail barrier) as one callable check.
+  fail, and the failing lines; an absent tool (cargo-deny/gitleaks) is reported `skipped`, not
+  failed. A `--checks` subset keeps a fast call fast. This is what a Stop verify-gate and the
+  verification panel call.
+- **`invariants`** — the fast git/grep security checks (no cargo): no corpus/weights file is
+  tracked; the diagnose envelope carries no `source` membership label (leak-C10); the `/v1`
+  `route_surface()` is frozen to health/diagnose/execute; `ACTION_VOCABULARY` is sorted; the
+  wire-grammar pinning tests are present; the agent hooks are executable. Each returns a named
+  pass/fail so a regression is attributable — this is the fast structured guard the PreToolUse
+  hook deliberately leaves to a typed tool rather than a grep-block. (A deeper `no raw type
+  derives Serialize` check and the full vocabulary-vs-registry drift belong here next; the type
+  system and the drift test cover them today.)
+- **`backlog`** — parses `TODOS.md` and `FOLLOWUPS.md` into open/done/obsolete counts and the
+  open items with their UTC timestamps.
+- **`leak_scan`** — runs the de-identification / poison / leakage / attestation test slice as
+  one callable check.
 
 The GitHub MCP server (PR/CI/issue operations) and the connected Drive server round out the
 surface. A panel backed by MCP must be a real server: a rendered HTML artifact cannot call an

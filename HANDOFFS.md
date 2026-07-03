@@ -432,6 +432,13 @@ See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementati
 
 ## Lessons learned (append-only)
 
+- **(2026-07-03) Never put backticks in a `git commit -m "…"` double-quoted message — bash runs them as
+  command substitution and silently DELETES the wrapped words from the commit.** A projectops commit lost
+  every `` `verify` ``/`` `invariants` ``/`` `source` `` token this way (the `command not found` noise was the
+  tell). Fix: write the message to a file and `git commit -F <file>` (or `--amend -F`), or use a `$'...'`/
+  heredoc — a file authored via the Write tool never touches the shell. Earlier session commits with
+  backticks in `-m` were likely mangled too (they are merged; not worth rewriting). Going forward: `-F` for
+  any message with backticks.
 - **(2026-07-02) A content-matching hook must not contain the patterns it matches, and must key on a
   distinctive VALUE, not structural keywords.** When the Tier-1 PostToolUse guard (`invariant-check.sh`)
   went live (the harness picks up `.claude/settings.json` mid-session), it self-flagged twice: once because
@@ -664,6 +671,19 @@ See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementati
 
 ## Handoff log (reverse-chronological)
 
+- **2026-07-03 00:07 UTC** — **projectops server (Tier 2) built; PR #13 merged first.** Merged PR #13
+  (addendum spec + Tier-1 guards, all green) to `main`, restarted the branch, then built the `projectops`
+  keystone as a fresh PR #14: `tools/projectops.py` (pure-stdlib CLI — `verify` the cargo/gitleaks suite as
+  structured JSON, `invariants` six fast git/grep security guards, `backlog` the tracking parse, `leak_scan`
+  the de-id slice) + `tools/projectops_server.py` (a minimal MCP stdio server, raw JSON-RPC 2.0, NO
+  third-party SDK — so it is self-contained and testable) + `.mcp.json`. Validated end-to-end: the server
+  handshakes (initialize/tools-list/tools-call), `invariants` passes on the real tree AND provably bites on
+  a re-added `source` oracle / rogue `/v1/attest` route / unsorted vocabulary; `backlog` parses; `verify
+  --checks fmt` runs. **Pick up here:** the review panels (§4) are now unblocked (they render `projectops`
+  JSON) — build the verification/backlog/invariants/blind-audit panels; wire a Stop verify-gate via
+  `projectops verify --checks`; and deepen `projectops invariants` (a real no-raw-Serialize check + the full
+  vocab/registry drift). This rides PR #14; merge when green. Lesson from the prior turn still applies: a
+  content-matching guard must not contain the patterns it matches.
 - **2026-07-02 23:56 UTC** — **AGENTIC ADDENDUM Tier-1 enforcement built (on PR #13's branch).** Turned the
   addendum's proposed guards into working hooks: `invariant-guard.sh` (PreToolUse — hard-blocks a
   corpus/weights/seed PATH write, the near-zero-false-positive signal; content-level oracle/Serialize checks

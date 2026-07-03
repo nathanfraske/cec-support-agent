@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "projectops": {
+      "command": "python3",
+      "args": ["${CLAUDE_PROJECT_DIR}/tools/projectops_server.py"],
+      "env": { "REPO_ROOT": "${CLAUDE_PROJECT_DIR}" }
+    }
+  }
+}

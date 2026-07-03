@@ -31,3 +31,7 @@ cec-corpus-private/
 
 # Scratch audit diffs must not be swept in by `git add -A`.
 .claude/audit/*.diff
+
+# Python bytecode from the ops tooling (tools/projectops*.py run at runtime).
+__pycache__/
+*.pyc
