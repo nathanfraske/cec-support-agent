@@ -244,13 +244,20 @@ recommends that are NOT yet built, each attributed to the threat doc's §3 contr
   the Stop tracking-freshness nudge (`tracking-freshness.sh`); and `ops/provision.sh` (Tier-0 activator).
   All validated (block/allow/surface/self-reference) and wired in `.claude/settings.json`. STILL OPEN →
   re-filed below.
-- [ ] [added 2026-07-02 23:56 UTC] **[AGENTIC ADDENDUM — remaining standup: projectops + panels + Stop
-  verify]** The structured-data keystone is not built: (a) the `projectops` MCP server (§3) — `verify`
-  (the cargo suite as JSON), `invariants` (de-id barrier / frozen route / wire grammar / vocab-drift
-  checks — the proper structural home for the re-added-Serialize/`source`/route checks the PreToolUse guard
-  deliberately does not attempt), `backlog`, `leak_scan`; (b) the review panels (§4), which all depend on
-  `projectops` emitting structured output; (c) folding the cargo `verify` suite into the Stop gate by having
-  it call `projectops verify` selectively (the fast tracking-freshness half is already built; the full-suite
-  half is deferred because a multi-minute compile on every turn end is impractical). — why deferred: the
-  guards + spec + reachability are done; the server + panels are the next, larger increment and the owner's
-  call. Resume: `docs/AGENTIC_ADDENDUM.md` §3-§4; a new `.mcp.json` + `tools/projectops_server`.
+- [x] [added 2026-07-02 23:56 UTC · closed 2026-07-03 00:07 UTC → PR #14: projectops built] **[AGENTIC
+  ADDENDUM — projectops server (§3)]** BUILT: `tools/projectops.py` (pure-stdlib CLI keystone — `verify`
+  the cargo/gitleaks suite as JSON, `invariants` the fast git/grep guards [no-exfil-tracked, source-label-
+  absent (leak-C10), frozen /v1 route surface, ACTION_VOCABULARY sorted, wire-pins present, hooks
+  executable], `backlog` the TODOS/FOLLOWUPS parse, `leak_scan` the de-id/poison slice) + `tools/
+  projectops_server.py` (minimal MCP stdio server, raw JSON-RPC 2.0, no SDK dep) wired in `.mcp.json`.
+  Validated: server initialize/tools-list/tools-call e2e; invariants pass on the real tree and provably
+  bite on a re-added `source`/rogue route/unsorted vocab. STILL OPEN → re-filed below.
+- [ ] [added 2026-07-03 00:07 UTC] **[AGENTIC ADDENDUM — remaining standup: panels + Stop verify-gate +
+  deeper invariants]** (a) the review panels (§4) — verification / backlog / invariants / blind-audit —
+  which are now unblocked (they render `projectops` JSON) but not built; (b) fold the cargo `verify` suite
+  into the Stop gate by having it call `projectops verify` selectively (the fast tracking-freshness half is
+  already built; the full-suite half was deferred as impractical per turn — `projectops verify --checks`
+  makes a fast subset callable now); (c) deepen `projectops invariants` with a real `no raw type derives
+  Serialize` check and the full `ACTION_VOCABULARY` == dispatcher-registry drift (today the type system + the
+  in-tree drift test cover them). — why deferred: the server keystone is done; these build ON it. Resume:
+  `docs/AGENTIC_ADDENDUM.md` §4 + §2d; `tools/projectops.py`.
