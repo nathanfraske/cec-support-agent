@@ -210,6 +210,36 @@ tested; the two guards proven red-on-revert. Not pushed (orchestrator opens the 
 - [x] [added 2026-07-02 22:05 UTC · done 2026-07-02 22:40 UTC] Tracking: TODOS/FOLLOWUPS/HANDOFFS updated;
   leak §3.1(b) tombstoned as built. 210 tests (was 205), clippy `-D warnings` + fmt clean (pinned 1.96.1).
 
+### Session 2026-07-02 — PR #12 merge + AGENTIC ADDENDUM
+
+- [x] [added 2026-07-02 22:42 UTC · done 2026-07-02 22:42 UTC] Merge PR #12 (all session work) into `main`
+  after resolving a `ci.yml` conflict (PR #4 checkout bump vs the gitleaks OSS-binary rewrite → kept the OSS
+  binary + main's newer checkout SHA); restart the branch from the new main; retire the babysitter crons.
+- [x] [added 2026-07-02 22:42 UTC · done 2026-07-02 22:42 UTC] Ground-truth extract (4-agent read-only
+  workflow `wf_44941c16-6d7`) of the real agentic infra, verification suite, security kernels, and frozen
+  constants — the accurate basis for the addendum.
+- [x] [added 2026-07-02 22:42 UTC · done 2026-07-02 22:42 UTC] Author `docs/AGENTIC_ADDENDUM.md` (§1 four
+  tracking files + memory mirror; §2 real hooks + proposed PreToolUse invariant guard / Stop verify-gate;
+  §3-§6 projectops/panels/lifecycle; §7 the fully-blind audit adapted to our crypto/de-id kernels with the
+  frozen constants as "reserved values").
+- [x] [added 2026-07-02 22:42 UTC · done 2026-07-02 22:42 UTC] Make it reachable + hooked: reference from
+  AGENTS.md + a new `addendum-context.sh` SessionStart hook wired in `.claude/settings.json` (validated JSON;
+  5 SessionStart hooks; hook emits well-formed additionalContext).
+- [~] [added 2026-07-02 22:42 UTC · obsolete 2026-07-02 23:56 UTC → split into the two lines below] Implement
+  the addendum's mechanical backstops (not yet built): a `PreToolUse` exfil/oracle guard (§2b), a Stop verify
+  + tracking-freshness gate (§2d), and the `projectops` MCP server + panels (§3-§4).
+- [x] [added 2026-07-02 23:56 UTC · done 2026-07-02 23:56 UTC] **Tier-1 guards built + wired + validated**
+  (PR #13): `invariant-guard.sh` (PreToolUse hard-block on corpus/weights/seed PATHS), `invariant-check.sh`
+  (PostToolUse surface: conflict markers, serialized-corpus-row, seed/key blocks — self-safe after two
+  dogfooded false positives, see HANDOFFS lesson), `tracking-freshness.sh` (Stop nudge if crates/ changed
+  without a HANDOFFS/TODOS update), and `ops/provision.sh` (Tier-0 activator). Wired in `.claude/settings.json`
+  (PreToolUse/PostToolUse/Stop); validated block/allow/surface/self-reference; addendum §2b/2c/2d/2f updated
+  to reflect built-not-proposed.
+- [ ] [added 2026-07-02 23:56 UTC] Remaining addendum standup (deferred, owner's call): the `projectops` MCP
+  server (§3, the structured-data keystone — incl. the proper structural home for the re-added-Serialize/
+  `source`/route checks the PreToolUse guard deliberately does not attempt), the review panels (§4), and
+  folding the cargo `verify` suite into the Stop gate via `projectops verify`. See FOLLOWUPS.
+
 ### Session 2026-07-02 — corpus cartography (leak-C10) threat model + non-mappability policy
 
 Owner-raised threat (2026-07-02): "Can a surface expose the internal corpus by mapping it out through
