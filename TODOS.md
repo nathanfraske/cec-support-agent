@@ -295,11 +295,22 @@ Sequencing PR-A(item1) · PR-B(item2) · PR-C(item3) · PR-D(item5) · PR-E(item
   injection seam = `AppState.audit` (serve) / `&NullSink` (CLI). Tests: closed field set, no-op sink, and a
   capturing-sink test proving one record per outcome carries the minted id and no title prose. Green
   (fmt/clippy -D/tests; support-agent unit 36→39). Deferred bits → FOLLOWUPS.
-- [ ] [added 2026-07-03 01:47 UTC] **Item 5 (B4)** — `HttpCorpus::query` read-path hardening: re-verify the
-  ed25519 attestation on each served row before trusting it (client holds the pubkey).
-- [ ] [added 2026-07-03 01:47 UTC] **Items 4+6 (BUNDLED migration)** — F2 canonical (serde-independent)
-  `chain_hash` + leak-C7 keyed/salted HMAC fingerprint. Both invalidate stored hashes → one corpus-rebuild
-  moment; needs a salt-custody micro-decision + an operator re-ingest note. Do LAST.
+- [~] [added 2026-07-03 01:47 UTC · obsolete 2026-07-03 03:15 UTC → FOLLOWUPS 2026-07-03 03:15] **Item 5 (B4)**
+  RE-SCOPED. On inspection `HttpCorpus::query` serves bare `FixMapping`s that carry **no attestation**
+  (`schema.rs:86`; attestation lives on `Contribution:198`), and the code comment (`store.rs:514-517`) says
+  cryptographic re-verification "lands with the corpus-service wire contract." So B4 is NOT a small
+  add-a-verify-call: it needs the served-row type to become an attested row, which is **gated on RFC Q6**
+  (served-row provenance minimization, still open) AND on the corpus service existing. Deferred → FOLLOWUPS.
+- [x] [added 2026-07-03 03:15 UTC · done 2026-07-03 03:15 UTC] Record owner decisions (2026-07-03): **Q7** =
+  ed25519 custodied judge key (RFC Q7 DECIDED note; pairs with F3); **Q1 volunteer-half** = pure execution
+  target, central authority attests (RFC Q1 DECIDED-partial note); **leak-C7 salt** = per-deployment secret
+  loaded like the sign-off key + cold-start default; **migration** = hard cutover, private corpus re-ingests
+  once. Plan updated (`scratchpad/lane2-implementation-plan.md` item 6).
+- [ ] [added 2026-07-03 01:47 UTC] **Items 4+6 (BUNDLED migration) — NOW UNBLOCKED (decisions in).** F2
+  canonical (serde-independent) `chain_hash` (`schema.rs:461`, replace `serde_json::to_vec` with explicit
+  length-prefixed encoding, bump `cec-corpus-chain-v1`→`v2`) + leak-C7 keyed/salted HMAC `fingerprint_of`
+  (`common/src/hash.rs`, per-deployment secret salt + cold-start default). Both invalidate stored hashes →
+  ONE hard cutover: update in-tree fixtures, operator re-ingest note. This is the next code PR (PR-2).
 
 ### Session 2026-07-02 — corpus cartography (leak-C10) threat model + non-mappability policy
 
