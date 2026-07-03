@@ -95,6 +95,9 @@ struct AppState {
     corpus: Box<dyn CorpusStore>,
     authority: Option<corpus_client::SignOffAuthority>,
     sessions: Mutex<HashMap<String, Session>>,
+    /// The execution audit sink. Default [`NullSink`](crate::audit::NullSink); a
+    /// deployment wires a persistent, access-controlled sink here.
+    audit: Arc<dyn crate::audit::AuditSink>,
 }
 
 /// A structured API refusal: HTTP status + a machine-readable reason. The
@@ -144,7 +147,7 @@ struct ExecuteRequest {
 
 /// Pinned `cec-execute/v1` wire value for an outcome label (mirrors the
 /// corpus row tag style; `part_class` is taxonomy vocabulary, never prose).
-fn wire_label(label: &OutcomeLabel) -> String {
+pub(crate) fn wire_label(label: &OutcomeLabel) -> String {
     match label {
         OutcomeLabel::ResolvedConfirmed => "resolved_confirmed".into(),
         OutcomeLabel::ResolvedProvisional => "resolved_provisional".into(),
@@ -241,6 +244,7 @@ pub(crate) async fn serve(args: crate::Args) -> anyhow::Result<()> {
         corpus,
         authority,
         sessions: Mutex::new(HashMap::new()),
+        audit: Arc::new(crate::audit::NullSink),
     });
 
     let router = build_router(state);
@@ -518,6 +522,7 @@ async fn handle_execute(
             Some(row_provenance),
             state.authority.as_ref(),
             true,
+            state.audit.as_ref(),
         )
         .await;
         return Ok(serde_json::json!({
@@ -566,6 +571,7 @@ async fn handle_execute(
             Some(row_provenance),
             state.authority.as_ref(),
             true,
+            state.audit.as_ref(),
         )
         .await;
         return Ok(serde_json::json!({
@@ -609,6 +615,7 @@ async fn handle_execute(
         Some(row_provenance),
         state.authority.as_ref(),
         true,
+        state.audit.as_ref(),
     )
     .await;
 
@@ -655,6 +662,7 @@ mod tests {
             corpus: Box::new(LocalCorpus::new()),
             authority: None,
             sessions: Mutex::new(HashMap::new()),
+            audit: Arc::new(crate::audit::NullSink),
         })
     }
 

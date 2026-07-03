@@ -286,6 +286,16 @@ recommends that are NOT yet built, each attributed to the threat doc's §3 contr
   execution target a central authority attests) both block the access-MCP topology. — why deferred:
   owner/Chris decisions, no code depends on them yet. Resume: `docs/integration-rfc-for-chris.md` Q1/Q7;
   `docs/test-validation-fleet-design.md` §2.1 T-6 / §5.
+- [ ] [added 2026-07-03 02:17 UTC] **[fleet item 3 — audit-log rung-2 wiring]** The execution audit skeleton
+  (`crates/support-agent/src/audit.rs`) is in place with a `NullSink` default. Rung-2 wiring, deferred:
+  (a) a **persistent, access-controlled sink** (the `NullSink` records nothing today) — the query-side twin
+  is the MH-1 audit-log FOLLOWUPS item, keep them symmetric; (b) **`caller_key`** — fill it once a caller
+  identity layer exists (today the loopback trust boundary is the OS user, so the field is `None`), pairs
+  with Q1; (c) a **CLI seam** — the CLI passes `&NullSink` inline; add a `--audit-log`/config seam like serve's
+  `AppState.audit`; (d) the **refuse path** — when `Contribution::new` rejects (leak-guard hit) no audit
+  record is emitted (no admissible id to log); consider an id-less "execution refused" marker so a refusal is
+  still attributable. — why deferred: skeleton is the greenlit scope; these are rung-2/identity work. Resume:
+  `crates/support-agent/src/audit.rs`; `record_outcome` in `main.rs`; `docs/test-validation-fleet-design.md` §2.2.
 - [ ] [added 2026-07-03 01:22 UTC] **[fleet — the hard data/infra gates F4/F5 + volunteer framework]** **F4**
   real post-fix re-collection (`recollect_post_signature() -> None` stub, `main.rs`; NR-1) — until it lands
   every run is `Verdict::Unverified` and can back no resolved row, so it gates the *value* of the entire

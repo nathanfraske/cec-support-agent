@@ -284,8 +284,14 @@ Sequencing PR-A(item1) · PR-B(item2) · PR-C(item3) · PR-D(item5) · PR-E(item
   added `a_clean_sandbox_can_never_mint_a_resolved_row` to `support-agent` proving a clean apply + `None`
   re-collection → `Verdict::Unverified` → `EscalatedHumanUnresolved` (not resolved). Workspace green
   (clippy -D, all tests; support-agent unit 35→36).
-- [ ] [added 2026-07-03 01:47 UTC] **Item 3** — execution audit-log skeleton (de-identified: run_id/hashed
-  caller + plan_id + timestamp + outcome_label; never `describe`/prose). Exec twin of the cartography V7 gap.
+- [x] [added 2026-07-03 01:47 UTC · done 2026-07-03 02:17 UTC] **Item 3** — execution audit-log skeleton.
+  New `crates/support-agent/src/audit.rs`: `ExecutionRecord` (closed de-identified field set — minted
+  plan_id, opaque run_id, unix ts, outcome-label token, `caller_key: None` until rung-2), `to_line()`
+  (closed-set JSON), `AuditSink` trait + default `NullSink`. Wired at the `record_outcome` funnel (fires for
+  every outcome incl. declines, using the MINTED id from the contribution + reused `serve::wire_label`);
+  injection seam = `AppState.audit` (serve) / `&NullSink` (CLI). Tests: closed field set, no-op sink, and a
+  capturing-sink test proving one record per outcome carries the minted id and no title prose. Green
+  (fmt/clippy -D/tests; support-agent unit 36→39). Deferred bits → FOLLOWUPS.
 - [ ] [added 2026-07-03 01:47 UTC] **Item 5 (B4)** — `HttpCorpus::query` read-path hardening: re-verify the
   ed25519 attestation on each served row before trusting it (client holds the pubkey).
 - [ ] [added 2026-07-03 01:47 UTC] **Items 4+6 (BUNDLED migration)** — F2 canonical (serde-independent)
