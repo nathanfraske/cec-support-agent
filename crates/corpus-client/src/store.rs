@@ -472,15 +472,19 @@ impl CorpusStore for HttpCorpus {
         signature: &FaultSignature,
         config_class: &ConfigClass,
     ) -> Result<Vec<FixMapping>, CorpusError> {
-        let url = format!(
-            "{}/v1/mappings/{}/{}",
-            self.base_url,
-            config_class.key(),
-            signature.fingerprint
-        );
+        // The retrieval keys travel in the REQUEST BODY, never the URL
+        // (cartography control E / AGENTS.md non-mappability rule 6): URL paths
+        // land verbatim in proxy/server access logs, where even an opaque keyed
+        // fingerprint is a stable per-fault correlation handle; bodies do not.
+        let url = format!("{}/v1/mappings/query", self.base_url);
+        let body = serde_json::json!({
+            "config_class": config_class.key(),
+            "fingerprint": signature.fingerprint,
+        });
         let response = self
             .http
-            .get(&url)
+            .post(&url)
+            .json(&body)
             .send()
             .await
             .map_err(|e| CorpusError::Transport(e.to_string()))?;
