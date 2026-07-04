@@ -1382,6 +1382,48 @@ mod tests {
         );
     }
 
+    // --- The v4 attestation: provenance bound as a COMMITMENT (Q6) ------------
+
+    #[test]
+    fn the_v4_message_binds_provenance_only_through_its_commitment() {
+        // Q6 minimization: the signed bytes must no longer embed the raw run
+        // id or priming graph — only the commitment — so a served row can
+        // carry (attested outcome + commitment) and still verify.
+        let row = contribution(OutcomeLabel::ResolvedConfirmed, SignOff::HumanConfirmed)
+            .with_provenance(provenance("run-secret-7781", true, &["primed-plan-a"]));
+        let message = String::from_utf8(crate::schema::attestation_message(&row))
+            .expect("canonical bytes are utf8");
+        assert!(
+            message.starts_with("cec-signoff-attestation-v4\n"),
+            "the v4 domain tag must lead the message"
+        );
+        assert!(
+            !message.contains("run-secret-7781") && !message.contains("primed-plan-a"),
+            "raw provenance fields must not appear in the signed bytes: {message}"
+        );
+        let commitment = row.provenance().expect("present").commitment();
+        assert!(
+            message.contains(&commitment),
+            "the provenance commitment must be bound into the signed bytes"
+        );
+    }
+
+    #[test]
+    fn provenance_commitment_binds_every_field_and_sorts_primed() {
+        let base = provenance("run-A", true, &["p1", "p2"]);
+        let c = base.commitment();
+        assert_eq!(c.len(), 64);
+        assert_ne!(provenance("run-B", true, &["p1", "p2"]).commitment(), c);
+        assert_ne!(provenance("run-A", false, &["p1", "p2"]).commitment(), c);
+        assert_ne!(provenance("run-A", true, &["p1"]).commitment(), c);
+        assert_ne!(provenance("run-A", true, &["p1", "p3"]).commitment(), c);
+        assert_eq!(
+            provenance("run-A", true, &["p2", "p1"]).commitment(),
+            c,
+            "primed_from is a set: order must not move the commitment"
+        );
+    }
+
     // --- The v2 chain canonical encoding (serde-independent, F2) --------------
 
     /// A fully-populated contribution with FIXED values everywhere (a literal

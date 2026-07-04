@@ -159,6 +159,13 @@ confirm this bar before B4's wire contract ships; gated on B4.
 > computed over fields the consumer does not receive — the served-row type must carry whatever
 > minimal commitment the attestation math needs (e.g. the attestation message may need a
 > provenance commitment rather than raw fields); design that with B4.
+> **RESOLVED 2026-07-04 (built ahead of the re-ingest): attestation v4** —
+> `cec-signoff-attestation-v4` binds `RowProvenance::commitment()` (sha256 over the
+> `cec-provenance-commitment-v1` canonical) instead of the raw provenance fields. Replay
+> protection is unchanged (a fabricated run id moves the commitment and breaks the signature),
+> and a Q6-minimized served row (attested outcome + commitment, no raw provenance) is now
+> verifiable by a consumer. Landed with the same hard cutover as the v2 migration, BEFORE the
+> one-time private-corpus re-ingest, so the operator re-ingests exactly once.
 
 **Q7. Plan-provenance signing across the *execution* boundary.** Plan signing today is
 symmetric HMAC with a **fresh, ephemeral per-run key**, sound *only* because the judge and

@@ -171,6 +171,38 @@ pub struct RowProvenance {
     pub primed_from: Vec<String>,
 }
 
+impl RowProvenance {
+    /// The provenance COMMITMENT: `sha256` (hex) over a canonical, serde-
+    /// independent encoding of this provenance (`cec-provenance-commitment-v1`:
+    /// length-prefixed run id, the retrieval-first bit, and the SORTED
+    /// primed-from set, count-framed). The v4 attestation binds THIS value
+    /// instead of the raw fields, so a served corpus row can prove its
+    /// attestation covers its provenance without shipping the run id or the
+    /// priming graph (RFC Q6, owner-decided provenance minimization) — equal
+    /// provenance ⇒ equal commitment (still a usable independence key), while
+    /// the raw fields stay at rest only.
+    pub fn commitment(&self) -> String {
+        use sha2::{Digest, Sha256};
+        use std::fmt::Write as _;
+        let mut s = String::from("cec-provenance-commitment-v1\n");
+        lp(&mut s, "run", &self.run_id);
+        let _ = writeln!(s, "rf:{}", self.retrieval_first);
+        let mut primed: Vec<&str> = self.primed_from.iter().map(|x| x.as_str()).collect();
+        primed.sort_unstable();
+        let _ = writeln!(s, "primed:{}", primed.len());
+        for id in &primed {
+            lp(&mut s, "primed", id);
+        }
+        let mut hasher = Sha256::new();
+        hasher.update(s.as_bytes());
+        hasher
+            .finalize()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    }
+}
+
 /// A de-identified outcome proposed for inclusion in the corpus: the
 /// (signature, plan, outcome) triple plus its context.
 ///
@@ -359,20 +391,23 @@ impl Contribution {
     }
 }
 
-/// The canonical bytes a sign-off attestation covers: the contribution's
-/// `(signature, plan, label, sign_off, config_class)` tuple AND its
-/// run-provenance, in a stable, serde-independent encoding. The attestation
-/// field itself is excluded (it signs everything else). Built from the
-/// de-identified plan that is stored, so the gate re-derives exactly what the
-/// authority signed. Binding the provenance pin (the `run_id` especially) means
-/// one valid attestation cannot be replayed onto clones with fabricated run ids
-/// to inflate a mapping's independent-confirmation count. Tampering with any
-/// covered field changes these bytes and breaks verification.
+/// The canonical bytes a sign-off attestation covers (`cec-signoff-attestation-v4`):
+/// the contribution's `(signature, plan, label, sign_off, config_class)` tuple
+/// AND its run-provenance COMMITMENT, in a stable, serde-independent encoding.
+/// The attestation field itself is excluded (it signs everything else). Built
+/// from the de-identified plan that is stored, so the gate re-derives exactly
+/// what the authority signed. v4 binds [`RowProvenance::commitment`] instead of
+/// the raw provenance fields: replay protection is unchanged (a fabricated
+/// run id changes the commitment and breaks the signature) but the signed
+/// bytes no longer embed the run id or priming graph, so a Q6-minimized served
+/// row (attested outcome + commitment, no raw provenance) is verifiable by a
+/// consumer. Tampering with any covered field changes these bytes and breaks
+/// verification.
 pub(crate) fn attestation_message(c: &Contribution) -> Vec<u8> {
     use std::fmt::Write as _;
 
     let o = &c.outcome;
-    let mut s = String::from("cec-signoff-attestation-v3\n");
+    let mut s = String::from("cec-signoff-attestation-v4\n");
     // Fault signature: fingerprint + sorted symptoms, each length-prefixed.
     lp(&mut s, "fp", &o.signature.fingerprint);
     let mut symptoms: Vec<&str> = o.signature.symptoms.iter().map(|x| x.0.as_str()).collect();
@@ -423,21 +458,19 @@ pub(crate) fn attestation_message(c: &Contribution) -> Vec<u8> {
     };
     let _ = writeln!(s, "class:{class_tag}");
     lp(&mut s, "classkey", c.config_class.key());
-    // Run-provenance: binds the run_id so one attestation cannot be replayed onto
-    // clones with fabricated run ids to inflate the independent-confirmation count.
+    // Run-provenance, bound as its COMMITMENT (v4): the sha256 of the
+    // provenance canonical still makes one attestation unreplayable onto
+    // clones with fabricated run ids (a different run id ⇒ a different
+    // commitment ⇒ different signed bytes), while the signed message itself
+    // no longer embeds the raw run id or priming graph — so a Q6-minimized
+    // served row can carry just this commitment and still let a consumer
+    // verify the signature (RFC Q6 DECIDED note's design wrinkle, resolved).
     match &c.provenance {
         None => {
             let _ = writeln!(s, "prov:none");
         }
         Some(p) => {
-            lp(&mut s, "run", &p.run_id);
-            let _ = writeln!(s, "rf:{}", p.retrieval_first);
-            let mut primed: Vec<&str> = p.primed_from.iter().map(|x| x.as_str()).collect();
-            primed.sort_unstable();
-            let _ = writeln!(s, "primed:{}", primed.len());
-            for id in &primed {
-                lp(&mut s, "primed", id);
-            }
+            lp(&mut s, "provcommit", &p.commitment());
         }
     }
     s.into_bytes()

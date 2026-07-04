@@ -15,6 +15,25 @@ Below "Pick up here", keep a reverse-chronological **handoff log** of dated entr
 
 ## Current state
 
+**As of 2026-07-04 ~21:55 UTC.** **PR #17 (migration bundle) AND PR #18 (leak Phase-3 3b/3c boundary
+gate) are both MERGED** — `main` @ `44d623a`. Branch `claude/workflow-model-optimization-e1y1sx`
+restarted from that main, clean. 245 tests, clippy `-D warnings`, fmt all green on main.
+
+- **On main now:** chain `cec-corpus-chain-v2` (serde-independent canonical), keyed `cec-fingerprint-v2`
+  (per-deployment `CEC_FINGERPRINT_SALT`, fault/config domain separation, fail-closed loading incl.
+  non-UTF-8 refusal), POST-body retrieval keys, the blind-panel fixes, the `tools/xtask` boundary gate
+  (content-keyed scan + frozen `.boundary-allow.txt` + warn-and-skip hook + CI `boundary` job + gitleaks
+  seed/salt/row rules — corpus-row rule requires the hex VALUE, first-run lesson), and ALL decision
+  records: Q1 (separate keys), Q6 (minimal attested unit), Q7, D3 (mesh = transport only, no
+  `myownmesh-core` link, no MyOwnLLM now), Q2 local-only, Q3 moot, Q4 deferred, Q5 → our wire contract.
+- **OPERATOR STEPS OUTSTANDING (owner):** the private corpus re-ingests ONCE on its next engine-pin bump
+  (v2 hashes; salt-loader parity per FOLLOWUPS), and every deployment should set `CEC_FINGERPRINT_SALT`
+  (`openssl rand -hex 32`) — cold-start default is public.
+- **Nothing blocks on Chris anymore** (D3). Owner-gated call still open: PromptPayload
+  strict-vs-explicit (FOLLOWUPS re-scope note); infra gates F4/F5 unchanged.
+
+--- previous (superseded by the two-merges state above) ---
+
 **As of 2026-07-04 ~19:10 UTC.** **The migration bundle (items 4+6, "PR-2") is BUILT and green on branch
 `claude/workflow-model-optimization-e1y1sx`** (= `main` @ `44aaa88` + the owner-decisions docs commit
 `c73afde` + 3 code commits). 235 tests, clippy `-D warnings` clean, fmt clean. Not yet pushed/PR'd at the
@@ -410,6 +429,17 @@ commit on branch `feat/agent-ops-evidence-integrity`.
   - Recon + design panel artifacts under `.claude/recon/*.json` and `.claude/wf-*.js`.
 
 ## Pick up here
+
+> **Update 2026-07-04 ~21:55 UTC (the live front):** PRs #17 + #18 are MERGED; the branch is restarted
+> clean from `main` @ `44d623a`. **Next code, pick one (all pure-engine, no owner gate):**
+> **(a) the corpus service + B4** — now the highest-leverage build: Q6 is DECIDED (minimal attested unit)
+> and Q5 folded into it (serve the head+count anchor over the API); design the served-row provenance
+> COMMITMENT (the attestation binds provenance fields the row no longer ships — see the RFC Q6 DECIDED
+> note's wrinkle) then implement serve-side `/v1/mappings/query` + attested reads; **(b) L3a** the
+> type-aware dylint egress lint (large, FOLLOWUPS); **(c) F4 groundwork** — the real post-fix
+> re-collection (Windows collectors), the actual prod-value gate. Recommendation: (a) — it turns three
+> decided questions into shipped wire contract. PromptPayload awaits the owner's strict-vs-explicit call
+> (FOLLOWUPS); do NOT build it before that call.
 
 > **Update 2026-07-04 ~19:10 UTC (the live front):** the migration bundle is BUILT (see Current state).
 > **Update 2026-07-04 ~21:20 UTC:** PR #17 is MERGED (`e16fd35`); leak Phase-3 3b/3c is BUILT on the
@@ -852,6 +882,28 @@ See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementati
   PREDICATE, not the type tag.
 
 ## Handoff log (reverse-chronological)
+
+- **2026-07-04 23:00 UTC** — **Attestation v4 built + blind-panel CLEAN (2/2); PR opened.** v4 binds
+  `RowProvenance::commitment()` (`cec-provenance-commitment-v1`) instead of raw provenance — the RFC Q6
+  wrinkle is RESOLVED ahead of the one-time re-ingest (operator still re-ingests exactly once). Panel:
+  no defect on either kernel across binding/replay/injectivity/minimization/domain-separation; every
+  flagged packet gap discharged against source by the orchestrator (label_tag injective — fixed tokens +
+  validated slug behind a unique prefix; ConfigClass::key identity per variant; v3 None-branch identical;
+  content_hash dispatched only on the no-provenance branch; the four {:?} enums all fieldless). One
+  auditor also PROVED the lp length-prefix scheme injective independent of charset validation (the `]`
+  terminator can never be a digit) — the charset mints are defense-in-depth, not load-bearing for
+  encoding injectivity. 247 tests; red-on-revert proven for the commitment binding.
+
+- **2026-07-04 21:55 UTC** — **PR #18 MERGED (`main` @ `44d623a`) — leak Phase-3 3b/3c live on main;
+  branch restarted.** First CI run of the new rails caught one real defect in themselves: the
+  `cec-corpus-row` gitleaks rule matched the shape PREFIX (8 false positives: fixture head, test JSON,
+  two docs quoting the shape) — tightened to require the contiguous 16-64-hex VALUE, mirroring the
+  invariant hook (`5a7cd81`); zero tree hits, real rows still match. Second run: 12/12 green including
+  both first-ever `boundary` jobs (tree scan + allowlist-freeze bootstrap + hook-invokes-gate assert).
+  Merged via merge-commit; babysit trigger deleted; branch force-with-lease restarted from main. LESSON
+  (filed here, not repeated in Lessons — it generalizes the existing hook lesson): a content rule that
+  keys on a SHAPE PREFIX will flag every sanctioned quotation of that shape; key on the VALUE the real
+  artifact must carry.
 
 - **2026-07-04 21:20 UTC** — **PR #17 MERGED (`main` @ `e16fd35`); leak Phase 3's 3b/3c BUILT on the
   restarted branch.** The migration bundle + blind-audit fixes + all 3 decision records are on main; the

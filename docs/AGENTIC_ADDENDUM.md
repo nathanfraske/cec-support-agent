@@ -310,7 +310,7 @@ outside the repository, with three sections.
   correct. Those constants are our "reserved values": `ACTION_VOCABULARY` (must equal the
   dispatcher registry), `POISON`, `STOP_CODE_NAMES`/`MODULE_NAMES` (completeness is the whole
   guarantee of the closed-grammar de-id), the domain-tag/version prefixes
-  (`cec-signoff-attestation-v3`, `cec-corpus-chain-v2`, `cec-fingerprint-v2`, `cec-corpus-confirmation-content-v1`,
+  (`cec-signoff-attestation-v4`, `cec-provenance-commitment-v1`, `cec-corpus-chain-v2`, `cec-fingerprint-v2`, `cec-corpus-confirmation-content-v1`,
   `cec-plan-canonical-v1`), the panel retrieval prior (0.8 vs 0.6), `SESSION_TTL`/
   `MAX_SESSIONS`, and the pinned wire tokens.
 
