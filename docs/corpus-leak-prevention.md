@@ -359,6 +359,13 @@ the methodology, not a footnote:
    proxy logs. No type/content layer fixes a *reversible hash*. **Required:** switch
    `fingerprint_of`/`from_inventory` to a **keyed/salted HMAC (per-deployment salt)** and move
    retrieval keys out of logged URLs into request bodies.
+   **BUILT (2026-07-04, owner salt-custody decision 2026-07-03):** `fingerprint_of` is
+   HMAC-SHA256 under a per-deployment salt (`cec-fingerprint-v2`, 64-hex): the binary loads
+   `CEC_FINGERPRINT_SALT` at startup like the sign-off key, refuses a salt under 16 bytes with
+   a fixed no-echo message, and falls back to a documented PUBLIC cold-start default (domain
+   separation only — set a real salt for the C7 property, e.g. `openssl rand -hex 32`).
+   Retrieval keys travel in the `POST /v1/mappings/query` body, never the URL. Hard cutover:
+   fingerprints and chain hashes changed; the private corpus re-ingests once.
 
 3. **Commit-message / branch-name prose (C8 residual)** — an agent quoting the leaked
    identity in the message explaining the fix. The hook sees staged blobs, not log prose. A
@@ -428,7 +435,9 @@ all fail to compile.
     `--allow-remote-inference` audit flag. — **`--endpoint`/`--fast-endpoint` localhost-allowlist +
     `--allow-remote-inference` DONE (2026-07-02); `validate_inference_endpoints` on both the
     `diagnose` and `serve` paths. The `PromptPayload` chokepoint half remains.**
-15. Keyed/salted HMAC for `fingerprint_of`/`from_inventory`; retrieval keys out of GET URLs.
+15. Keyed/salted HMAC for `fingerprint_of`/`from_inventory`; retrieval keys out of GET URLs. —
+    **DONE (2026-07-04):** `cec-fingerprint-v2` keyed HMAC + `CEC_FINGERPRINT_SALT` custody +
+    `POST /v1/mappings/query` body. See §3.1(2) BUILT note.
 16. `CODEOWNERS` + branch protection; `AGENTS.md` Agent Contract; `xtask scan-msg` follow-on.
 
 ---
