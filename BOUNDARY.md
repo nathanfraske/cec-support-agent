@@ -35,9 +35,13 @@ relative-path sibling of this one.
    seeds known identifiers through the whole path and asserts zero leakage.
 2. **`.gitignore`** refuses `*.flow.yaml`, `*.jsonl`, `*.seed`, `/flows/`, `/build/`,
    and any `cec-corpus*` path.
-3. **`scripts/githooks/pre-commit`** refuses the same shapes (plus corpus/weights) and
-   runs `gitleaks` on staged content. Activate the guard once `gitleaks` is installed:
-   `git config core.hooksPath scripts/githooks`.
+3. **`scripts/githooks/pre-commit`** refuses the same shapes (plus corpus/weights),
+   runs the CONTENT-keyed boundary gate (`cargo xtask scan-content --staged` — corpus-row
+   shapes, canonical poison tokens, base64/hex-encoded smuggling; renames and `git add -f`
+   do not bypass it), and runs `gitleaks` on staged content when installed (warn-and-skip
+   otherwise — the required CI `secrets` + `boundary` jobs are the server-side backstop).
+   Activate with `cargo xtask install-hooks`. Sanctioned synthetic literals live in
+   `.boundary-allow.txt`, which is FROZEN in CI (net-new entries fail the `boundary` job).
 4. **The truth-admission gate** (`ensure_evidence_integrity` + `ensure_attested`) means
    even a row that did reach a store is refused unless it is sign-off-confirmed and
    attested by a key this engine does not hold.

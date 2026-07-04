@@ -1,0 +1,15 @@
+[package]
+name = "xtask"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Repo boundary tooling (leak methodology Layer 3b/3c): content gate, hook installer."
+publish = false
+
+[dependencies]
+# The canonical poison-token set — the single source of truth shared with the
+# runtime leakage suite, so the tree scan and the sink assertions can never
+# drift apart.
+leakguard = { path = "../../crates/leakguard" }

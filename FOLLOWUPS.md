@@ -348,3 +348,22 @@ recommends that are NOT yet built, each attributed to the threat doc's §3 contr
   the head]" item (attestation still guards confirmed rows under an authority; unattested cold-start
   files remain soft). No new code action beyond that item; recorded so the panel's convergence is
   auditable. — why deferred: duplicate of the tracked head-anchor item, listed for the audit trail.
+- [ ] [added 2026-07-04 21:20 UTC] **[leak L3a — type-aware dylint egress allowlist]** Layer 3's hard half:
+  a dylint/rustc MIR pass making the `egress` module the ONLY code that may call a byte-emitting primitive,
+  type-aware (follows values through bindings/aliases/generics/trait dispatch), no free-text escape hatch.
+  3b/3c (the content gate + hook/CI rail) are BUILT (2026-07-04, `tools/xtask` + the CI `boundary` job);
+  until 3a lands the egress-allowlist guarantee is AGENTS.md §2.5 policy + content gates, not a lint.
+  — why deferred: a separate large lift (custom lint crate, toolchain coupling); the leak doc rates it
+  "large". Resume: `docs/corpus-leak-prevention.md` §2 Layer 3 invariant 3a + §4 item 12.
+- [ ] [added 2026-07-04 21:20 UTC] **[leak §3.1(a) PromptPayload — RE-SCOPED by Q2/D3 (2026-07-04)]** The
+  original item (above, 2026-07-02) was deferred on the MyOwnLLM/Q2 design; Q2 is now decided-for-now
+  (LOCAL inference only, D3: no MyOwnLLM) which changes the chokepoint's value: raw prose reaching a
+  LOOPBACK model is not off-box egress, and the strict "prompts only from de-identified fields" form
+  conflicts with the interview feature by the doc's own admission (§3.1: the poison test "cannot pass while
+  the feature works"). Remaining honest value = make raw-prose prompt construction an EXPLICIT single-point
+  act (a sealed PromptPayload with named constructors — `raw_interview(...)` vs `from_case_brief(...)`) so
+  every raw channel is greppable and the egress lint (L3a) can key on it. OWNER CALL when scheduled:
+  strict-de-identified prompts (changes diagnosis quality) vs explicit-but-raw channels (type-visibility
+  only). — why deferred: needs that owner call + pairs naturally with L3a; nothing blocks on it while
+  inference is loopback-gated. Resume: `crates/inference` ChatMessage; call sites `main.rs:1487`,
+  `agent-core/src/agent.rs:69/101/128`, `intake/src/lib.rs:495`.

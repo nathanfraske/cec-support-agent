@@ -388,3 +388,16 @@ _(completed items stay above, in place, with their `· done` tombstone)_
   v0.2.28 (generic RPC + roster ed25519 identity + daemon-client embedding pattern), AllMyStuff v0.2.17.
 - [x] [added 2026-07-04 20:30 UTC · done 2026-07-04 20:30 UTC] Subscribed to PR #17 activity (babysit to
   merge); CI green 10/10 at head `72985c6`; hourly self check-in armed via send_later.
+
+### Session 2026-07-04 (later) — PR #17 merged; leak Phase 3 (3b/3c) built
+
+- [x] [added 2026-07-04 20:50 UTC · done 2026-07-04 20:52 UTC] Merge PR #17 (all checks green ×2 runs) →
+  `main` @ `e16fd35`; babysit trigger deleted; branch restarted from main and force-with-lease pushed.
+- [x] [added 2026-07-04 20:55 UTC · done 2026-07-04 21:20 UTC] **Leak Phase 3, 3b+3c BUILT:** `tools/xtask`
+  (`scan-content` staged/tree: quoted-key row-shape co-occurrence, POISON-minus-bare-author, one-level
+  base64/hex decode-and-rescan, runtime-decode ban in test files; `allowlist-freeze` net-new-fails-in-CI
+  with bootstrap exemption; `install-hooks`), frozen `.boundary-allow.txt` seeded from a real tree sweep
+  (every entry a sanctioned adversarial-test/doc site), pre-commit hook now content-gated with gitleaks
+  warn-and-skip, CI `boundary` job (tree scan + freeze + hook-invokes-gate assert), `.gitleaks.toml`
+  seed/salt/row rules + `.claude/**` ignore. All four checks proven red on planted violations
+  (poison / encoded-poison / runtime-decode / row-shape). 245 tests green. 3a dylint → FOLLOWUPS.

@@ -255,6 +255,11 @@ a corpus row pasted into a `.rs`/`.md` fixture fails the content scan regardless
 **Effort:** large. **Guarantee class:** 3a is hard *if* implemented as a type-aware dylint
 (not grep); 3b/3c are defense-in-depth.
 
+> **BUILT (2026-07-04): 3b + 3c** — see §4 item 13's DONE note (`tools/xtask`, the CI `boundary`
+> job, the frozen allowlist, the warn-and-skip hook). **3a (the type-aware dylint egress
+> allowlist) is NOT built** — it remains the open item 12, a separate large lift; until it lands
+> the egress-allowlist guarantee is policy (AGENTS.md §2.5) plus these content gates, not a lint.
+
 ### Layer 4 — Agent policy & ownership (codified, branch-protected — defense-in-depth)
 
 **Invariant:** *The de-id surface (the mints, `extract.rs`, the dictionaries, the gate, the
@@ -428,7 +433,16 @@ all fail to compile.
 12. `egress` module is the only I/O site (dylint enforces, type-aware, no free-text escape).
 13. `cargo xtask scan-content` (decode-and-rescan, frozen `.boundary-allow.txt`), `install-hooks`,
     required CI `boundary` job, custom gitleaks seed/row rules, `.claude/**` ignore for
-    generated recon/audit/memory artifacts.
+    generated recon/audit/memory artifacts. — **DONE (2026-07-04):** `tools/xtask` ships
+    `scan-content` (row-shape co-occurrence on quoted JSON keys, canonical POISON minus the bare
+    author name, one-level base64/hex decode-and-rescan, runtime-decode ban in test files),
+    `allowlist-freeze` (net-new `.boundary-allow.txt` entries fail in CI; bootstrap-exempt), and
+    `install-hooks` (gitleaks downgraded to warn-and-skip in the hook; CI is the backstop). The
+    CI `boundary` job runs the tree scan + the freeze + asserts the hook still invokes the gate.
+    `.gitleaks.toml` gained the seed/salt/row rules + the `.claude/**` ignore. All four checks
+    proven red on planted violations. Honest residuals: gzip literals are not decoded (no
+    compression dep; the runtime-decode ban covers the decode half) and generic PII shapes stay
+    with gitleaks.
 
 ### Phase 4 — Architectural decisions (C2/C7) + policy (L4)
 14. `PromptPayload` chokepoint **and/or** `--endpoint` localhost-allowlist with
