@@ -401,3 +401,7 @@ _(completed items stay above, in place, with their `· done` tombstone)_
   warn-and-skip, CI `boundary` job (tree scan + freeze + hook-invokes-gate assert), `.gitleaks.toml`
   seed/salt/row rules + `.claude/**` ignore. All four checks proven red on planted violations
   (poison / encoded-poison / runtime-decode / row-shape). 245 tests green. 3a dylint → FOLLOWUPS.
+- [x] [added 2026-07-04 21:45 UTC · done 2026-07-04 21:55 UTC] PR #18 (Phase-3 boundary gate): first CI
+  run red on the `secrets` job — corpus-row gitleaks rule matched the shape prefix (8 sanctioned sites);
+  tightened to require the 16-64-hex value (`5a7cd81`); rerun 12/12 green (incl. both first `boundary`
+  jobs); MERGED → `main` @ `44d623a`; trigger deleted; branch restarted from main.
