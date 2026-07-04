@@ -883,6 +883,17 @@ See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementati
 
 ## Handoff log (reverse-chronological)
 
+- **2026-07-04 23:00 UTC** — **Attestation v4 built + blind-panel CLEAN (2/2); PR opened.** v4 binds
+  `RowProvenance::commitment()` (`cec-provenance-commitment-v1`) instead of raw provenance — the RFC Q6
+  wrinkle is RESOLVED ahead of the one-time re-ingest (operator still re-ingests exactly once). Panel:
+  no defect on either kernel across binding/replay/injectivity/minimization/domain-separation; every
+  flagged packet gap discharged against source by the orchestrator (label_tag injective — fixed tokens +
+  validated slug behind a unique prefix; ConfigClass::key identity per variant; v3 None-branch identical;
+  content_hash dispatched only on the no-provenance branch; the four {:?} enums all fieldless). One
+  auditor also PROVED the lp length-prefix scheme injective independent of charset validation (the `]`
+  terminator can never be a digit) — the charset mints are defense-in-depth, not load-bearing for
+  encoding injectivity. 247 tests; red-on-revert proven for the commitment binding.
+
 - **2026-07-04 21:55 UTC** — **PR #18 MERGED (`main` @ `44d623a`) — leak Phase-3 3b/3c live on main;
   branch restarted.** First CI run of the new rails caught one real defect in themselves: the
   `cec-corpus-row` gitleaks rule matched the shape PREFIX (8 false positives: fixture head, test JSON,
