@@ -31,7 +31,7 @@ tracing = "0.1"
 async-trait = "0.1"
 hmac = "0.12"
 sha2 = "0.10"
-getrandom = "0.2"
+getrandom = "0.3"
 ed25519-dalek = "2"
 # The engine's API face (`cec-support-agent serve`). Default features minus
 # tracing extras; http1 + json + tokio are what the loopback service needs.
