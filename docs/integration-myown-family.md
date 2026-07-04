@@ -18,6 +18,14 @@ boundary, or AllMyStuff's MIT license.
 > serde-only wire mirror now mirrors the HTTP schemas; AGPL §13 is the lever designed for
 > exactly this shape. P1/P2 are reshaped accordingly (client + service lifecycle instead of
 > stdio driver + per-run spawn); P0's envelope and inventory seams carry over verbatim.
+
+> **Supersession 2 (2026-07-04, Nathan): mesh = transport only; no `myownmesh-core` link; no
+> MyOwnLLM for now (RFC D3).** The engine serves its own authenticated API, loopback-bound; the
+> operator's MyOwnMesh daemon carries remote traffic to that endpoint, the same daemon-client
+> pattern MyOwnMesh's own GUI uses. The P3/P4 `corpus-mesh-adapter` (linking `myownmesh-core`) is
+> superseded by this gateway posture; RFC Q1 is fully decided (separate keys), Q2 decided-for-now
+> (local inference), Q3 moot, Q4 deferred, Q5 reframed as the engine's own wire-contract concern.
+> Verified against MyOwnMesh v0.2.28 / AllMyStuff v0.2.17 (2026-07-04).
 > Sidecar *bundling* may still be reused to ship/manage the service binary — the interface
 > is the API. See `docs/integration-rfc-for-chris.md` (banner) and
 > `docs/consolidated-work-plan.md` §3.

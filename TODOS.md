@@ -295,11 +295,24 @@ Sequencing PR-A(item1) · PR-B(item2) · PR-C(item3) · PR-D(item5) · PR-E(item
   injection seam = `AppState.audit` (serve) / `&NullSink` (CLI). Tests: closed field set, no-op sink, and a
   capturing-sink test proving one record per outcome carries the minted id and no title prose. Green
   (fmt/clippy -D/tests; support-agent unit 36→39). Deferred bits → FOLLOWUPS.
-- [ ] [added 2026-07-03 01:47 UTC] **Item 5 (B4)** — `HttpCorpus::query` read-path hardening: re-verify the
-  ed25519 attestation on each served row before trusting it (client holds the pubkey).
-- [ ] [added 2026-07-03 01:47 UTC] **Items 4+6 (BUNDLED migration)** — F2 canonical (serde-independent)
-  `chain_hash` + leak-C7 keyed/salted HMAC fingerprint. Both invalidate stored hashes → one corpus-rebuild
-  moment; needs a salt-custody micro-decision + an operator re-ingest note. Do LAST.
+- [~] [added 2026-07-03 01:47 UTC · obsolete 2026-07-03 03:15 UTC → FOLLOWUPS 2026-07-03 03:15] **Item 5 (B4)**
+  RE-SCOPED. On inspection `HttpCorpus::query` serves bare `FixMapping`s that carry **no attestation**
+  (`schema.rs:86`; attestation lives on `Contribution:198`), and the code comment (`store.rs:514-517`) says
+  cryptographic re-verification "lands with the corpus-service wire contract." So B4 is NOT a small
+  add-a-verify-call: it needs the served-row type to become an attested row, which is **gated on RFC Q6**
+  (served-row provenance minimization, still open) AND on the corpus service existing. Deferred → FOLLOWUPS.
+- [x] [added 2026-07-03 03:15 UTC · done 2026-07-03 03:15 UTC] Record owner decisions (2026-07-03): **Q7** =
+  ed25519 custodied judge key (RFC Q7 DECIDED note; pairs with F3); **Q1 volunteer-half** = pure execution
+  target, central authority attests (RFC Q1 DECIDED-partial note); **leak-C7 salt** = per-deployment secret
+  loaded like the sign-off key + cold-start default; **migration** = hard cutover, private corpus re-ingests
+  once. Plan updated (`scratchpad/lane2-implementation-plan.md` item 6).
+- [x] [added 2026-07-03 01:47 UTC] **Items 4+6 (BUNDLED migration) — NOW UNBLOCKED (decisions in).** F2
+  canonical (serde-independent) `chain_hash` (`schema.rs:461`, replace `serde_json::to_vec` with explicit
+  length-prefixed encoding, bump `cec-corpus-chain-v1`→`v2`) + leak-C7 keyed/salted HMAC `fingerprint_of`
+  (`common/src/hash.rs`, per-deployment secret salt + cold-start default). Both invalidate stored hashes →
+  ONE hard cutover: update in-tree fixtures, operator re-ingest note. This is the next code PR (PR-2).
+  · done 2026-07-04 19:05 UTC (branch `claude/workflow-model-optimization-e1y1sx`, commits
+  `92df52d`/`e17f38f`/`90ff2c2`; 235 tests green; red-on-revert proven for both kernels)
 
 ### Session 2026-07-02 — corpus cartography (leak-C10) threat model + non-mappability policy
 
@@ -340,3 +353,38 @@ admissibility/authenticity/access. Docs/policy/tracking pass to match the alread
 ## Done / obsolete (history)
 
 _(completed items stay above, in place, with their `· done` tombstone)_
+
+### Session 2026-07-04 — migration bundle (PR-2): chain v2 + keyed fingerprint + POST-body query
+
+- [x] [added 2026-07-04 18:20 UTC · done 2026-07-04 18:45 UTC] F2: `chain_hash` → explicit field-by-field
+  length-prefixed `chain_canonical` (`cec-corpus-chain-v2`), binds every field incl. title/description/
+  attestation, never integrity; hand-assembled canonical pin + 25-mutation binding sweep + ambiguity case +
+  v1-era-refused-at-open pin; all proven red on a v1 revert (`92df52d`).
+- [x] [added 2026-07-04 18:45 UTC · done 2026-07-04 19:00 UTC] leak-C7: `fingerprint_of` → HMAC-SHA256
+  under per-deployment `CEC_FINGERPRINT_SALT` (loaded like the sign-off key, ≥16 bytes fail-closed,
+  documented public cold-start default, `cec-fingerprint-v2`, 64-hex); write-once salt lifecycle; unit +
+  process-isolated integration + 2 CLI e2e tests; proven red against the silent salt-ignore regression
+  (`e17f38f`). Canned fixture regenerated with true v2 values, fragment-split so the invariant hook's
+  corpus-row backstop stays meaningful (pattern widened 16→16-64 hex).
+- [x] [added 2026-07-04 19:00 UTC · done 2026-07-04 19:02 UTC] Cartography control E logging half:
+  retrieval keys out of the GET URL into the `POST /v1/mappings/query` body (`90ff2c2`).
+- [x] [added 2026-07-04 19:05 UTC] Blind-audit panel (addendum §7) on the two new kernels — packet in
+  scratchpad, 3 blind auditors running; verify any finding against source before trusting it.
+  · done 2026-07-04 19:40 UTC — 3/3: chain canonical CLEAN (two independent concrete collision attempts
+  failed on the count/length guards); Kernel-2 findings all verified real and FIXED (`8626f23`): CRITICAL
+  non-UTF-8 salt fail-open refused at startup; MEDIUM fault/config domain separation (3/3 convergence);
+  HIGH silent cold-start → serve NOTICE + `fingerprint_salt_is_configured()` probe; LOW static lp tags +
+  honest POST-body scope note. 237 tests green.
+- [x] [added 2026-07-04 20:05 UTC · done 2026-07-04 20:05 UTC] Record owner decision **RFC Q6 = DECIDED**
+  (provenance-graph minimization: served row = attested `StoredOutcome` + attestation ONLY) in the RFC +
+  close the two cartography FOLLOWUPS items (control C; Q6-filed). B4 is now gated only on the corpus
+  service existing. Owner also asked for the Q1-operator-half recommendation + the Chris-blockers rundown
+  (delivered in-session; recommendation = SEPARATE keys, recorded in the handoff log).
+- [x] [added 2026-07-04 20:35 UTC · done 2026-07-04 20:35 UTC] Record owner decisions **Q1 operator-half =
+  SEPARATE keys (Q1 fully decided)** + **D3 integration posture** (engine = independent authenticated API,
+  loopback-bound; MyOwnMesh daemon = transport only, no `myownmesh-core` link; no MyOwnLLM now) in the RFC;
+  Q2 decided-for-now / Q3 moot / Q4 deferred / Q5 reframed→B4 wire contract; integration doc banner;
+  closed the "[RFC Q1–Q5 awaiting Chris/owner]" FOLLOWUPS item. Grounded in a live review: MyOwnMesh
+  v0.2.28 (generic RPC + roster ed25519 identity + daemon-client embedding pattern), AllMyStuff v0.2.17.
+- [x] [added 2026-07-04 20:30 UTC · done 2026-07-04 20:30 UTC] Subscribed to PR #17 activity (babysit to
+  merge); CI green 10/10 at head `72985c6`; hourly self check-in armed via send_later.

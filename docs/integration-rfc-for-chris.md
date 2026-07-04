@@ -44,6 +44,18 @@ code.) The engine stays standalone/cold-start; integration is additive trait sea
   rename / retype a field) bumps to `v2`; the consumer checks the major and errors on an
   unknown one. *(Agent's call — flag if you'd version differently.)* Already implemented
   in P0 (below).
+- **D3. Integration posture (owner, Nathan, 2026-07-04): the engine is an independent
+  service; MyOwnMesh is transport, not a dependency.** The engine serves its own
+  authenticated API and stays loopback-bound on its box; remote reach comes from the
+  operator's MyOwnMesh daemon carrying/tunneling traffic to that loopback endpoint
+  ("comms over his software"). The engine does NOT link `myownmesh-core` — the same
+  pattern MyOwnMesh's own GUI uses (a daemon client over local control sockets, never
+  embedding core). MyOwnLLM is not used for now (local inference stands). Verified
+  against the repos as of 2026-07-04: MyOwnMesh v0.2.28 ships generic RPC
+  (call/serve/call_stream) + typed pub/sub with opaque payloads and per-device ed25519
+  roster identity; AllMyStuff v0.2.17 already rides the daemon for desktop/shell/files.
+  This posture reframes Q2–Q5 below and keeps the AGPL boundary trivially clean (no
+  linking anywhere).
 
 ## Open — need your call
 
@@ -61,6 +73,28 @@ corpus sign-off authority — or keep them **separate**?
 - **Lean:** unified for the single-operator case, with the seam left open for a split
   deployment. **Blocks:** the corpus-mesh-adapter's authority wiring (Phase P3/P4).
 
+> **DECIDED 2026-07-03 (owner, Nathan) — the volunteer-role half:** a volunteer is a **pure
+> execution target**, NOT an identity that holds a sign-off authority. A **central** human/verifier
+> authority holds the ed25519 sign-off seed and attests every outcome; the volunteer's machine runs
+> the plan and never holds the seed, so a compromised volunteer cannot mint a resolved row. This
+> keeps the sign-off authority centralized (no per-volunteer key), which **narrows Q1 toward the
+> single-authority model** for the corpus side. The remaining open Q1 sub-question is unchanged: for
+> the OPERATOR, unify the mesh `DeviceId` with the corpus sign-off authority (one key) or keep them
+> separate. Pairs with Q7's custodied judge key — both custodied ed25519 keys held centrally.
+
+> **DECIDED 2026-07-04 (owner, Nathan) — the operator half: SEPARATE keys. Q1 is now fully
+> decided.** The mesh `DeviceId` is a DEVICE key (per-machine, rotated on reimage/retire, resident
+> in the mesh stack on every connect — MyOwnMesh manages it in per-network rosters); the corpus
+> sign-off authority is a ROLE key (portable across machines, slow expensive rotation, tight
+> custody — the seed lives only where sign-off is performed). Unifying them would weld a long-lived
+> role to a disposable device and make one compromised operator box an attacker who can mint
+> `HumanConfirmed` rows — the event the attestation layer exists to prevent. The 2026-07-03
+> decisions already made authority keys central role keys (volunteer-half; Q7 judge key), and F3's
+> registry/rotation machinery must exist anyway, so unification saves nothing meaningful.
+> Concretely: the mesh authenticates transport with the `DeviceId`; permission to submit/sign-off
+> maps a roster entry (device → allowed roles), never key identity. Supersedes the original
+> "lean: unified" above, which predates the 2026-07-03 decisions.
+
 **Q2. Inference over the mesh — loopback only, or fan out to a peer's MyOwnLLM?** Raw
 symptom free-text (the user's description) is **NOT** de-identified before it reaches the
 model — only the *corpus row* is. So sending inference to a peer's MyOwnLLM over the mesh
@@ -69,10 +103,18 @@ would expose raw prose to that peer.
   behind an explicit per-use privacy opt-in. **Decision:** is mesh inference ever in
   scope, or do we hard-require local inference?
 
+> **DECIDED-for-now 2026-07-04 (owner, Nathan, via D3):** MyOwnLLM is not used at present —
+> inference stays local (the shipped hard-loopback default + `--allow-remote-inference` escape
+> hatch is exactly right). Mesh inference is out of scope until the owner reopens it.
+
 **Q3. `myownmesh-core` pin — single source of truth?** Both AllMyStuff and the engine's
 `corpus-mesh-adapter` must build against the **same** `myownmesh-core` version (git tag,
 not crates.io). Where does that pin live so the two never drift? **Decision:** a shared
 `.myownmesh-rev`-style file, or a documented manual bump?
+
+> **MOOT under D3 (2026-07-04):** the engine never links `myownmesh-core`, so there is no shared
+> crate pin to keep in sync. The question only revives if a future decision embeds core (none
+> planned). The `corpus-mesh-adapter` concept is superseded by the daemon-gateway posture.
 
 **Q4. `MeshSandboxValidator` — in scope now or later?** The engine has a `SandboxValidator`
 trait: a clean apply in a disposable sandbox is positive evidence that can *lower* an
@@ -80,11 +122,20 @@ escalation. Over the mesh, a peer node could be that disposable sandbox. **Decis
 build a `MeshSandboxValidator` in this round, or defer (the conservative default —
 "unvalidated ⇒ escalate" — already holds without it)?
 
+> **DEFERRED under D3 (2026-07-04):** out of scope while the mesh is transport-only. The
+> conservative default stands; F5 (a local/VM validator backend) is the live sandbox track.
+
 **Q5. Tail-truncation anchor for mesh peers.** The corpus hash chain can't self-detect a
 dropped tail; we close that with a committed head+count *anchor* in the corpus repo. When
 the corpus is served over the mesh, a **consuming peer** needs that anchor too (else a
 serving node could silently truncate). **Decision:** distribute the anchor as part of the
 mesh corpus handshake, or is the rostered-owner trust model enough?
+
+> **REFRAMED under D3 (2026-07-04) — ours now, not Chris's:** with the mesh as opaque transport,
+> the anchor cannot ride a mesh handshake; it belongs to the ENGINE's corpus-service wire contract
+> (serve the head+count anchor alongside query responses, or as a dedicated authenticated
+> endpoint). Fold into the B4 / corpus-service design together with the Q6 minimal-attested-unit
+> bar. No longer blocked on Chris.
 
 **Q6. How much provenance does a served row expose?** B4 proposes serving essentially the
 whole `Contribution` minus `integrity` — including `RowProvenance` (`run_id`,
@@ -97,6 +148,17 @@ minimization** — the B4 served-row type ships only the minimal attested unit a
 needs to verify and use a row (attested `StoredOutcome` + attestation), never `primed_from`
 or raw `confirmations`, unless a decision log entry explicitly authorizes it. **Decision:**
 confirm this bar before B4's wire contract ships; gated on B4.
+
+> **DECIDED 2026-07-04 (owner, Nathan): the lean is confirmed — provenance-graph minimization.**
+> The B4 served-row wire type ships ONLY the minimal attested unit a consumer needs to verify and
+> use a row: the attested `StoredOutcome` plus its `SignOffAttestation`. It never ships
+> `primed_from`, `run_id`, `retrieval_first`, or raw `confirmations` unless a future decision-log
+> entry explicitly authorizes a named field. This is now the bar the corpus-service wire contract
+> builds to (cartography control C is thereby decided; B4 remains gated only on the corpus service
+> existing). Note: the attestation covers the provenance pin, so a served row's signature is
+> computed over fields the consumer does not receive — the served-row type must carry whatever
+> minimal commitment the attestation math needs (e.g. the attestation message may need a
+> provenance commitment rather than raw fields); design that with B4.
 
 **Q7. Plan-provenance signing across the *execution* boundary.** Plan signing today is
 symmetric HMAC with a **fresh, ephemeral per-run key**, sound *only* because the judge and
@@ -112,6 +174,15 @@ which topology? It forks the whole access-MCP shape and pairs with Q1 (is a volu
 identity that can *hold* a sign-off authority, or purely an execution target whose outcomes a
 central authority attests?). Full analysis: `docs/test-validation-fleet-design.md` §2.1 T-6, §5.
 Gated on the access-MCP design landing; no code depends on it yet.
+
+> **DECIDED 2026-07-03 (owner, Nathan):** topology **(b) — plan signing goes ed25519 with a
+> persistent, custodied judge key**, like sign-off attestation. The distributed access-MCP will
+> have an off-box central judge that signs plans with a custodied ed25519 private key; the executor
+> on the target verifies with the embedded public key. This **pairs with F3** (key custody +
+> rotation + a key-id → key registry) — the judge key is now a second custodied ed25519 key
+> alongside the sign-off authority, and both need the same registry/rotation machinery. Domain-tag
+> separation keeps a judge signature from ever being a valid corpus attestation. No code yet; this
+> is the target the distributed wrapper builds to (the loopback wrapper stays in-process HMAC).
 
 ## What's already built (P0 — no decisions needed, additive + cold-start-safe)
 

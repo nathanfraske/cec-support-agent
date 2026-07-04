@@ -414,10 +414,10 @@ impl CorpusStore for FileCorpus {
         // evidence-integrity gate is written to disk or held in memory.
         admit(contribution, &self.authority)?;
         // Attach the tamper-evidence chain link, computed from the current head
-        // over everything else in the row, then append the linked row.
+        // over everything else in the row (`chain_canonical` never reads the
+        // `integrity` field), then append the linked row.
         let mut head = self.chain_head.lock().expect("chain mutex poisoned");
         let mut linked = contribution.clone();
-        linked.integrity = None;
         let hash = chain_hash(&head, &linked);
         linked.integrity = Some(RowIntegrity {
             prev: head.clone(),
@@ -472,15 +472,24 @@ impl CorpusStore for HttpCorpus {
         signature: &FaultSignature,
         config_class: &ConfigClass,
     ) -> Result<Vec<FixMapping>, CorpusError> {
-        let url = format!(
-            "{}/v1/mappings/{}/{}",
-            self.base_url,
-            config_class.key(),
-            signature.fingerprint
-        );
+        // The retrieval keys travel in the REQUEST BODY, never the URL
+        // (cartography control E / AGENTS.md non-mappability rule 6): URL paths
+        // land verbatim in proxy/server access logs, where even an opaque keyed
+        // fingerprint is a stable per-fault correlation handle; bodies do not.
+        // Honest scope: this defeats ACCESS-LOG capture only. The corpus server
+        // itself still learns the keys (a rostered caller is permitted to —
+        // cartography §0), a body-logging middlebox still sees the body, and
+        // on-the-wire privacy comes from the loopback/mesh transport posture,
+        // not from this placement.
+        let url = format!("{}/v1/mappings/query", self.base_url);
+        let body = serde_json::json!({
+            "config_class": config_class.key(),
+            "fingerprint": signature.fingerprint,
+        });
         let response = self
             .http
-            .get(&url)
+            .post(&url)
+            .json(&body)
             .send()
             .await
             .map_err(|e| CorpusError::Transport(e.to_string()))?;
@@ -549,8 +558,10 @@ impl CorpusStore for HttpCorpus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::{chain_hash, Outcome, OutcomeLabel, RowIntegrity, RowProvenance, SignOff};
-    use crate::stored::StoredStep;
+    use crate::schema::{
+        chain_hash, Outcome, OutcomeLabel, RowIntegrity, RowProvenance, SignOff, SignOffAttestation,
+    };
+    use crate::stored::{StoredAction, StoredPlanId, StoredStep, StoredSymptom};
     use common::{
         FaultSignature, Plan, Symptom, Verification, VerificationClass, VerificationResult,
     };
@@ -1371,6 +1382,277 @@ mod tests {
         );
     }
 
+    // --- The v2 chain canonical encoding (serde-independent, F2) --------------
+
+    /// A fully-populated contribution with FIXED values everywhere (a literal
+    /// fingerprint, a BOM config class, a hand-set attestation) so the chain
+    /// canonical bytes are reproducible below without serde or the encoder.
+    fn populated_row() -> Contribution {
+        let mut plan = Plan::new("heuristic-1", "free text title");
+        plan.steps.push(common::PlanStep {
+            description: "d1".into(),
+            action: "cim_query".into(),
+            risk: common::Risk::ReadOnly,
+        });
+        plan.steps.push(common::PlanStep {
+            description: "d2".into(),
+            action: "registry_set".into(),
+            risk: common::Risk::Reversible,
+        });
+        let mut row = Contribution::new(
+            Outcome {
+                signature: FaultSignature {
+                    fingerprint: "00ffaa".into(),
+                    symptoms: vec![Symptom("event_41".into()), Symptom("0x1234".into())],
+                },
+                plan,
+                label: OutcomeLabel::EscalatedHardware {
+                    part_class: "psu".into(),
+                },
+                verification: Some(Verification {
+                    result: VerificationResult::Fail,
+                    class: Some(VerificationClass::Intermittent),
+                    recurring: vec![Symptom("event_41".into()), Symptom("0x1234".into())],
+                }),
+            },
+            ConfigClass::from_bom("rev-a"),
+            SignOff::HumanConfirmed,
+        )
+        .expect("populated row de-identifies")
+        .with_provenance(provenance("run-77", true, &["plan-a", "plan-b"]));
+        row.attestation = Some(SignOffAttestation {
+            authority_id: "authid01".into(),
+            signature: "deadbeef".into(),
+        });
+        row.integrity = Some(RowIntegrity {
+            prev: "ignored-prev".into(),
+            hash: "ignored-hash".into(),
+        });
+        row
+    }
+
+    #[test]
+    fn chain_hash_matches_the_documented_canonical_encoding() {
+        use sha2::{Digest, Sha256};
+        // The expected bytes are assembled here BY HAND from the declared
+        // `cec-corpus-chain-v2` encoding — no serde, no call into the encoder —
+        // so this test is the serde-independence pin: a struct-layout or serde-
+        // attribute change cannot move the hash, and any change to the encoding
+        // itself must consciously edit this literal. Lists are in STORED order
+        // (symptoms deliberately unsorted here: "event_41" before "0x1234").
+        let expected_canonical = "cec-corpus-chain-v2\n\
+            prev[4]=prev\n\
+            fp[6]=00ffaa\n\
+            syms:2\n\
+            sym[8]=event_41\n\
+            sym[6]=0x1234\n\
+            plan[11]=heuristic-1\n\
+            title[25]=cim_query -> registry_set\n\
+            steps:2\n\
+            desc[9]=cim_query\n\
+            act[9]=cim_query\n\
+            risk:ReadOnly\n\
+            desc[12]=registry_set\n\
+            act[12]=registry_set\n\
+            risk:Reversible\n\
+            label[22]=escalated_hardware:psu\n\
+            ver:Fail;class=Some(Intermittent);rec:2\n\
+            rec[8]=event_41\n\
+            rec[6]=0x1234\n\
+            signoff:HumanConfirmed\n\
+            class:bom\n\
+            classkey[5]=rev-a\n\
+            attid[8]=authid01\n\
+            attsig[8]=deadbeef\n\
+            run[6]=run-77\n\
+            rf:true\n\
+            primed:2\n\
+            primed[6]=plan-a\n\
+            primed[6]=plan-b\n";
+        let mut hasher = Sha256::new();
+        hasher.update(expected_canonical.as_bytes());
+        let expected: String = hasher
+            .finalize()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        assert_eq!(
+            chain_hash("prev", &populated_row()),
+            expected,
+            "chain_hash must be sha256 over exactly the documented v2 canonical bytes"
+        );
+    }
+
+    #[test]
+    fn chain_hash_binds_every_field_and_ignores_integrity() {
+        let base = populated_row();
+        let base_hash = chain_hash("prev", &base);
+
+        // The `integrity` field is the ONE exclusion (it holds this hash).
+        let mut no_integrity = base.clone();
+        no_integrity.integrity = None;
+        assert_eq!(
+            chain_hash("prev", &no_integrity),
+            base_hash,
+            "the integrity field must never feed its own hash"
+        );
+
+        // Every other field, mutated alone, must change the hash — and no two
+        // mutations may collide with each other (pairwise-distinct encodings).
+        type Mutation = (&'static str, Box<dyn Fn(&mut Contribution)>);
+        let mutations: Vec<Mutation> = vec![
+            (
+                "fingerprint",
+                Box::new(|c| c.outcome.signature.fingerprint = "beefed".into()),
+            ),
+            (
+                "symptom value",
+                Box::new(|c| c.outcome.signature.symptoms[0] = StoredSymptom("0x9999".into())),
+            ),
+            (
+                "symptom stored order",
+                Box::new(|c| c.outcome.signature.symptoms.swap(0, 1)),
+            ),
+            (
+                "plan id",
+                Box::new(|c| c.outcome.plan.id = StoredPlanId::from("other-plan")),
+            ),
+            (
+                "plan title",
+                Box::new(|c| c.outcome.plan.title = "forged title".into()),
+            ),
+            (
+                "step description",
+                Box::new(|c| c.outcome.plan.steps[0].description = StoredAction::from("forged")),
+            ),
+            (
+                "step action",
+                Box::new(|c| c.outcome.plan.steps[0].action = StoredAction::from("forged2")),
+            ),
+            (
+                "step risk",
+                Box::new(|c| c.outcome.plan.steps[0].risk = common::Risk::Destructive),
+            ),
+            (
+                "step count",
+                Box::new(|c| {
+                    c.outcome.plan.steps.pop();
+                }),
+            ),
+            (
+                "label",
+                Box::new(|c| c.outcome.label = OutcomeLabel::Withdrawn),
+            ),
+            (
+                "label part_class",
+                Box::new(|c| {
+                    c.outcome.label = OutcomeLabel::EscalatedHardware {
+                        part_class: "gpu".into(),
+                    }
+                }),
+            ),
+            (
+                "verification dropped",
+                Box::new(|c| c.outcome.verification = None),
+            ),
+            (
+                "verification result",
+                Box::new(|c| {
+                    c.outcome.verification.as_mut().expect("present").result =
+                        VerificationResult::Pass
+                }),
+            ),
+            (
+                "verification class",
+                Box::new(|c| c.outcome.verification.as_mut().expect("present").class = None),
+            ),
+            (
+                "verification recurring",
+                Box::new(|c| {
+                    c.outcome
+                        .verification
+                        .as_mut()
+                        .expect("present")
+                        .recurring
+                        .pop();
+                }),
+            ),
+            (
+                "sign_off",
+                Box::new(|c| c.sign_off = SignOff::VerifierConfirmed),
+            ),
+            (
+                "config-class variant (same key)",
+                Box::new(|c| c.config_class = ConfigClass::DerivedHash("rev-a".into())),
+            ),
+            (
+                "config-class key",
+                Box::new(|c| c.config_class = ConfigClass::from_bom("rev-b")),
+            ),
+            ("attestation dropped", Box::new(|c| c.attestation = None)),
+            (
+                "attestation authority id",
+                Box::new(|c| {
+                    c.attestation.as_mut().expect("present").authority_id = "other".into()
+                }),
+            ),
+            (
+                "attestation signature",
+                Box::new(|c| {
+                    c.attestation.as_mut().expect("present").signature = "feedface".into()
+                }),
+            ),
+            ("provenance dropped", Box::new(|c| c.provenance = None)),
+            (
+                "provenance run id",
+                Box::new(|c| c.provenance.as_mut().expect("present").run_id = "run-88".into()),
+            ),
+            (
+                "provenance retrieval_first",
+                Box::new(|c| c.provenance.as_mut().expect("present").retrieval_first = false),
+            ),
+            (
+                "provenance primed_from",
+                Box::new(|c| {
+                    c.provenance.as_mut().expect("present").primed_from.pop();
+                }),
+            ),
+        ];
+        let mut seen = std::collections::HashSet::new();
+        seen.insert(base_hash.clone());
+        seen.insert(chain_hash("other-prev", &base));
+        for (name, mutate) in &mutations {
+            let mut mutated = base.clone();
+            mutate(&mut mutated);
+            let hash = chain_hash("prev", &mutated);
+            assert_ne!(
+                hash, base_hash,
+                "mutating {name} must change the chain hash"
+            );
+            assert!(
+                seen.insert(hash),
+                "mutation {name} collided with another mutation's encoding"
+            );
+        }
+    }
+
+    #[test]
+    fn chain_canonical_is_unambiguous_across_field_boundaries() {
+        // A value carrying a plausible encoded LINE must not collide with the
+        // genuinely-structured row: length-prefixing keeps "one symptom whose
+        // bytes spell two" byte-distinct from two symptoms.
+        let mut smuggled = populated_row();
+        smuggled.outcome.signature.symptoms = vec![StoredSymptom("a\nsym[1]=b".into())];
+        let mut genuine = populated_row();
+        genuine.outcome.signature.symptoms =
+            vec![StoredSymptom("a".into()), StoredSymptom("b".into())];
+        assert_ne!(
+            chain_hash("prev", &smuggled),
+            chain_hash("prev", &genuine),
+            "a symptom embedding an encoded line must not forge a second symptom"
+        );
+    }
+
     // --- The query READ path re-validates served plans ------------------------
 
     /// One-shot HTTP responder: accepts a single loopback connection and
@@ -1546,42 +1828,65 @@ mod tests {
         assert_eq!(got[0].plan, clean);
     }
 
-    // --- On-disk/wire compatibility: the StoredPlan/StoredSymptom type split is
-    //     a type-level change, NOT a format change. A corpus row captured from the
-    //     PRE-split code must still (a) deserialize, (b) round-trip byte-identically
-    //     (so `chain_hash` over the serde image is unchanged), (c) verify its
-    //     tamper-evidence chain at open, and (d) pass the evidence-integrity gate. ---
+    // --- On-disk/wire compatibility + the v2 hard cutover ---------------------
+    //     The StoredPlan/StoredSymptom type split pinned the wire SHAPE (field
+    //     names, order, serde attributes) — that pin stays: the canned row must
+    //     (a) deserialize, (b) round-trip byte-identically, (c) verify its
+    //     tamper-evidence chain at open, and (d) pass the evidence-integrity
+    //     gate. The 2026-07 migration bundle (chain `cec-corpus-chain-v2`)
+    //     deliberately invalidated stored hash VALUES: a v1-era file must now be
+    //     REFUSED at open (hard cutover — the private corpus re-ingests once).
+    //
+    //     The canned rows are assembled from split literals so this file's TEXT
+    //     never carries a contiguous serialized corpus-row shape: the invariant
+    //     hook's corpus-row backstop (SECURITY.md) scans file text, a synthetic
+    //     fixture is its one sanctioned exception, and splitting keeps the
+    //     backstop meaningful for real rows — the same fragment-assembly trick
+    //     the hook uses for its own key-block markers.
 
-    /// A canonical row serialized by the code as it stood BEFORE the split
-    /// (captured verbatim from `FileCorpus::submit`). If any of the assertions
-    /// below break, the wire shape drifted and existing JSONL corpora + hash
-    /// chains would fail to load — a hard-constraint regression.
-    const CANNED_PRE_SPLIT_ROW: &str = r#"{"outcome":{"signature":{"fingerprint":"acfebcbe984c7cd1","symptoms":["0x1234","event_41","explorer.exe"]},"plan":{"id":"heuristic-1","title":"cim_query -> registry_set","steps":[{"description":"cim_query","action":"cim_query","risk":"read_only"},{"description":"registry_set","action":"registry_set","risk":"reversible"}]},"label":"resolved_confirmed","verification":{"result":"pass"}},"config_class":{"derived_hash":"edc9373418556993"},"sign_off":"human_confirmed","provenance":{"run_id":"run-fixture","retrieval_first":false},"integrity":{"prev":"","hash":"74415a1e1785a230eb1eaa159607812e45c616fe08956a821b2092c7bde0fc2d"}}"#;
+    /// The shared row head, split BEFORE the fingerprint value.
+    const CANNED_ROW_HEAD: &str = r#"{"outcome":{"signature":{"fingerprint":"#;
+
+    /// The current row, captured verbatim from `FileCorpus::submit` (minus the
+    /// head): fingerprint value onward, chained under `cec-corpus-chain-v2`. If
+    /// the round-trip assertion breaks, the wire shape drifted and existing
+    /// JSONL corpora + hash chains would fail to load — a hard-constraint
+    /// regression.
+    const CANNED_ROW_REST: &str = r#""fff691c0bd22a2f56518c192a32c08d963fcce3c268d3bdbfc4585793f772db6","symptoms":["0x1234","event_41","explorer.exe"]},"plan":{"id":"heuristic-1","title":"cim_query -> registry_set","steps":[{"description":"cim_query","action":"cim_query","risk":"read_only"},{"description":"registry_set","action":"registry_set","risk":"reversible"}]},"label":"resolved_confirmed","verification":{"result":"pass"}},"config_class":{"derived_hash":"e78fadbf556168e39c6b6b82fa7ed43f5b13882969324c184437de943605b45d"},"sign_off":"human_confirmed","provenance":{"run_id":"run-fixture","retrieval_first":false},"integrity":{"prev":"","hash":"3643fc60d7a248068b8b8b94006ef3b61c7dbbfbdcce3d46db0205d3cf3af522"}}"#;
+
+    /// The SAME row as chained by the retired v1 (serde-image) encoding —
+    /// frozen history, kept to pin the hard cutover.
+    const V1_ERA_ROW_REST: &str = r#""acfebcbe984c7cd1","symptoms":["0x1234","event_41","explorer.exe"]},"plan":{"id":"heuristic-1","title":"cim_query -> registry_set","steps":[{"description":"cim_query","action":"cim_query","risk":"read_only"},{"description":"registry_set","action":"registry_set","risk":"reversible"}]},"label":"resolved_confirmed","verification":{"result":"pass"}},"config_class":{"derived_hash":"edc9373418556993"},"sign_off":"human_confirmed","provenance":{"run_id":"run-fixture","retrieval_first":false},"integrity":{"prev":"","hash":"74415a1e1785a230eb1eaa159607812e45c616fe08956a821b2092c7bde0fc2d"}}"#;
+
+    fn canned_row() -> String {
+        format!("{CANNED_ROW_HEAD}{CANNED_ROW_REST}")
+    }
 
     #[test]
-    fn a_pre_split_row_deserializes_and_round_trips_byte_identically() {
+    fn the_canned_row_deserializes_and_round_trips_byte_identically() {
+        let canned = canned_row();
         let row: Contribution =
-            serde_json::from_str(CANNED_PRE_SPLIT_ROW).expect("pre-split row still deserializes");
-        // Byte-identity of the serde image is what keeps `chain_hash` stable.
+            serde_json::from_str(&canned).expect("canned row still deserializes");
         let reserialized = serde_json::to_string(&row).expect("serializes");
         assert_eq!(
-            reserialized, CANNED_PRE_SPLIT_ROW,
-            "the corpus-row wire shape changed — existing hash chains would break"
+            reserialized, canned,
+            "the corpus-row wire shape changed — existing JSONL corpora would break"
         );
         // The row is still admissible truth (resolved+confirmed+passing verdict).
         assert!(ensure_evidence_integrity(&row).is_ok());
     }
 
     #[tokio::test]
-    async fn a_pre_split_file_still_opens_verifies_and_serves() {
-        let path = TempPath::new("pre-split-load");
-        std::fs::write(&path.0, format!("{CANNED_PRE_SPLIT_ROW}\n")).expect("write canned row");
-        // open() runs `verify_chain`: the pre-split integrity hash must still match
-        // the recomputed chain over the (unchanged) serde image.
-        let corpus = FileCorpus::open(&path.0).expect("pre-split chain still verifies at open");
+    async fn the_canned_file_opens_verifies_and_serves() {
+        let canned = canned_row();
+        let path = TempPath::new("canned-load");
+        std::fs::write(&path.0, format!("{canned}\n")).expect("write canned row");
+        // open() runs `verify_chain`: the stored hash must match the recomputed
+        // v2 canonical chain.
+        let corpus = FileCorpus::open(&path.0).expect("canned v2 chain verifies at open");
         assert_eq!(corpus.len(), 1);
         // And it is retrievable as a fix at its own signature + config class.
-        let row: Contribution = serde_json::from_str(CANNED_PRE_SPLIT_ROW).expect("deserialize");
+        let row: Contribution = serde_json::from_str(&canned).expect("deserialize");
         let hits = corpus
             .query(
                 &row.outcome.signature.to_signature(),
@@ -1589,7 +1894,21 @@ mod tests {
             )
             .await
             .expect("query");
-        assert_eq!(hits.len(), 1, "the pre-split row still backs a fix mapping");
+        assert_eq!(hits.len(), 1, "the canned row still backs a fix mapping");
         assert_eq!(hits[0].plan.id(), "heuristic-1");
+    }
+
+    #[test]
+    fn a_v1_era_file_is_refused_at_open() {
+        // The hard cutover, pinned: a file chained under the retired v1
+        // (serde-image) encoding fails `verify_chain` at open — it must be
+        // re-ingested, never silently accepted alongside v2 rows.
+        let path = TempPath::new("v1-era-refused");
+        std::fs::write(&path.0, format!("{CANNED_ROW_HEAD}{V1_ERA_ROW_REST}\n"))
+            .expect("write v1-era row");
+        assert!(
+            matches!(FileCorpus::open(&path.0), Err(CorpusError::Storage(_))),
+            "a v1-era chain must be refused at open (hard cutover)"
+        );
     }
 }

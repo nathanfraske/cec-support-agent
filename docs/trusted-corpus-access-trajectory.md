@@ -298,7 +298,7 @@ single-key B4 and a second migration. Recommended: F2 → F3 → B4 → F1.
   engine-side verify/anchor primitives.
 - **Does not decide roster policy (Q1) or anchor-distribution policy (Q5).** It builds the mechanisms those
   answers will configure; it does not pre-empt the owner/Chris decision.
-- **Does not fix the C7 unsalted-FNV correlation handle** (`config_class.key()`/fingerprint reversibility,
+- **Does not fix the C7 unsalted-FNV correlation handle** *(FIXED 2026-07-04: keyed HMAC `cec-fingerprint-v2` + POST-body retrieval keys — see leak doc §3.1(2) BUILT note)* (`config_class.key()`/fingerprint reversibility,
   `corpus-leak-prevention.md` §3.1(2)). Encrypting the transport hides the handle in flight but the keyed-HMAC
   change is a distinct F-track item; noted, not in scope here.
 

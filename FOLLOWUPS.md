@@ -73,11 +73,14 @@ see `.claude/audit/confirmed-findings.txt` and HANDOFFS). These are the deeper r
   row (planned, P3 acceptance (d) in `docs/integration-myown-family.md`); apply the same hardening to
   `HttpCorpus` (carry attestation-bearing rows on the query path, or re-verify). — where to resume:
   `crates/corpus-client/src/store.rs` (HttpCorpus::query) + the mesh adapter.
-- [ ] [added 2026-06-14 23:05 UTC] **[chain_hash canonical encoding]** `chain_hash` now carries a version
+- [x] [added 2026-06-14 23:05 UTC] **[chain_hash canonical encoding]** `chain_hash` now carries a version
   prefix (`cec-corpus-chain-v1`) but still hashes the `serde_json` image of the row — coupled to struct
   field order, fine for same-code recompute but not cross-language. If the chain ever needs external
   verification, switch it to the serde-independent canonical encoder used for the attestation/plan
-  signatures. — where to resume: `crates/corpus-client/src/schema.rs` (chain_hash).
+  signatures. — where to resume: `crates/corpus-client/src/schema.rs` (chain_hash). · closed 2026-07-04
+  19:05 UTC → F2 landed on the migration-bundle PR (`92df52d`): `chain_canonical` explicit field-by-field
+  length-prefixed encoding, domain tag `cec-corpus-chain-v2`, serde-independence pinned by a hand-assembled
+  canonical-bytes test + a 25-mutation binding sweep; v1-era files refused at open (hard cutover).
 - [ ] [added 2026-06-14 23:05 UTC] **[Authority key rotation interacts with at-rest re-admission]** Now
   that `with_authority` re-verifies every at-rest row, rotating the sign-off authority key makes a corpus
   accreted under the OLD key un-openable under the NEW one. The single-key limitation is already filed
@@ -138,7 +141,12 @@ The durability contract is complete as-is; these are optional tightenings.
 - [x] [added 2026-06-15 02:22 UTC · closed 2026-06-15 03:10 UTC → DONE in commits `673a381` (PR #3) / `b7ad864` (PR #2): added the `concurrency` block, swapped the audit job to `EmbarkStudios/cargo-deny-action@v2` (honors `deny.toml`), SHA-pinned all third-party actions (checkout/gitleaks/cargo-deny/rust-toolchain), and added `.github/dependabot.yml`. NOT done (intentional, has a trade-off and was outside the chosen scope): scoping `on: push` to `branches:[main]` — push+PR still both trigger; the concurrency block only cancels SUPERSEDED runs on the same ref, not push-vs-PR. Re-open that sub-item if the duplicate push/PR runs become annoying.] **[CI hygiene — nice-to-haves, no deadline]** (1) concurrency block; (2) cargo-deny-action; (3) SHA-pin + dependabot.
 - [ ] [added 2026-06-15 02:00 UTC] **[`--json --sign-off` post-execution envelope]** The `cec-diagnose/v1` envelope is emitted pre-execution with `"executed": false`; under `--sign-off` the run then executes/records but does NOT emit a second, post-execution envelope (recorded outcome label, verification verdict). — why deferred: P0's use case is the **diagnose-only** path (`diagnose --json`, no `--sign-off`), per RFC D1 single-shot; a post-exec envelope is P2+ when AllMyStuff drives the execute phase. Resume: emit a terminal envelope after `record_outcome` carrying the label/verdict, or define a separate `cec-execute/v1` schema.
 - [ ] [added 2026-06-15 02:00 UTC] **[Daemon mode — later]** RFC D1 chose a single-shot CLI (AllMyStuff spawns `cec-support-agent diagnose --json` per diagnosis). A persistent daemon (warm corpus, lower per-call latency) is explicitly deferred until latency demands it. — why deferred: single-shot is simplest and has nothing to orphan; revisit only if profiling shows spawn/corpus-load cost matters.
-- [ ] [added 2026-06-15 02:00 UTC] **[RFC Q1–Q5 awaiting Chris/owner]** `docs/integration-rfc-for-chris.md` poses 5 open questions that gate P3/P4: Q1 identity unification (one ed25519 seed for mesh DeviceId + corpus sign-off, or split), Q2 mesh inference exposing raw (non-de-identified) prose to a peer, Q3 the `myownmesh-core` pin single-source-of-truth, Q4 `MeshSandboxValidator` now-or-later, Q5 tail-truncation anchor distribution to mesh peers. — why deferred: pending the owner's review + Chris's input ("implementing correctly the first time"); P1/P2 (app-side de-id allowlist + serde-only contract) do not need them and can start first.
+- [x] [added 2026-06-15 02:00 UTC] **[RFC Q1–Q5 awaiting Chris/owner]** `docs/integration-rfc-for-chris.md` poses 5 open questions that gate P3/P4: Q1 identity unification (one ed25519 seed for mesh DeviceId + corpus sign-off, or split), Q2 mesh inference exposing raw (non-de-identified) prose to a peer, Q3 the `myownmesh-core` pin single-source-of-truth, Q4 `MeshSandboxValidator` now-or-later, Q5 tail-truncation anchor distribution to mesh peers. — why deferred: pending the owner's review + Chris's input ("implementing correctly the first time"); P1/P2 (app-side de-id allowlist + serde-only contract) do not need them and can start first.
+  · closed 2026-07-04 20:35 UTC → resolved by the owner's D3 integration-posture decision + Q1
+  operator-half decision (RFC, 2026-07-04): Q1 fully DECIDED (separate keys), Q2 decided-for-now
+  (local inference; no MyOwnLLM), Q3 MOOT (no myownmesh-core link), Q4 DEFERRED, Q5 REFRAMED into
+  the engine's B4/corpus-service wire contract. Nothing hard-blocks on Chris anymore; his side
+  only adds an API client in AllMyStuff whenever tier-2 lands.
 
 ### Corpus leak-prevention (methodology Phases 0–2 in flight on `feat/corpus-leak-prevention`)
 
@@ -200,7 +208,7 @@ recommends that are NOT yet built, each attributed to the threat doc's §3 contr
   (FOLLOWUPS "[MH-1 — key rotation + audit log]" above). — why deferred: a real identity to attribute to
   needs rung-2/E3; a hashed-key+timestamp skeleton is greenlightable now. Resume:
   `docs/corpus-cartography-threat.md` §3 control B; `serve`/`serve_corpus`.
-- [ ] [added 2026-07-02 18:53 UTC] **[Corpus cartography — control E, keyed/salted HMAC fingerprint]** The
+- [x] [added 2026-07-02 18:53 UTC] **[Corpus cartography — control E, keyed/salted HMAC fingerprint]** The
   fingerprint and config-class key are unsalted FNV-1a — dictionary-reversible, and (per leak-C7) the exact
   reason the cartography probe space is enumerable rather than opaque (a caller can compute-then-probe keys
   offline against the planned `POST /v1/corpus/query`). This is the SAME item as the existing leak-C7
@@ -208,7 +216,11 @@ recommends that are NOT yet built, each attributed to the threat doc's §3 contr
   is the non-mappability prerequisite that makes the probe space opaque. — why deferred: not yet scheduled;
   no blocker. Resume: `crates/common/src/hash.rs` (`fingerprint_of`/`from_inventory` → keyed HMAC,
   per-deployment salt); move retrieval keys out of logged/GET URLs into request bodies (`store.rs:434-439`).
-- [ ] [added 2026-07-02 18:53 UTC] **[Corpus cartography — control C, B4 provenance-graph minimization]** B4
+  · closed 2026-07-04 19:05 UTC → BOTH halves landed on the migration-bundle PR (`e17f38f` keyed
+  HMAC-SHA256 `cec-fingerprint-v2` + `CEC_FINGERPRINT_SALT` custody per the owner's 2026-07-03
+  decision; `90ff2c2` retrieval keys into the `POST /v1/mappings/query` body). Docs: leak doc
+  §3.1(2) BUILT note; cartography control E BUILT note.
+- [x] [added 2026-07-02 18:53 UTC] **[Corpus cartography — control C, B4 provenance-graph minimization]** B4
   proposes serving essentially the whole `Contribution` minus `integrity`, including `RowProvenance`
   (`primed_from`, the priming graph) and possibly `confirmations` — both disclose corpus derivation/
   confirmation structure beyond a single answer (leak-C10 vectors V5/V6). Resolve by shipping only the
@@ -216,13 +228,19 @@ recommends that are NOT yet built, each attributed to the threat doc's §3 contr
   unless a decision log entry explicitly authorizes it. — why deferred: B4 hasn't shipped; the fix is a field
   choice, cheap NOW and expensive after B4 ships — decide it as a B4 wire-contract precondition, not after.
   Resume: `docs/corpus-cartography-threat.md` §2 V5/V6, §3 control C; the B4 served-row type
-  (`docs/trusted-corpus-access-trajectory.md` §2.1).
-- [ ] [added 2026-07-02 18:53 UTC] **[Corpus cartography — Q6 filed against B4]** Filed the real question Q6
+  (`docs/trusted-corpus-access-trajectory.md` §2.1). · closed 2026-07-04 20:05 UTC → DECIDED by the owner
+  (RFC Q6 DECIDED note, 2026-07-04): served rows ship ONLY the minimal attested unit (attested
+  `StoredOutcome` + attestation), never `primed_from`/`run_id`/`retrieval_first`/raw `confirmations`.
+  The build half lives in the open "[B4 — attested read path]" item (now service-gated only).
+- [x] [added 2026-07-02 18:53 UTC] **[Corpus cartography — Q6 filed against B4]** Filed the real question Q6
   ("how much provenance does a served row expose?") in `docs/integration-rfc-for-chris.md`'s open-questions
   section — the threat doc noted no Q6 existed anywhere in the tree (RFC had Q1-Q5 only). Resolution is
   control C above (provenance-graph minimization); Q6 stays open until the B4 wire contract makes that call
   explicit. — why deferred: gated on B4 shipping; owner/Chris decision. Resume:
-  `docs/integration-rfc-for-chris.md` Q6.
+  `docs/integration-rfc-for-chris.md` Q6. · closed 2026-07-04 20:05 UTC → Q6 DECIDED by the owner
+  (provenance-graph minimization; RFC DECIDED note). One design wrinkle recorded with the decision:
+  the attestation message binds the provenance pin, so a minimized served row needs a provenance
+  COMMITMENT the consumer can verify against — design that with the B4 wire type.
 - [ ] [added 2026-07-02 19:28 UTC] **[Crypto-dep major bumps — dependabot #8/#9/#10, deferred for one
   deliberate coordinated upgrade]** getrandom 0.2→0.3 (#8), hmac 0.12→0.13 (#9), sha2 0.10→0.11 (#10) each
   break the `provenance` crate at build: getrandom 0.3 renamed `getrandom::getrandom(&mut buf)` →
@@ -296,6 +314,16 @@ recommends that are NOT yet built, each attributed to the threat doc's §3 contr
   record is emitted (no admissible id to log); consider an id-less "execution refused" marker so a refusal is
   still attributable. — why deferred: skeleton is the greenlit scope; these are rung-2/identity work. Resume:
   `crates/support-agent/src/audit.rs`; `record_outcome` in `main.rs`; `docs/test-validation-fleet-design.md` §2.2.
+- [ ] [added 2026-07-03 03:15 UTC] **[B4 — attested read path, Q6-gated]** `HttpCorpus::query`
+  (`corpus-client/src/store.rs:470`) serves bare `FixMapping`s that carry **no attestation** (`schema.rs:86`;
+  attestation is on `Contribution:198`), and the read path only re-validates the plan's de-id image. To
+  re-verify the ed25519 attestation on served rows, the wire contract must serve an **attested row type**
+  (attested `StoredOutcome` + attestation), which is **RFC Q6** (served-row provenance minimization — still
+  OPEN) and also needs the corpus service to exist. So B4 is part of the larger corpus-over-HTTP/mesh service
+  build, not a small independent item. — why deferred: on inspection it is Q6-gated + service-gated, not the
+  add-a-verify-call I'd scoped. Resume: decide RFC Q6, define the served-row type, then
+  `HttpCorpus::query` calls `ensure_attested`/`admit` against `self.authority`. Ref: `consolidated-work-plan.md`
+  B4; `corpus-cartography-threat.md` V6; RFC Q6.
 - [ ] [added 2026-07-03 01:22 UTC] **[fleet — the hard data/infra gates F4/F5 + volunteer framework]** **F4**
   real post-fix re-collection (`recollect_post_signature() -> None` stub, `main.rs`; NR-1) — until it lands
   every run is `Verdict::Unverified` and can back no resolved row, so it gates the *value* of the entire
@@ -304,3 +332,19 @@ recommends that are NOT yet built, each attributed to the threat doc's §3 contr
   concept exists in code at all; largest greenfield, mostly policy/legal not engine. — why deferred: infra +
   legal + owner sequencing, all downstream of the greenlight items and the Q7/Q1 forks. Resume:
   `docs/test-validation-fleet-design.md` §5; `docs/consolidated-work-plan.md` F4/F5.
+
+- [ ] [added 2026-07-04 19:40 UTC] **[Private corpus-ingest — salt-loader parity]** The private
+  `corpus-ingest` (and the future corpus service) must load `CEC_FINGERPRINT_SALT` with EXACTLY the
+  engine's semantics or the two sides silently disagree on every fingerprint: trim() the UTF-8 value,
+  refuse <16 bytes, refuse set-but-not-UTF-8 (never treat as unset), set before the first fingerprint
+  (`common::set_fingerprint_salt`; probe `fingerprint_salt_is_configured()`). Flagged by the 2026-07-04
+  blind panel (auditor 2, trim-normalization divergence). — why deferred: private-repo change, lands with
+  the one-time v2 re-ingest. Resume: `/mnt/e/cec-corpus-private` compile path; engine loader
+  `crates/support-agent/src/main.rs::load_fingerprint_salt`.
+- [ ] [added 2026-07-04 19:40 UTC] **[Keyless-chain strip-downgrade — re-flagged by the blind panel]**
+  Auditor 2 independently re-derived the known keyless-chain residual in a sharper form: stripping
+  `integrity` from EVERY row demotes a chained file to accepted-unchained legacy (`verify_chain` with==0
+  path) — strictly easier than rechaining. Same class as the existing "[Chain integrity — key or anchor
+  the head]" item (attestation still guards confirmed rows under an authority; unattested cold-start
+  files remain soft). No new code action beyond that item; recorded so the panel's convergence is
+  auditable. — why deferred: duplicate of the tracked head-anchor item, listed for the audit trail.

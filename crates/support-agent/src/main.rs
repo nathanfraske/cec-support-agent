@@ -80,20 +80,28 @@ struct Args {
 async fn main() -> ExitCode {
     match parse_args() {
         Ok(None) => ExitCode::SUCCESS,
-        Ok(Some(args)) if args.serve => match serve::serve(args).await {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(error) => {
+        Ok(Some(args)) => {
+            // The per-deployment fingerprint salt (leak-C7) must be fixed
+            // before the FIRST fingerprint is computed — on both the diagnose
+            // and serve paths — and a set-but-invalid salt is a hard error,
+            // never a silent fall-through to the cold-start default.
+            if let Err(error) = load_fingerprint_salt() {
                 eprintln!("error: {error:#}");
-                ExitCode::FAILURE
+                return ExitCode::FAILURE;
             }
-        },
-        Ok(Some(args)) => match run(args).await {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(error) => {
-                eprintln!("error: {error:#}");
-                ExitCode::FAILURE
+            let result = if args.serve {
+                serve::serve(args).await
+            } else {
+                run(args).await
+            };
+            match result {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => {
+                    eprintln!("error: {error:#}");
+                    ExitCode::FAILURE
+                }
             }
-        },
+        }
         Err(message) => {
             eprintln!("error: {message}");
             eprintln!();
@@ -1296,6 +1304,30 @@ fn read_inventory_keys(src: &str) -> anyhow::Result<Vec<String>> {
 // see `docs/integration-myown-family.md`. The config class is bound into a row's
 // sign-off attestation, so whatever it is derived from is tamper-evident.
 
+/// Read the per-deployment fingerprint salt from `CEC_FINGERPRINT_SALT` and fix
+/// it for the process — loaded like the sign-off key (owner decision
+/// 2026-07-03): an environment secret the operator provisions, never an in-tree
+/// constant. Absent → the documented cold-start default applies (deterministic,
+/// NOT secret — see [`common::COLD_START_FINGERPRINT_SALT`]). Present but
+/// invalid (too short) → a hard error with a fixed message that never echoes
+/// the value: a weak salt must never silently reopen the leak-C7 dictionary
+/// attack.
+fn load_fingerprint_salt() -> anyhow::Result<()> {
+    match std::env::var("CEC_FINGERPRINT_SALT") {
+        Err(std::env::VarError::NotPresent) => Ok(()),
+        // Set-but-not-UTF-8 must NOT collapse into "unset": raw random bytes
+        // are a plausible way to provision a salt, and silently falling back
+        // to the public cold-start default would void the C7 property with no
+        // signal (blind-audit finding 2026-07-04). Fixed message, no echo.
+        Err(std::env::VarError::NotUnicode(_)) => Err(anyhow::anyhow!(
+            "CEC_FINGERPRINT_SALT is set but not valid UTF-8 — provision it as text \
+             (e.g. `openssl rand -hex 32`)"
+        )),
+        Ok(value) => common::set_fingerprint_salt(value.trim().as_bytes())
+            .map_err(|error| anyhow::anyhow!("CEC_FINGERPRINT_SALT: {error}")),
+    }
+}
+
 /// Read the sign-off authority PUBLIC key from `CEC_SIGNOFF_PUBKEY` (hex). Absent
 /// → `None` (attestation not enforced — cold start). Present but invalid → a hard
 /// error: a typo must never silently drop the engine into an unprotected mode.
@@ -1735,9 +1767,10 @@ mod tests {
             "host:DESKTOP-NATHAN01".to_string(),
         ];
         let class = ExternalInventory::new(keys.clone()).config_class();
-        // (a) it is the derived hash: 16 lowercase-hex chars, == from_inventory(keys).
+        // (a) it is the derived hash: 64 lowercase-hex chars (the keyed
+        // HMAC-SHA256 fingerprint, leak-C7), == from_inventory(keys).
         let key = class.key();
-        assert_eq!(key.len(), 16, "expected a 16-hex DerivedHash, got {key:?}");
+        assert_eq!(key.len(), 64, "expected a 64-hex DerivedHash, got {key:?}");
         assert!(
             key.chars().all(|c| c.is_ascii_hexdigit()) && key == key.to_lowercase(),
             "config class is not lowercase hex: {key:?}"

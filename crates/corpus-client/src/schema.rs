@@ -114,12 +114,13 @@ pub struct Outcome {
 }
 
 /// Per-row tamper-evidence: a hash chain linking this row to the previous one
-/// in a [`crate::FileCorpus`]. `hash = sha256(prev || canonical-row-without-
-/// integrity)`. The store fills this in on write; on open it recomputes the
-/// chain and refuses a file where any row has been edited, reordered, or removed
-/// mid-stream — so a hand-edited "confirmed" precedent is never served. (The
-/// known residual is truncation of the tail, which a hash chain cannot detect
-/// without an external anchor; see FOLLOWUPS.)
+/// in a [`crate::FileCorpus`]. `hash = sha256(chain_canonical(prev, row))` — a
+/// serde-independent, field-by-field canonical encoding (`cec-corpus-chain-v2`)
+/// with the `integrity` field itself excluded. The store fills this in on
+/// write; on open it recomputes the chain and refuses a file where any row has
+/// been edited, reordered, or removed mid-stream — so a hand-edited "confirmed"
+/// precedent is never served. (The known residual is truncation of the tail,
+/// which a hash chain cannot detect without an external anchor; see FOLLOWUPS.)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RowIntegrity {
     /// The previous row's `hash` ("" for the first row).
@@ -370,17 +371,6 @@ impl Contribution {
 pub(crate) fn attestation_message(c: &Contribution) -> Vec<u8> {
     use std::fmt::Write as _;
 
-    // Append a length-prefixed `tag[len]=value\n` line. Length-prefixing every
-    // attacker-controlled value is what makes the encoding UNAMBIGUOUS: a value
-    // can no longer carry the field separators or a newline to forge a different
-    // structure with the same signed bytes (a `plan.id` of "p\nstep:rm:Destructive"
-    // is byte-distinct from a genuine extra step). Field *names* and counts are
-    // fixed literals we emit, never free text, so they need no prefix. This
-    // mirrors the discipline in `provenance::canonical`.
-    fn lp(s: &mut String, tag: &str, value: &str) {
-        let _ = writeln!(s, "{tag}[{}]={value}", value.len());
-    }
-
     let o = &c.outcome;
     let mut s = String::from("cec-signoff-attestation-v3\n");
     // Fault signature: fingerprint + sorted symptoms, each length-prefixed.
@@ -453,31 +443,122 @@ pub(crate) fn attestation_message(c: &Contribution) -> Vec<u8> {
     s.into_bytes()
 }
 
-/// The chain hash for a row given the previous row's hash: `sha256(prev ||
-/// canonical(row-without-integrity))`, hex. The row is canonicalized with its
-/// `integrity` field cleared so the hash never depends on itself; every other
-/// field (including the attestation and provenance) is covered, so any edit
-/// breaks the chain.
+/// Append a length-prefixed `tag[len]=value\n` line to a canonical encoding.
+/// Length-prefixing every attacker-controlled value is what makes the encoding
+/// UNAMBIGUOUS: a value can no longer carry the field separators or a newline
+/// to forge a different structure with the same bytes (a `plan.id` of
+/// "p\nstep:rm:Destructive" is byte-distinct from a genuine extra step). Field
+/// *names* and counts are fixed literals we emit, never free text, so they need
+/// no prefix (and the `&'static str` tag pins tags-are-literals at the type
+/// level). This mirrors the discipline in `provenance::canonical`; shared by
+/// [`attestation_message`] and [`chain_canonical`].
+fn lp(s: &mut String, tag: &'static str, value: &str) {
+    use std::fmt::Write as _;
+    let _ = writeln!(s, "{tag}[{}]={value}", value.len());
+}
+
+/// The chain hash for a row given the previous row's hash:
+/// `sha256(chain_canonical(prev, row))`, hex. Every field except `integrity`
+/// (which holds this hash, so the hash never depends on itself) is bound
+/// explicitly — including the attestation and provenance — so any edit breaks
+/// the chain.
 pub(crate) fn chain_hash(prev: &str, row: &Contribution) -> String {
     use sha2::{Digest, Sha256};
-    let mut bare = row.clone();
-    bare.integrity = None;
-    let payload = serde_json::to_vec(&bare).expect("contribution serializes");
     let mut hasher = Sha256::new();
-    // A versioned domain prefix so the chain encoding can evolve without silently
-    // colliding with a future scheme, consistent with the canonicalization tags
-    // used elsewhere. The payload is the same-code serde_json image of the row
-    // (recomputed only by this crate), so cross-language reproducibility is not a
-    // requirement here as it is for the attestation message.
-    hasher.update(b"cec-corpus-chain-v1\n");
-    hasher.update(prev.as_bytes());
-    hasher.update(b"\n");
-    hasher.update(&payload);
+    hasher.update(chain_canonical(prev, row));
     hasher
         .finalize()
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect()
+}
+
+/// The canonical bytes the tamper-evidence chain covers: the previous row's
+/// hash plus a deterministic, serde-INDEPENDENT, field-by-field encoding of the
+/// row with its `integrity` field excluded (never read, so the hash cannot
+/// depend on itself).
+///
+/// v1 hashed the row's `serde_json` image, which coupled the chain to struct
+/// field order and serde attributes — a pure struct-layout refactor silently
+/// broke every stored chain. v2 names every bound field explicitly (the same
+/// discipline as [`attestation_message`] and `provenance::canonical`), so the
+/// encoding is stable across crate versions and reproducible by a verifier in
+/// another language. Two deliberate divergences from the attestation message:
+/// list fields (symptoms, recurring, primed_from) are bound in STORED order,
+/// not sorted — the chain tamper-evidences the row as written, it does not
+/// canonicalize sets — and the fields the attestation leaves derived or
+/// excluded (`plan.title`, each step's `description`, and the attestation
+/// itself) are bound here, because a hand-edit to any of them must break the
+/// chain.
+fn chain_canonical(prev: &str, c: &Contribution) -> Vec<u8> {
+    use std::fmt::Write as _;
+
+    let o = &c.outcome;
+    let mut s = String::from("cec-corpus-chain-v2\n");
+    lp(&mut s, "prev", prev);
+    // Fault signature: fingerprint + symptoms in stored order.
+    lp(&mut s, "fp", &o.signature.fingerprint);
+    let _ = writeln!(s, "syms:{}", o.signature.symptoms.len());
+    for sym in &o.signature.symptoms {
+        lp(&mut s, "sym", sym.as_str());
+    }
+    // Plan: id, derived title, and each step's description/action/risk.
+    lp(&mut s, "plan", o.plan.id.as_str());
+    lp(&mut s, "title", &o.plan.title);
+    let _ = writeln!(s, "steps:{}", o.plan.steps.len());
+    for step in &o.plan.steps {
+        lp(&mut s, "desc", step.description.as_str());
+        lp(&mut s, "act", step.action.as_str());
+        let _ = writeln!(s, "risk:{:?}", step.risk);
+    }
+    lp(&mut s, "label", &label_tag(&o.label));
+    match &o.verification {
+        None => {
+            let _ = writeln!(s, "ver:none");
+        }
+        Some(v) => {
+            let _ = writeln!(
+                s,
+                "ver:{:?};class={:?};rec:{}",
+                v.result,
+                v.class,
+                v.recurring.len()
+            );
+            for r in &v.recurring {
+                lp(&mut s, "rec", &r.0);
+            }
+        }
+    }
+    let _ = writeln!(s, "signoff:{:?}", c.sign_off);
+    let class_tag = match &c.config_class {
+        ConfigClass::BomRevision(_) => "bom",
+        ConfigClass::DerivedHash(_) => "hash",
+    };
+    let _ = writeln!(s, "class:{class_tag}");
+    lp(&mut s, "classkey", c.config_class.key());
+    match &c.attestation {
+        None => {
+            let _ = writeln!(s, "att:none");
+        }
+        Some(a) => {
+            lp(&mut s, "attid", &a.authority_id);
+            lp(&mut s, "attsig", &a.signature);
+        }
+    }
+    match &c.provenance {
+        None => {
+            let _ = writeln!(s, "prov:none");
+        }
+        Some(p) => {
+            lp(&mut s, "run", &p.run_id);
+            let _ = writeln!(s, "rf:{}", p.retrieval_first);
+            let _ = writeln!(s, "primed:{}", p.primed_from.len());
+            for id in &p.primed_from {
+                lp(&mut s, "primed", id);
+            }
+        }
+    }
+    s.into_bytes()
 }
 
 /// A stable tag for an outcome label (its data, not its `Debug` formatting).

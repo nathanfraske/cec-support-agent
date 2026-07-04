@@ -294,8 +294,9 @@ outside the repository, with three sections.
   kernel calls, so totality, overflow, and rounding are judgeable without the source:
   `ed25519-dalek` sign/verify (boolean verify, no panic; the seed is the secret half, the
   engine holds only the public key); `sha256` and `HMAC-SHA256` (constant-time verify);
-  `FNV-1a` (non-cryptographic, `wrapping_mul`, keys sorted then 0xff-separated for
-  order-independence and concatenation-resistance); the length-prefixed canonical encoding
+  the keyed content fingerprint (HMAC-SHA256 under a per-deployment salt over the
+  `cec-fingerprint-v2` count-framed, length-prefixed sorted keys; cold-start default salt is
+  public and documented, write-once per process); the length-prefixed canonical encoding
   discipline (`tag[len]=value`, serde-independent, mirrored across `provenance::canonical`,
   `attestation_message`, and `chain_hash`); the substrate types (`Prose` — private field, no
   `Serialize`/`Display`, redacting `Debug`; the `Stored*` corpus types — `#[serde(try_from)]`
@@ -309,7 +310,7 @@ outside the repository, with three sections.
   correct. Those constants are our "reserved values": `ACTION_VOCABULARY` (must equal the
   dispatcher registry), `POISON`, `STOP_CODE_NAMES`/`MODULE_NAMES` (completeness is the whole
   guarantee of the closed-grammar de-id), the domain-tag/version prefixes
-  (`cec-signoff-attestation-v3`, `cec-corpus-chain-v1`, `cec-corpus-confirmation-content-v1`,
+  (`cec-signoff-attestation-v3`, `cec-corpus-chain-v2`, `cec-fingerprint-v2`, `cec-corpus-confirmation-content-v1`,
   `cec-plan-canonical-v1`), the panel retrieval prior (0.8 vs 0.6), `SESSION_TTL`/
   `MAX_SESSIONS`, and the pinned wire tokens.
 

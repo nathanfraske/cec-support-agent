@@ -289,6 +289,10 @@ Mapping onto `trusted-corpus-access-trajectory.md` §4 (F2→F3→B4→F1→E3) 
   with Nathan.
 - **E: keyed/salted HMAC** — already the leak-C7 / F-track item; pull it forward, it is the
   non-mappability prerequisite that makes the probe space opaque.
+  **BUILT (2026-07-04, both halves):** `fingerprint_of` is HMAC-SHA256 under a per-deployment
+  salt (`CEC_FINGERPRINT_SALT`, loaded like the sign-off key, ≥16 bytes fail-closed, documented
+  cold-start default — `cec-fingerprint-v2`), and `HttpCorpus::query` moved the retrieval keys
+  out of the GET URL into a `POST /v1/mappings/query` body so access logs never capture them.
 - **F: add the §3b rule set to `AGENTS.md`** — S, now. Makes non-mappability binding the way §2.5
   made egress-sink binding.
 - **B: audit-log skeleton** (hashed key + timestamp) — S, now; the query-side twin of MH-1.

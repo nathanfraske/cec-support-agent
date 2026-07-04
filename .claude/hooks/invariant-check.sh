@@ -41,9 +41,9 @@ if re.search(r'^(<{7}|={7}|>{7})', body, re.MULTILINE):
     msgs.append("a merge-conflict marker (<<<<<<< / ======= / >>>>>>>) — resolve it before finishing")
 # (2) A serialized corpus-row shape written into a file — the renamed-corpus-dump
 #     backstop for a file the path-based PreToolUse guard did not catch. It requires
-#     the 16-hex fingerprint VALUE (format!("{hash:016x}")), so a real row matches but
+#     a 16-64-hex fingerprint VALUE (FNV-era or the keyed cec-fingerprint-v2), so a real row matches but
 #     a prose description of the shape (this addendum's own section 2c) does not.
-if re.search(r'"outcome"\s*:\s*\{\s*"signature"\s*:\s*\{\s*"fingerprint"\s*:\s*"[0-9a-f]{16}"', body):
+if re.search(r'"outcome"\s*:\s*\{\s*"signature"\s*:\s*\{\s*"fingerprint"\s*:\s*"[0-9a-f]{16,64}"', body):
     msgs.append("content shaped like a serialized corpus row (an \"outcome\" wrapping a \"signature\" with a "
                 "16-hex \"fingerprint\" value) — corpus rows must never enter this repo (SECURITY.md)")
 # (3) An age-encrypted seed / private key block committed as content. The markers
