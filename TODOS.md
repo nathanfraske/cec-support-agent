@@ -368,5 +368,10 @@ _(completed items stay above, in place, with their `· done` tombstone)_
   corpus-row backstop stays meaningful (pattern widened 16→16-64 hex).
 - [x] [added 2026-07-04 19:00 UTC · done 2026-07-04 19:02 UTC] Cartography control E logging half:
   retrieval keys out of the GET URL into the `POST /v1/mappings/query` body (`90ff2c2`).
-- [ ] [added 2026-07-04 19:05 UTC] Blind-audit panel (addendum §7) on the two new kernels — packet in
+- [x] [added 2026-07-04 19:05 UTC] Blind-audit panel (addendum §7) on the two new kernels — packet in
   scratchpad, 3 blind auditors running; verify any finding against source before trusting it.
+  · done 2026-07-04 19:40 UTC — 3/3: chain canonical CLEAN (two independent concrete collision attempts
+  failed on the count/length guards); Kernel-2 findings all verified real and FIXED (`8626f23`): CRITICAL
+  non-UTF-8 salt fail-open refused at startup; MEDIUM fault/config domain separation (3/3 convergence);
+  HIGH silent cold-start → serve NOTICE + `fingerprint_salt_is_configured()` probe; LOW static lp tags +
+  honest POST-body scope note. 237 tests green.

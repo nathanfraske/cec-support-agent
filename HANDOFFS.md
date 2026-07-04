@@ -849,6 +849,17 @@ See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementati
 
 ## Handoff log (reverse-chronological)
 
+- **2026-07-04 19:40 UTC** — **Blind panel returned; all confirmed findings fixed (`8626f23`); 237
+  green.** 3/3 auditors: the chain-v2 canonical encoding is CLEAN (independent concrete collision attempts
+  all failed on the count/length guards — strong convergence). Real finds, verified against source then
+  fixed: CRITICAL non-UTF-8 `CEC_FINGERPRINT_SALT` silently treated as unset (fail-open to the public
+  salt) → startup refusal + cfg(unix) e2e; MEDIUM missing fault/config fingerprint domain separation →
+  `domain:` line in the MAC message (fixture regen #3); HIGH silent cold-start at the serve boundary →
+  one-line NOTICE (live-smoked) + `fingerprint_salt_is_configured()`. The §7 method earned its keep again:
+  the NotUnicode fail-open was invisible to the sighted tests because they were written against the same
+  `Err(_) => unset` premise. Two FOLLOWUPS filed (corpus-ingest salt-loader parity; strip-downgrade
+  re-flag). Next: push + open PR-2.
+
 - **2026-07-04 19:10 UTC** — **Migration bundle (items 4+6) built green in 3 commits + docs/tracking; §7
   blind panel launched.** Picked up the 03:15 baton on the designated branch
   `claude/workflow-model-optimization-e1y1sx`. F2 chain-v2 (`92df52d`), leak-C7 keyed fingerprint + salt

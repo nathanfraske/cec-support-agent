@@ -321,3 +321,19 @@ recommends that are NOT yet built, each attributed to the threat doc's §3 contr
   concept exists in code at all; largest greenfield, mostly policy/legal not engine. — why deferred: infra +
   legal + owner sequencing, all downstream of the greenlight items and the Q7/Q1 forks. Resume:
   `docs/test-validation-fleet-design.md` §5; `docs/consolidated-work-plan.md` F4/F5.
+
+- [ ] [added 2026-07-04 19:40 UTC] **[Private corpus-ingest — salt-loader parity]** The private
+  `corpus-ingest` (and the future corpus service) must load `CEC_FINGERPRINT_SALT` with EXACTLY the
+  engine's semantics or the two sides silently disagree on every fingerprint: trim() the UTF-8 value,
+  refuse <16 bytes, refuse set-but-not-UTF-8 (never treat as unset), set before the first fingerprint
+  (`common::set_fingerprint_salt`; probe `fingerprint_salt_is_configured()`). Flagged by the 2026-07-04
+  blind panel (auditor 2, trim-normalization divergence). — why deferred: private-repo change, lands with
+  the one-time v2 re-ingest. Resume: `/mnt/e/cec-corpus-private` compile path; engine loader
+  `crates/support-agent/src/main.rs::load_fingerprint_salt`.
+- [ ] [added 2026-07-04 19:40 UTC] **[Keyless-chain strip-downgrade — re-flagged by the blind panel]**
+  Auditor 2 independently re-derived the known keyless-chain residual in a sharper form: stripping
+  `integrity` from EVERY row demotes a chained file to accepted-unchained legacy (`verify_chain` with==0
+  path) — strictly easier than rechaining. Same class as the existing "[Chain integrity — key or anchor
+  the head]" item (attestation still guards confirmed rows under an authority; unattested cold-start
+  files remain soft). No new code action beyond that item; recorded so the panel's convergence is
+  auditable. — why deferred: duplicate of the tracked head-anchor item, listed for the audit trail.
