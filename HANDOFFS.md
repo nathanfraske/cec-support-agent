@@ -15,6 +15,20 @@ Below "Pick up here", keep a reverse-chronological **handoff log** of dated entr
 
 ## Current state
 
+**As of 2026-07-04 ~23:20 UTC.** **PRs #17, #18, AND #19 all MERGED** — `main` @ `0c54578`. Branch
+restarted clean from that main. On main: the full v2 migration (chain-v2, fingerprint-v2 with salt +
+domains), attestation-v4 (provenance commitment — Q6 wrinkle RESOLVED, blind-panel clean 2/2), leak
+Phase-3 3b/3c rails, all decision records (Q1/Q2/Q3/Q4/Q5/Q6/Q7/D3), and
+**`docs/operator-runbook.md`** — the owner's exact stand-up steps. 247 tests green. The engine work is
+now WAITING ON THE OPERATOR for: salt provisioning, the one-time private-corpus re-ingest (v2 hashes +
+v4 attestations in ONE pass — the window is open now), branch protection incl. the `boundary` check, and
+`cargo xtask install-hooks` on clones. Next ENGINE build: the corpus service (`POST /v1/mappings/query`
+server side + B4 attested reads over the Q6-minimal served row + the Q5 anchor) — everything it needs
+(v4 commitment, decided wire bar) is on main. Then: F4 (needs owner ground truth), L3a dylint,
+PromptPayload (needs the owner's strict-vs-explicit call).
+
+--- previous (superseded by the three-merges state above) ---
+
 **As of 2026-07-04 ~21:55 UTC.** **PR #17 (migration bundle) AND PR #18 (leak Phase-3 3b/3c boundary
 gate) are both MERGED** — `main` @ `44d623a`. Branch `claude/workflow-model-optimization-e1y1sx`
 restarted from that main, clean. 245 tests, clippy `-D warnings`, fmt all green on main.
@@ -882,6 +896,14 @@ See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementati
   PREDICATE, not the type tag.
 
 ## Handoff log (reverse-chronological)
+
+- **2026-07-04 23:20 UTC** — **PR #19 MERGED (`main` @ `0c54578`): attestation v4 + the operator
+  runbook.** 12/12 checks green (incl. boundary + the tightened corpus-row secrets rule). Branch
+  restarted. The re-ingest window is OPEN: the operator runbook (docs/operator-runbook.md) is the
+  authoritative sequence — salt first, re-ingest once after this merge, never before. Session total:
+  three PRs designed-built-audited-merged (migration bundle, Phase-3 rails, attestation v4), two §7
+  blind panels (5 auditors total; every real finding fixed same-session; v4 panel clean), zero open
+  review threads.
 
 - **2026-07-04 23:00 UTC** — **Attestation v4 built + blind-panel CLEAN (2/2); PR opened.** v4 binds
   `RowProvenance::commitment()` (`cec-provenance-commitment-v1`) instead of raw provenance — the RFC Q6

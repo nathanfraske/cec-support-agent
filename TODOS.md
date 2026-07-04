@@ -416,3 +416,6 @@ _(completed items stay above, in place, with their `· done` tombstone)_
   absent from signed bytes + commitment binding/sort completeness); proven red on a raw-binding revert.
   247 tests green. Timed deliberately BEFORE the one-time private-corpus re-ingest so the operator
   re-ingests exactly once. §7 blind panel (2 auditors) running.
+- [x] [added 2026-07-04 23:15 UTC · done 2026-07-04 23:20 UTC] PR #19 (attestation v4 + operator
+  runbook): 12/12 green, MERGED → `main` @ `0c54578`; branch restarted. Re-ingest window open —
+  operator steps handed off via docs/operator-runbook.md.
