@@ -215,7 +215,7 @@ recommends that are NOT yet built, each attributed to the threat doc's §3 contr
   HMAC-SHA256 `cec-fingerprint-v2` + `CEC_FINGERPRINT_SALT` custody per the owner's 2026-07-03
   decision; `90ff2c2` retrieval keys into the `POST /v1/mappings/query` body). Docs: leak doc
   §3.1(2) BUILT note; cartography control E BUILT note.
-- [ ] [added 2026-07-02 18:53 UTC] **[Corpus cartography — control C, B4 provenance-graph minimization]** B4
+- [x] [added 2026-07-02 18:53 UTC] **[Corpus cartography — control C, B4 provenance-graph minimization]** B4
   proposes serving essentially the whole `Contribution` minus `integrity`, including `RowProvenance`
   (`primed_from`, the priming graph) and possibly `confirmations` — both disclose corpus derivation/
   confirmation structure beyond a single answer (leak-C10 vectors V5/V6). Resolve by shipping only the
@@ -223,13 +223,19 @@ recommends that are NOT yet built, each attributed to the threat doc's §3 contr
   unless a decision log entry explicitly authorizes it. — why deferred: B4 hasn't shipped; the fix is a field
   choice, cheap NOW and expensive after B4 ships — decide it as a B4 wire-contract precondition, not after.
   Resume: `docs/corpus-cartography-threat.md` §2 V5/V6, §3 control C; the B4 served-row type
-  (`docs/trusted-corpus-access-trajectory.md` §2.1).
-- [ ] [added 2026-07-02 18:53 UTC] **[Corpus cartography — Q6 filed against B4]** Filed the real question Q6
+  (`docs/trusted-corpus-access-trajectory.md` §2.1). · closed 2026-07-04 20:05 UTC → DECIDED by the owner
+  (RFC Q6 DECIDED note, 2026-07-04): served rows ship ONLY the minimal attested unit (attested
+  `StoredOutcome` + attestation), never `primed_from`/`run_id`/`retrieval_first`/raw `confirmations`.
+  The build half lives in the open "[B4 — attested read path]" item (now service-gated only).
+- [x] [added 2026-07-02 18:53 UTC] **[Corpus cartography — Q6 filed against B4]** Filed the real question Q6
   ("how much provenance does a served row expose?") in `docs/integration-rfc-for-chris.md`'s open-questions
   section — the threat doc noted no Q6 existed anywhere in the tree (RFC had Q1-Q5 only). Resolution is
   control C above (provenance-graph minimization); Q6 stays open until the B4 wire contract makes that call
   explicit. — why deferred: gated on B4 shipping; owner/Chris decision. Resume:
-  `docs/integration-rfc-for-chris.md` Q6.
+  `docs/integration-rfc-for-chris.md` Q6. · closed 2026-07-04 20:05 UTC → Q6 DECIDED by the owner
+  (provenance-graph minimization; RFC DECIDED note). One design wrinkle recorded with the decision:
+  the attestation message binds the provenance pin, so a minimized served row needs a provenance
+  COMMITMENT the consumer can verify against — design that with the B4 wire type.
 - [ ] [added 2026-07-02 19:28 UTC] **[Crypto-dep major bumps — dependabot #8/#9/#10, deferred for one
   deliberate coordinated upgrade]** getrandom 0.2→0.3 (#8), hmac 0.12→0.13 (#9), sha2 0.10→0.11 (#10) each
   break the `provenance` crate at build: getrandom 0.3 renamed `getrandom::getrandom(&mut buf)` →

@@ -107,6 +107,17 @@ needs to verify and use a row (attested `StoredOutcome` + attestation), never `p
 or raw `confirmations`, unless a decision log entry explicitly authorizes it. **Decision:**
 confirm this bar before B4's wire contract ships; gated on B4.
 
+> **DECIDED 2026-07-04 (owner, Nathan): the lean is confirmed — provenance-graph minimization.**
+> The B4 served-row wire type ships ONLY the minimal attested unit a consumer needs to verify and
+> use a row: the attested `StoredOutcome` plus its `SignOffAttestation`. It never ships
+> `primed_from`, `run_id`, `retrieval_first`, or raw `confirmations` unless a future decision-log
+> entry explicitly authorizes a named field. This is now the bar the corpus-service wire contract
+> builds to (cartography control C is thereby decided; B4 remains gated only on the corpus service
+> existing). Note: the attestation covers the provenance pin, so a served row's signature is
+> computed over fields the consumer does not receive — the served-row type must carry whatever
+> minimal commitment the attestation math needs (e.g. the attestation message may need a
+> provenance commitment rather than raw fields); design that with B4.
+
 **Q7. Plan-provenance signing across the *execution* boundary.** Plan signing today is
 symmetric HMAC with a **fresh, ephemeral per-run key**, sound *only* because the judge and
 executor are the same process (`provenance/src/lib.rs:141-154`; `SignedPlan` is in-process,

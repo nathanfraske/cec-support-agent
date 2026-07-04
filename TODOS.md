@@ -375,3 +375,8 @@ _(completed items stay above, in place, with their `· done` tombstone)_
   non-UTF-8 salt fail-open refused at startup; MEDIUM fault/config domain separation (3/3 convergence);
   HIGH silent cold-start → serve NOTICE + `fingerprint_salt_is_configured()` probe; LOW static lp tags +
   honest POST-body scope note. 237 tests green.
+- [x] [added 2026-07-04 20:05 UTC · done 2026-07-04 20:05 UTC] Record owner decision **RFC Q6 = DECIDED**
+  (provenance-graph minimization: served row = attested `StoredOutcome` + attestation ONLY) in the RFC +
+  close the two cartography FOLLOWUPS items (control C; Q6-filed). B4 is now gated only on the corpus
+  service existing. Owner also asked for the Q1-operator-half recommendation + the Chris-blockers rundown
+  (delivered in-session; recommendation = SEPARATE keys, recorded in the handoff log).
