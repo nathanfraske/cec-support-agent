@@ -1,0 +1,4 @@
+[alias]
+# The repo boundary tool (leak methodology Layer 3b/3c): `cargo xtask
+# scan-content`, `cargo xtask install-hooks`, `cargo xtask allowlist-freeze`.
+xtask = "run -q -p xtask --"

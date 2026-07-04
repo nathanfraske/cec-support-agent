@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cargo fmt --all -- --check
-# gitleaks is a hard dependency of this guard — never commit without the secret scan.
-command -v gitleaks >/dev/null 2>&1 || {
-  echo "Refusing commit: gitleaks is required but not installed (see BOUNDARY.md / private WIRING.md)." >&2
-  exit 1
-}
-gitleaks protect --staged --redact
+# Content boundary gate (leak methodology L3b): corpus-row shapes, canonical
+# poison tokens, and base64/hex-encoded smuggling in the STAGED blobs —
+# content-keyed, so renames, double extensions, and `git add -f` do not
+# bypass it. The required CI `boundary` job re-runs the same scan server-side.
+cargo run -q -p xtask -- scan-content --staged
+# gitleaks locally is warn-and-skip (L3c): the required CI `secrets` job is the
+# server-side backstop, so the hook stays installable on a machine without it.
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks protect --staged --redact
+else
+  echo "warning: gitleaks not installed — relying on the CI secrets job (see BOUNDARY.md)." >&2
+fi
 # Block corpus data and model weights from ever being staged. Kept in lockstep
 # with .gitignore: corpus/ and weights/ dirs, model-weight formats (gguf,
 # safetensors, bin), corpus database formats (sqlite, duckdb), AND the private-

@@ -54,3 +54,28 @@ jobs:
           "$RUNNER_TEMP/gitleaks" version
       - name: Scan the tree for secrets
         run: '"$RUNNER_TEMP/gitleaks" dir --config .gitleaks.toml --redact --exit-code 1 .'
+  boundary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v5.0.0
+        with:
+          # The allowlist-freeze check diffs .boundary-allow.txt against the
+          # base branch, so it needs more than a shallow single-commit clone.
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: 1.96.1
+      # L3b server-side: the same content gate the pre-commit hook runs, over
+      # the whole tracked tree — an unprovisioned clone is still gated here.
+      - run: cargo run -q -p xtask -- scan-content --all
+      # L3b freeze: a PR may not add net-new allowlist entries; exceptions land
+      # only via an owner-reviewed change to the base branch.
+      - name: allowlist-freeze (pull requests)
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch origin "${{ github.base_ref }}" --depth=1
+          cargo run -q -p xtask -- allowlist-freeze --against "origin/${{ github.base_ref }}"
+      # L3c: the tracked hook must still invoke the xtask gate — a hook edit
+      # that drops the scanner fails here even though hooks are client-side.
+      - name: the pre-commit hook still invokes the boundary gate
+        run: grep -q "xtask -- scan-content --staged" scripts/githooks/pre-commit

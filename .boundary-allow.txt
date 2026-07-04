@@ -1,0 +1,43 @@
+# Boundary-scan allowlist (leak methodology Layer 3b — `cargo xtask scan-content`).
+#
+# Format: `<repo-relative path> <check>` where <check> is one of:
+#   row-shape | poison | decode | runtime-decode | all
+#
+# Every entry is a SANCTIONED synthetic-literal site: the adversarial leakage
+# tests deliberately seed the canonical `leakguard::POISON` tokens to prove the
+# de-id refuses them, the methodology/tracking docs discuss those tokens by
+# name, and the canned wire fixture is a synthetic corpus row (fragment-split
+# in source; its JSON keys still co-occur). Nothing here is real data.
+#
+# FROZEN IN CI: the `boundary` job fails a PR whose allowlist has any line not
+# already on the base branch (`xtask allowlist-freeze`) — an exception lands
+# only via an owner-reviewed change to main, never inside the PR that needs it.
+
+# The canonical poison-token definition itself.
+crates/leakguard/src/lib.rs poison
+
+# The boundary scanner's own source: defines the row-shape patterns and seeds
+# poison tokens in its adversarial self-tests.
+tools/xtask/src/main.rs all
+
+# Adversarial de-id / leakage tests that seed poison tokens to prove refusal.
+crates/common/src/extract.rs poison
+crates/common/src/fault.rs poison
+crates/common/src/prose.rs poison
+crates/corpus-client/src/gate.rs poison
+crates/corpus-client/src/lib.rs poison
+crates/corpus-client/src/schema.rs poison
+crates/corpus-client/src/store.rs poison
+crates/deid/src/lib.rs poison
+crates/intake/src/lib.rs poison
+crates/support-agent/src/main.rs poison
+crates/support-agent/src/serve.rs poison
+crates/support-agent/tests/cli_contract.rs poison
+
+# The synthetic canned wire-shape fixture (fragment-split; keys co-occur).
+crates/corpus-client/src/store.rs row-shape
+
+# Methodology / tracking prose that names the tokens while documenting them.
+docs/corpus-leak-prevention.md poison
+HANDOFFS.md poison
+TODOS.md poison

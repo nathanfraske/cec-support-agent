@@ -1,3 +1,35 @@
 title = "cec-support-agent"
 [extend]
 useDefault = true
+
+# Project rules (leak methodology L3c): the two shapes the default ruleset
+# cannot know about — a sign-off/authority seed assignment, and a serialized
+# corpus row. Both are content-keyed; the canned in-tree fixture is assembled
+# from split literals precisely so it does not match the row shape.
+
+[[rules]]
+id = "cec-signoff-seed"
+description = "CEC sign-off authority seed assigned to its env var (the secret half)"
+regex = '''(?i)CEC_SIGNOFF_SEED\s*[=:]\s*["']?[0-9a-f]{64}'''
+
+[[rules]]
+id = "cec-fingerprint-salt"
+description = "CEC per-deployment fingerprint salt assigned to its env var"
+regex = '''CEC_FINGERPRINT_SALT\s*=\s*["']?[0-9a-fA-F]{32,}'''
+[rules.allowlist]
+paths = [
+  # The CLI e2e contract sets a synthetic salt to prove the salted path works.
+  '''crates/support-agent/tests/cli_contract\.rs$''',
+]
+
+[[rules]]
+id = "cec-corpus-row"
+description = "A serialized corpus row (contiguous outcome/signature/fingerprint shape)"
+regex = '''"outcome"\s*:\s*\{\s*"signature"\s*:\s*\{\s*"fingerprint"'''
+
+[allowlist]
+paths = [
+  # Generated agent-ops artifacts (recon/audit/memory) are session tooling,
+  # not shipped content; the boundary xtask still scans anything tracked.
+  '''^\.claude/''',
+]
