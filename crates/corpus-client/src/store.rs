@@ -1843,7 +1843,7 @@ mod tests {
     /// the round-trip assertion breaks, the wire shape drifted and existing
     /// JSONL corpora + hash chains would fail to load — a hard-constraint
     /// regression.
-    const CANNED_ROW_REST: &str = r#""acfebcbe984c7cd1","symptoms":["0x1234","event_41","explorer.exe"]},"plan":{"id":"heuristic-1","title":"cim_query -> registry_set","steps":[{"description":"cim_query","action":"cim_query","risk":"read_only"},{"description":"registry_set","action":"registry_set","risk":"reversible"}]},"label":"resolved_confirmed","verification":{"result":"pass"}},"config_class":{"derived_hash":"edc9373418556993"},"sign_off":"human_confirmed","provenance":{"run_id":"run-fixture","retrieval_first":false},"integrity":{"prev":"","hash":"ce05cacfccaf87dcf265af5671f2ca3bcee0f8f789dd51f028252acc8f2f1547"}}"#;
+    const CANNED_ROW_REST: &str = r#""5585f0dfa0699c86da620e9b2f40a42ffd678aa434b3eb04a29e33a8a6f0d026","symptoms":["0x1234","event_41","explorer.exe"]},"plan":{"id":"heuristic-1","title":"cim_query -> registry_set","steps":[{"description":"cim_query","action":"cim_query","risk":"read_only"},{"description":"registry_set","action":"registry_set","risk":"reversible"}]},"label":"resolved_confirmed","verification":{"result":"pass"}},"config_class":{"derived_hash":"37fbda1175399ecd8caf7a5b93557d23c2b6c283ef8bbae53727201e2edf05f2"},"sign_off":"human_confirmed","provenance":{"run_id":"run-fixture","retrieval_first":false},"integrity":{"prev":"","hash":"439f00f4af1925a54ba7d775615e30eb78e5875e858e3eda8d3a7caebfa2e1ca"}}"#;
 
     /// The SAME row as chained by the retired v1 (serde-image) encoding —
     /// frozen history, kept to pin the hard cutover.

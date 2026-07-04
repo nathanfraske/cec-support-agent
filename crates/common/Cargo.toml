@@ -9,3 +9,8 @@ description = "Shared domain types for the cec-support-agent engine: Plan, Candi
 
 [dependencies]
 serde = { workspace = true }
+# The keyed content fingerprint (leak-C7): HMAC-SHA256 under a per-deployment
+# salt. These replaced the dependency-free FNV-1a, whose unsalted output was
+# dictionary-reversible.
+hmac = { workspace = true }
+sha2 = { workspace = true }

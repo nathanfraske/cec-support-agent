@@ -131,3 +131,87 @@ fn json_config_class_reflects_inventory_keys_from_stdin() {
         "inventory key leaked onto stdout: {stdout}"
     );
 }
+
+/// Run a diagnose and return the envelope's `fault.fingerprint` and
+/// `config_class` values, with `CEC_FINGERPRINT_SALT` controlled explicitly.
+fn envelope_keys(salt: Option<&str>) -> (String, String) {
+    let mut cmd = bin();
+    cmd.args([
+        "diagnose",
+        "--offline",
+        "--no-questions",
+        "--json",
+        "--describe",
+        "explorer.exe crashes on login 0x1234",
+    ])
+    .env_remove("CEC_FINGERPRINT_SALT");
+    if let Some(salt) = salt {
+        cmd.env("CEC_FINGERPRINT_SALT", salt);
+    }
+    let out = cmd.output().expect("run cec-support-agent");
+    assert!(out.status.success(), "non-zero exit (salt={salt:?})");
+    let stdout = String::from_utf8(out.stdout).expect("utf8 stdout");
+    let lines = nonempty_lines(&stdout);
+    assert_eq!(lines.len(), 1, "stdout must be one envelope line: {stdout}");
+    let envelope: serde_json::Value = serde_json::from_str(lines[0]).expect("valid JSON envelope");
+    (
+        envelope["fault"]["fingerprint"]
+            .as_str()
+            .expect("fault.fingerprint is a string")
+            .to_string(),
+        envelope["config_class"]
+            .as_str()
+            .expect("config_class is a string")
+            .to_string(),
+    )
+}
+
+#[test]
+fn a_configured_fingerprint_salt_moves_the_retrieval_keys() {
+    // leak-C7 e2e: the same request under a per-deployment salt produces a
+    // fingerprint and config class UNLINKABLE to the cold-start ones — and the
+    // salt value itself never appears on the wire.
+    let (cold_fp, cold_class) = envelope_keys(None);
+    let salt = "e2e-deployment-salt-0123456789abcdef";
+    let (salted_fp, salted_class) = envelope_keys(Some(salt));
+    assert_ne!(salted_fp, cold_fp, "salt must move the fault fingerprint");
+    assert_ne!(salted_class, cold_class, "salt must move the config class");
+    assert_eq!(salted_fp.len(), 64, "v2 fingerprints are HMAC-SHA256 hex");
+    for value in [&salted_fp, &salted_class] {
+        assert!(
+            !value.contains(salt),
+            "the salt value must never surface in a retrieval key"
+        );
+    }
+}
+
+#[test]
+fn a_short_fingerprint_salt_refuses_startup() {
+    // Fail closed: a set-but-weak salt is a startup error with a fixed message
+    // that never echoes the value — never a silent cold-start fallback.
+    let out = bin()
+        .args([
+            "diagnose",
+            "--offline",
+            "--no-questions",
+            "--json",
+            "--describe",
+            "explorer.exe crashes on login 0x1234",
+        ])
+        .env("CEC_FINGERPRINT_SALT", "zq9weak")
+        .output()
+        .expect("run cec-support-agent");
+    assert!(
+        !out.status.success(),
+        "a too-short CEC_FINGERPRINT_SALT must refuse startup"
+    );
+    let stderr = String::from_utf8(out.stderr).expect("utf8 stderr");
+    assert!(
+        stderr.contains("CEC_FINGERPRINT_SALT"),
+        "the refusal must name the misconfigured variable: {stderr}"
+    );
+    assert!(
+        !stderr.contains("zq9weak"),
+        "the refusal must never echo the salt value: {stderr}"
+    );
+}
