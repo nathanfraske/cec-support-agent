@@ -412,11 +412,9 @@ commit on branch `feat/agent-ops-evidence-integrity`.
 ## Pick up here
 
 > **Update 2026-07-04 ~19:10 UTC (the live front):** the migration bundle is BUILT (see Current state).
-> Immediate next steps, in order: **(1)** collect the 3 blind-audit verdicts (packet:
-> `scratchpad/blind-audit-packet-migration-v2.md` in the session scratchpad; addendum §7 method — verify
-> any finding against the source yourself before trusting it), fix anything real; **(2)** push
-> `claude/workflow-model-optimization-e1y1sx` and open **PR-2** with the operator re-ingest +
-> `CEC_FINGERPRINT_SALT` note in the body; **(3)** after merge, the next PURE-ENGINE greenlightable work
+> Steps (1)+(2) are DONE (panel returned, fixes landed `8626f23`, **PR #17 open** —
+> https://github.com/nathanfraske/cec-support-agent/pull/17): **(3)** merge PR #17 when CI is green, then
+> the next PURE-ENGINE greenlightable work
 > (no owner/Chris gate) is **leak Phase 3** (egress-allowlist lint + `xtask scan-content` + hooks/CI
 > boundary job — leak doc §4 items 12-13) and/or the **`PromptPayload` chokepoint** (§3.1(1a)/item 14);
 > everything else on the list is gated (B4 → RFC Q6; F4 re-collection + F5 VM backend → infra; volunteer
@@ -858,7 +856,8 @@ See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementati
   one-line NOTICE (live-smoked) + `fingerprint_salt_is_configured()`. The §7 method earned its keep again:
   the NotUnicode fail-open was invisible to the sighted tests because they were written against the same
   `Err(_) => unset` premise. Two FOLLOWUPS filed (corpus-ingest salt-loader parity; strip-downgrade
-  re-flag). Next: push + open PR-2.
+  re-flag). Pushed; **PR #17 is open** (https://github.com/nathanfraske/cec-support-agent/pull/17) with the
+  operator re-ingest + salt note in the body. Next: watch CI → merge → restart the branch from main.
 
 - **2026-07-04 19:10 UTC** — **Migration bundle (items 4+6) built green in 3 commits + docs/tracking; §7
   blind panel launched.** Picked up the 03:15 baton on the designated branch
