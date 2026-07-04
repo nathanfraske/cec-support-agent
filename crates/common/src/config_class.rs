@@ -38,7 +38,10 @@ impl ConfigClass {
             .map(|entry| entry.as_ref().trim().to_lowercase())
             .collect();
         let keys: Vec<&str> = normalized.iter().map(String::as_str).collect();
-        ConfigClass::DerivedHash(crate::hash::fingerprint_of(&keys))
+        ConfigClass::DerivedHash(crate::hash::fingerprint_of(
+            crate::hash::FingerprintDomain::Config,
+            &keys,
+        ))
     }
 
     /// The comparable key string: the BOM revision or the derived hash.

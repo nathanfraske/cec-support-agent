@@ -29,8 +29,8 @@ pub use extract::{extract_symptoms, is_symptom_token};
 pub use fault::{FaultSignature, Symptom};
 pub use fluency::Fluency;
 pub use hash::{
-    set_fingerprint_salt, FingerprintSaltError, COLD_START_FINGERPRINT_SALT,
-    MIN_FINGERPRINT_SALT_LEN,
+    fingerprint_salt_is_configured, set_fingerprint_salt, FingerprintSaltError,
+    COLD_START_FINGERPRINT_SALT, MIN_FINGERPRINT_SALT_LEN,
 };
 pub use inventory::{CoarseHostInventory, ExternalInventory, InventoryProvider};
 pub use plan::{Plan, PlanStep, Risk};

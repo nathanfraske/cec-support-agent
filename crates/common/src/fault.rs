@@ -50,7 +50,7 @@ impl FaultSignature {
     /// Build a signature from symptoms, computing a stable fingerprint.
     pub fn from_symptoms(symptoms: Vec<Symptom>) -> Self {
         let keys: Vec<&str> = symptoms.iter().map(|s| s.0.as_str()).collect();
-        let fingerprint = crate::hash::fingerprint_of(&keys);
+        let fingerprint = crate::hash::fingerprint_of(crate::hash::FingerprintDomain::Fault, &keys);
         Self {
             fingerprint,
             symptoms,

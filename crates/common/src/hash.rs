@@ -91,29 +91,65 @@ fn active_salt() -> &'static [u8] {
         .as_slice()
 }
 
+/// Whether a per-deployment salt has been configured (and differs from the
+/// documented cold-start default). Embedders that load the salt asynchronously
+/// or from a secret store can check this AFTER their setup to detect the
+/// silent-downgrade ordering hazard: a fingerprint computed before
+/// [`set_fingerprint_salt`] locks the cold-start default in for the process
+/// (the late set then errors `AlreadyActive`), and without this probe there
+/// was no way to observe that the active salt is the public one.
+pub fn fingerprint_salt_is_configured() -> bool {
+    matches!(FINGERPRINT_SALT.get(), Some(salt) if salt.as_slice() != COLD_START_FINGERPRINT_SALT)
+}
+
+/// The semantic namespace a fingerprint is minted in. Bound into the MAC
+/// message (`domain:<tag>`), so a fault-signature fingerprint and a
+/// config-class derived hash can never collide even when their canonical key
+/// sets coincide (blind-audit finding 2026-07-04: symptoms `["module_x"]` vs
+/// a normalized inventory `["Module_X "]` reduced to identical key sets).
+#[derive(Clone, Copy)]
+pub(crate) enum FingerprintDomain {
+    /// A fault-signature fingerprint over symptom tokens.
+    Fault,
+    /// A config-class derived hash over normalized inventory entries.
+    Config,
+}
+
+impl FingerprintDomain {
+    fn tag(self) -> &'static str {
+        match self {
+            FingerprintDomain::Fault => "fault",
+            FingerprintDomain::Config => "config",
+        }
+    }
+}
+
 /// Stable, order-independent keyed content hash over string keys, rendered as
 /// lowercase hex (64 chars): HMAC-SHA256 under the active salt over the
-/// `cec-fingerprint-v2` canonical encoding of the sorted keys. It carries no
-/// identity data beyond what the keys themselves expose — and under a real
-/// per-deployment salt it is not enumerable or linkable across deployments.
-pub(crate) fn fingerprint_of(keys: &[&str]) -> String {
-    keyed_fingerprint(active_salt(), keys)
+/// `cec-fingerprint-v2` canonical encoding of the domain tag and the sorted
+/// keys. It carries no identity data beyond what the keys themselves expose —
+/// and under a real per-deployment salt it is not enumerable or linkable
+/// across deployments.
+pub(crate) fn fingerprint_of(domain: FingerprintDomain, keys: &[&str]) -> String {
+    keyed_fingerprint(active_salt(), domain, keys)
 }
 
 /// The keyed core, explicit about its salt so the two-salt properties are
 /// testable without touching the process-global.
-fn keyed_fingerprint(salt: &[u8], keys: &[&str]) -> String {
+fn keyed_fingerprint(salt: &[u8], domain: FingerprintDomain, keys: &[&str]) -> String {
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
     use std::fmt::Write as _;
 
     let mut keys: Vec<&str> = keys.to_vec();
     keys.sort_unstable();
-    // Canonical message: versioned domain tag, key count, then each key
-    // length-prefixed — so ["ab","c"] and ["a","bc"] cannot collide and a key
-    // cannot smear into its neighbor. Mirrors the discipline of
-    // `provenance::canonical` and the corpus chain encoding.
+    // Canonical message: versioned tag, the semantic domain, key count, then
+    // each key length-prefixed — so ["ab","c"] and ["a","bc"] cannot collide, a
+    // key cannot smear into its neighbor, and the fault/config namespaces are
+    // separated. Mirrors the discipline of `provenance::canonical` and the
+    // corpus chain encoding.
     let mut message = String::from("cec-fingerprint-v2\n");
+    let _ = writeln!(message, "domain:{}", domain.tag());
     let _ = writeln!(message, "keys:{}", keys.len());
     for key in keys {
         let _ = writeln!(message, "key[{}]={key}", key.len());
@@ -139,8 +175,14 @@ mod tests {
 
     #[test]
     fn fingerprints_are_order_independent_and_64_hex() {
-        let a = fingerprint_of(&["gpu:rtx-4070", "os:windows 11"]);
-        let b = fingerprint_of(&["os:windows 11", "gpu:rtx-4070"]);
+        let a = fingerprint_of(
+            FingerprintDomain::Config,
+            &["gpu:rtx-4070", "os:windows 11"],
+        );
+        let b = fingerprint_of(
+            FingerprintDomain::Config,
+            &["os:windows 11", "gpu:rtx-4070"],
+        );
         assert_eq!(a, b, "the same key set must fingerprint identically");
         assert_eq!(a.len(), 64);
         assert!(a.bytes().all(|b| b.is_ascii_hexdigit()));
@@ -149,9 +191,22 @@ mod tests {
     #[test]
     fn concatenation_cannot_forge_a_key_boundary() {
         assert_ne!(
-            fingerprint_of(&["ab", "c"]),
-            fingerprint_of(&["a", "bc"]),
+            fingerprint_of(FingerprintDomain::Fault, &["ab", "c"]),
+            fingerprint_of(FingerprintDomain::Fault, &["a", "bc"]),
             "length-prefixing must keep key boundaries distinct"
+        );
+    }
+
+    #[test]
+    fn the_fault_and_config_domains_never_collide() {
+        // Blind-audit finding (2026-07-04): a normalized inventory entry can
+        // reduce to the same key set as a symptom list; without a domain tag
+        // the two fingerprint namespaces were one, so a crafted inventory
+        // entry could collide with a known fault fingerprint.
+        assert_ne!(
+            fingerprint_of(FingerprintDomain::Fault, &["module_x"]),
+            fingerprint_of(FingerprintDomain::Config, &["module_x"]),
+            "identical key sets in different domains must not collide"
         );
     }
 
@@ -161,9 +216,17 @@ mod tests {
         // (byte-identical cold start): this vector moves only with a deliberate
         // encoding or default-salt change, which is a corpus migration.
         assert_eq!(
-            fingerprint_of(&["event_41"]),
-            keyed_fingerprint(COLD_START_FINGERPRINT_SALT, &["event_41"]),
+            fingerprint_of(FingerprintDomain::Fault, &["event_41"]),
+            keyed_fingerprint(
+                COLD_START_FINGERPRINT_SALT,
+                FingerprintDomain::Fault,
+                &["event_41"]
+            ),
             "an unconfigured process must use the documented cold-start salt"
+        );
+        assert!(
+            !fingerprint_salt_is_configured(),
+            "unit tests never set a salt, so the probe must report unconfigured"
         );
     }
 
@@ -172,9 +235,10 @@ mod tests {
         // The leak-C7 property: the same input under two deployments' salts
         // must not correlate — and neither output equals the cold-start one.
         let keys = ["event_41", "0x1234"];
-        let a = keyed_fingerprint(b"deployment-a-salt-0123456789abcdef", &keys);
-        let b = keyed_fingerprint(b"deployment-b-salt-0123456789abcdef", &keys);
-        let cold = keyed_fingerprint(COLD_START_FINGERPRINT_SALT, &keys);
+        let d = FingerprintDomain::Fault;
+        let a = keyed_fingerprint(b"deployment-a-salt-0123456789abcdef", d, &keys);
+        let b = keyed_fingerprint(b"deployment-b-salt-0123456789abcdef", d, &keys);
+        let cold = keyed_fingerprint(COLD_START_FINGERPRINT_SALT, d, &keys);
         assert_ne!(a, b);
         assert_ne!(a, cold);
         assert_ne!(b, cold);

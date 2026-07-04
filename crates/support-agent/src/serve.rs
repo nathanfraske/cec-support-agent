@@ -209,6 +209,19 @@ pub(crate) async fn serve(args: crate::Args) -> anyhow::Result<()> {
         );
     }
 
+    // leak-C7 visibility: serving is the boundary where fingerprint
+    // unlinkability matters, and an unset salt silently means the documented
+    // PUBLIC cold-start default — enumerable offline. Say so, once, at startup
+    // (blind-audit finding 2026-07-04: the fail-open was silent).
+    if !common::fingerprint_salt_is_configured() {
+        eprintln!(
+            "serve: NOTICE — no CEC_FINGERPRINT_SALT is configured, so fingerprints and \
+             derived config classes use the documented PUBLIC cold-start salt and are \
+             offline-enumerable. Set a per-deployment secret (e.g. `openssl rand -hex 32`) \
+             for query-key unlinkability (leak-C7)."
+        );
+    }
+
     // Same attestation posture as the CLI: enforce when a pubkey is present,
     // self-attest when the seed is held, derive enforcement from the seed so
     // single-operator mode never attests without enforcing.

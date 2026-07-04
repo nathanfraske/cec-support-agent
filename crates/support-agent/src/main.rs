@@ -1314,7 +1314,15 @@ fn read_inventory_keys(src: &str) -> anyhow::Result<Vec<String>> {
 /// attack.
 fn load_fingerprint_salt() -> anyhow::Result<()> {
     match std::env::var("CEC_FINGERPRINT_SALT") {
-        Err(_) => Ok(()),
+        Err(std::env::VarError::NotPresent) => Ok(()),
+        // Set-but-not-UTF-8 must NOT collapse into "unset": raw random bytes
+        // are a plausible way to provision a salt, and silently falling back
+        // to the public cold-start default would void the C7 property with no
+        // signal (blind-audit finding 2026-07-04). Fixed message, no echo.
+        Err(std::env::VarError::NotUnicode(_)) => Err(anyhow::anyhow!(
+            "CEC_FINGERPRINT_SALT is set but not valid UTF-8 — provision it as text \
+             (e.g. `openssl rand -hex 32`)"
+        )),
         Ok(value) => common::set_fingerprint_salt(value.trim().as_bytes())
             .map_err(|error| anyhow::anyhow!("CEC_FINGERPRINT_SALT: {error}")),
     }

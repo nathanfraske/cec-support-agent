@@ -215,3 +215,37 @@ fn a_short_fingerprint_salt_refuses_startup() {
         "the refusal must never echo the salt value: {stderr}"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn a_non_utf8_fingerprint_salt_refuses_startup() {
+    // Raw random bytes are a plausible way to provision a salt; set-but-not-
+    // UTF-8 must be a startup REFUSAL, never silently treated as unset (which
+    // would fall open to the public cold-start salt).
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt as _;
+    let out = bin()
+        .args([
+            "diagnose",
+            "--offline",
+            "--no-questions",
+            "--json",
+            "--describe",
+            "explorer.exe crashes on login 0x1234",
+        ])
+        .env(
+            "CEC_FINGERPRINT_SALT",
+            OsString::from_vec(vec![0xff, 0xfe, 0x80, 0x81, b'x', b'y']),
+        )
+        .output()
+        .expect("run cec-support-agent");
+    assert!(
+        !out.status.success(),
+        "a non-UTF-8 CEC_FINGERPRINT_SALT must refuse startup, not fall back silently"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("CEC_FINGERPRINT_SALT"),
+        "the refusal must name the misconfigured variable: {stderr}"
+    );
+}

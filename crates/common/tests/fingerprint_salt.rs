@@ -34,29 +34,39 @@ fn the_salt_lifecycle_is_fail_closed_and_write_once() {
     let salted = FaultSignature::from_symptoms(vec![Symptom("event_41".into())]);
     assert_eq!(
         salted.fingerprint,
-        reference(DEPLOYMENT_SALT, &["event_41"]),
+        reference(DEPLOYMENT_SALT, "fault", &["event_41"]),
         "the configured salt must be the salt in effect"
     );
     assert_ne!(
         salted.fingerprint,
-        reference(common::COLD_START_FINGERPRINT_SALT, &["event_41"]),
+        reference(common::COLD_START_FINGERPRINT_SALT, "fault", &["event_41"]),
         "a configured salt must move the fingerprint off the cold-start value"
     );
     let class = ConfigClass::from_inventory(["os:windows 11", "gpu:rtx-4070"]);
     assert_eq!(
         class.key(),
-        reference(DEPLOYMENT_SALT, &["gpu:rtx-4070", "os:windows 11"]),
+        reference(
+            DEPLOYMENT_SALT,
+            "config",
+            &["gpu:rtx-4070", "os:windows 11"]
+        ),
         "the config class derives from the same configured salt"
+    );
+    assert!(
+        common::fingerprint_salt_is_configured(),
+        "the probe must report a configured (non-default) salt"
     );
 }
 
 /// The documented `cec-fingerprint-v2` construction (HMAC-SHA256 over the
-/// versioned, count-framed, length-prefixed sorted keys), reimplemented from
-/// the spec so this test does not depend on the crate's own encoder.
-fn reference(salt: &[u8], sorted_keys: &[&str]) -> String {
+/// versioned, domain-tagged, count-framed, length-prefixed sorted keys),
+/// reimplemented from the spec so this test does not depend on the crate's own
+/// encoder.
+fn reference(salt: &[u8], domain: &str, sorted_keys: &[&str]) -> String {
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
     let mut message = String::from("cec-fingerprint-v2\n");
+    message.push_str(&format!("domain:{domain}\n"));
     message.push_str(&format!("keys:{}\n", sorted_keys.len()));
     for key in sorted_keys {
         message.push_str(&format!("key[{}]={key}\n", key.len()));

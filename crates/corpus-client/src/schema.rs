@@ -449,9 +449,10 @@ pub(crate) fn attestation_message(c: &Contribution) -> Vec<u8> {
 /// to forge a different structure with the same bytes (a `plan.id` of
 /// "p\nstep:rm:Destructive" is byte-distinct from a genuine extra step). Field
 /// *names* and counts are fixed literals we emit, never free text, so they need
-/// no prefix. This mirrors the discipline in `provenance::canonical`; shared by
+/// no prefix (and the `&'static str` tag pins tags-are-literals at the type
+/// level). This mirrors the discipline in `provenance::canonical`; shared by
 /// [`attestation_message`] and [`chain_canonical`].
-fn lp(s: &mut String, tag: &str, value: &str) {
+fn lp(s: &mut String, tag: &'static str, value: &str) {
     use std::fmt::Write as _;
     let _ = writeln!(s, "{tag}[{}]={value}", value.len());
 }
