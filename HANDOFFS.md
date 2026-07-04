@@ -847,6 +847,17 @@ See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementati
 
 ## Handoff log (reverse-chronological)
 
+- **2026-07-04 20:05 UTC** — **Owner DECIDED RFC Q6** (agreed with the minimal-attested-unit
+  recommendation): recorded in the RFC with a design wrinkle flagged (the attestation binds the provenance
+  pin, so the minimized served row needs a provenance commitment — solve inside the B4 wire-type design).
+  Control-C + Q6-filed FOLLOWUPS closed. **Q1 operator-half recommendation delivered (not yet decided):
+  SEPARATE keys** — the 2026-07-03 decisions (central attestation authority; custodied judge key + F3
+  registry) made authority keys ROLE keys (portable, slow rotation, tight custody) while a mesh `DeviceId`
+  is a DEVICE key (per-machine, fast rotation, broad surface); unifying welds a long-lived role to a
+  disposable device and makes one compromised laptop a corpus-truth-minting event. The RFC's old
+  "lean: unified" predates those decisions. Also delivered the Chris-blockers rundown (Q2-Q5 all have safe
+  engine-side defaults; they gate only the mesh-serving tier).
+
 - **2026-07-04 19:40 UTC** — **Blind panel returned; all confirmed findings fixed (`8626f23`); 237
   green.** 3/3 auditors: the chain-v2 canonical encoding is CLEAN (independent concrete collision attempts
   all failed on the count/length guards — strong convergence). Real finds, verified against source then
