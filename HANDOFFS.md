@@ -847,6 +847,19 @@ See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementati
 
 ## Handoff log (reverse-chronological)
 
+- **2026-07-04 20:35 UTC** — **Owner decided Q1 (separate keys — Q1 now FULLY decided) and D3 (the
+  integration posture): the engine is an independent authenticated API; MyOwnMesh is transport only (no
+  `myownmesh-core` link, daemon-gateway pattern); no MyOwnLLM for now.** Recorded in the RFC (new D3 +
+  DECIDED/MOOT/DEFERRED/REFRAMED notes on Q1–Q5) + integration-doc supersession banner; the 2026-06-15
+  "awaiting Chris" FOLLOWUPS item is CLOSED — nothing hard-blocks on Chris now (Q5's anchor moved into our
+  own B4/corpus-service wire contract; his side just writes an AllMyStuff API client someday). Grounding:
+  live review of MyOwnMesh v0.2.28 (generic RPC call/serve/call_stream, typed pub/sub, per-device ed25519
+  roster identity, closed-network role tiers; its own GUI is a daemon CLIENT over local sockets — the
+  exact pattern D3 adopts) and AllMyStuff v0.2.17 (remote desktop/shell/files over the daemon; headless
+  `allmystuff serve`). Note: cross-tier `add_repo` (mrjeeves/*) is blocked in nathanfraske-scoped sessions
+  — reviewed via the public GitHub pages instead. **PR #17: subscribed, CI 10/10 green at `72985c6`,
+  hourly check-in armed.**
+
 - **2026-07-04 20:05 UTC** — **Owner DECIDED RFC Q6** (agreed with the minimal-attested-unit
   recommendation): recorded in the RFC with a design wrinkle flagged (the attestation binds the provenance
   pin, so the minimized served row needs a provenance commitment — solve inside the B4 wire-type design).

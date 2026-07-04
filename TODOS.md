@@ -380,3 +380,11 @@ _(completed items stay above, in place, with their `· done` tombstone)_
   close the two cartography FOLLOWUPS items (control C; Q6-filed). B4 is now gated only on the corpus
   service existing. Owner also asked for the Q1-operator-half recommendation + the Chris-blockers rundown
   (delivered in-session; recommendation = SEPARATE keys, recorded in the handoff log).
+- [x] [added 2026-07-04 20:35 UTC · done 2026-07-04 20:35 UTC] Record owner decisions **Q1 operator-half =
+  SEPARATE keys (Q1 fully decided)** + **D3 integration posture** (engine = independent authenticated API,
+  loopback-bound; MyOwnMesh daemon = transport only, no `myownmesh-core` link; no MyOwnLLM now) in the RFC;
+  Q2 decided-for-now / Q3 moot / Q4 deferred / Q5 reframed→B4 wire contract; integration doc banner;
+  closed the "[RFC Q1–Q5 awaiting Chris/owner]" FOLLOWUPS item. Grounded in a live review: MyOwnMesh
+  v0.2.28 (generic RPC + roster ed25519 identity + daemon-client embedding pattern), AllMyStuff v0.2.17.
+- [x] [added 2026-07-04 20:30 UTC · done 2026-07-04 20:30 UTC] Subscribed to PR #17 activity (babysit to
+  merge); CI green 10/10 at head `72985c6`; hourly self check-in armed via send_later.
