@@ -405,3 +405,14 @@ _(completed items stay above, in place, with their `· done` tombstone)_
   run red on the `secrets` job — corpus-row gitleaks rule matched the shape prefix (8 sanctioned sites);
   tightened to require the 16-64-hex value (`5a7cd81`); rerun 12/12 green (incl. both first `boundary`
   jobs); MERGED → `main` @ `44d623a`; trigger deleted; branch restarted from main.
+
+### Session 2026-07-04 (third) — attestation v4 (provenance commitment) ahead of the re-ingest
+
+- [x] [added 2026-07-04 22:20 UTC · done 2026-07-04 22:45 UTC] **Attestation v4:** `attestation_message`
+  binds `RowProvenance::commitment()` (`cec-provenance-commitment-v1` sha256) instead of raw provenance
+  fields — resolves the RFC Q6 DECIDED note's wrinkle (a Q6-minimized served row is now verifiable);
+  replay protection preserved (existing fabricated-run-id gate test still green); provenance-None message
+  bytes unchanged except the version tag (content_hash semantics carry over). 2 new pins (raw fields
+  absent from signed bytes + commitment binding/sort completeness); proven red on a raw-binding revert.
+  247 tests green. Timed deliberately BEFORE the one-time private-corpus re-ingest so the operator
+  re-ingests exactly once. §7 blind panel (2 auditors) running.
