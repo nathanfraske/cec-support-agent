@@ -15,6 +15,36 @@ Below "Pick up here", keep a reverse-chronological **handoff log** of dated entr
 
 ## Current state
 
+**As of 2026-07-04 ~19:10 UTC.** **The migration bundle (items 4+6, "PR-2") is BUILT and green on branch
+`claude/workflow-model-optimization-e1y1sx`** (= `main` @ `44aaa88` + the owner-decisions docs commit
+`c73afde` + 3 code commits). 235 tests, clippy `-D warnings` clean, fmt clean. Not yet pushed/PR'd at the
+time of this block — a §7 blind-audit panel (3 auditors) is running on the two new kernels first.
+
+- **F2 (`92df52d`):** `chain_hash` = sha256 over an explicit field-by-field length-prefixed
+  `chain_canonical` (domain `cec-corpus-chain-v2`) — serde-independent, binds EVERY field incl.
+  `plan.title`/step `description`/the attestation (which `attestation_message` leaves derived/excluded),
+  never `integrity`; lists bind in STORED order (tamper-evidence, not set-canonicalization). Guards: a
+  hand-assembled canonical-bytes pin, a 25-mutation binding sweep (pairwise-distinct), an ambiguity case, a
+  v1-era-file-refused-at-open pin. All proven red on a v1 revert.
+- **leak-C7 (`e17f38f`):** `fingerprint_of` = HMAC-SHA256 (`cec-fingerprint-v2`, 64-hex) under a
+  per-deployment salt: `CEC_FINGERPRINT_SALT` read at startup on both CLI paths (mirrors the sign-off key,
+  owner decision 2026-07-03), <16 bytes refuses startup with a fixed no-echo message, unset → documented
+  PUBLIC cold-start default (`common::COLD_START_FINGERPRINT_SALT` — domain separation only, NOT secret).
+  Salt is write-once (`common::set_fingerprint_salt`). Proven red against the silent salt-ignore regression.
+- **Control E logging half (`90ff2c2`):** retrieval keys moved from the GET URL path into a
+  `POST /v1/mappings/query` JSON body (no live corpus service exists; the service contract lands with Q6/B4).
+- **Hard cutover shipped as decided:** stored fingerprints, config-class derived hashes, and chain hashes
+  all changed; a v1-era corpus file now FAILS at open. **OPERATOR NOTE: the private corpus
+  (`/mnt/e/cec-corpus-private`) must re-ingest once** on its next engine-pin bump, and any deployment
+  should set `CEC_FINGERPRINT_SALT` (e.g. `openssl rand -hex 32`) — the cold-start default gives no
+  unlinkability. Canned fixture regenerated (fragment-split so the invariant hook's corpus-row backstop
+  stays meaningful; hook pattern widened to 16-64 hex).
+- **Docs updated in the same pass:** leak doc §3.1(2) + §4 item 15 BUILT/DONE notes; cartography control E
+  BUILT note; addendum §7 substrate/reserved-values list now names the keyed fingerprint +
+  `cec-corpus-chain-v2`; FOLLOWUPS closed the `chain_hash canonical encoding` + control-E items.
+
+--- previous (superseded by the migration-bundle state above) ---
+
 **As of 2026-07-03 ~03:15 UTC.** **Execution-zone trio MERGED (PR #16 → `main` @ `44aaa88`); 4 owner
 decisions locked; B4 re-scoped; migration bundle is the next code PR.** Branch
 `claude/repo-scope-work-plan-h93qx5` restarted from `main` @ `44aaa88`.
@@ -381,6 +411,17 @@ commit on branch `feat/agent-ops-evidence-integrity`.
 
 ## Pick up here
 
+> **Update 2026-07-04 ~19:10 UTC (the live front):** the migration bundle is BUILT (see Current state).
+> Steps (1)+(2) are DONE (panel returned, fixes landed `8626f23`, **PR #17 open** —
+> https://github.com/nathanfraske/cec-support-agent/pull/17): **(3)** merge PR #17 when CI is green, then
+> the next PURE-ENGINE greenlightable work
+> (no owner/Chris gate) is **leak Phase 3** (egress-allowlist lint + `xtask scan-content` + hooks/CI
+> boundary job — leak doc §4 items 12-13) and/or the **`PromptPayload` chokepoint** (§3.1(1a)/item 14);
+> everything else on the list is gated (B4 → RFC Q6; F4 re-collection + F5 VM backend → infra; volunteer
+> framework → policy). **Do NOT attempt B4 before Q6 is decided.**
+
+--- superseded live-front notes below ---
+
 > **Update 2026-07-03 ~03:15 UTC (the live front):** execution-zone trio (items 1/2/3) is MERGED to `main`
 > (PR #16, `44aaa88`); the 4 owner decisions are locked (see Current state). **NEXT CODE = the F2 + leak-C7
 > migration bundle (items 4+6), now unblocked** — do it as its own focused PR-2, one hard cutover:
@@ -554,6 +595,18 @@ license-checks clean. Build loop: `. "$HOME/.cargo/env"` then `cargo build/test/
 See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementation status.
 
 ## Lessons learned (append-only)
+
+- **(2026-07-04) `mv file.bak file` after a revert-proof restores an OLD mtime, and cargo will happily
+  re-run the STALE test binary** — the restored source looked green-checked but the "test result" came from
+  the still-reverted build; only a `touch` (or editing the file) forces the rebuild. After any
+  backup/restore dance, `touch` the restored file (or verify with a `grep` on the source) before trusting
+  the re-run. Cost one confusing "restored but still FAILED" cycle this session.
+- **(2026-07-04) The invariant hook's corpus-row backstop fires on the sanctioned canned FIXTURE too — the
+  fix is fragment-assembly, not weakening the pattern.** Any edit to `store.rs` re-flagged the pre-existing
+  fixture (16-hex fingerprint shape). Splitting the fixture string at the fingerprint boundary (the same
+  trick the hook uses for its own key-block markers) makes the file text non-contiguous while the runtime
+  value is unchanged — so the hook pattern could be WIDENED (16-64 hex, catching v2-era real rows) instead
+  of allowlisted.
 
 - **(2026-07-03) Never put backticks in a `git commit -m "…"` double-quoted message — bash runs them as
   command substitution and silently DELETES the wrapped words from the commit.** A projectops commit lost
@@ -793,6 +846,27 @@ See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementati
   PREDICATE, not the type tag.
 
 ## Handoff log (reverse-chronological)
+
+- **2026-07-04 19:40 UTC** — **Blind panel returned; all confirmed findings fixed (`8626f23`); 237
+  green.** 3/3 auditors: the chain-v2 canonical encoding is CLEAN (independent concrete collision attempts
+  all failed on the count/length guards — strong convergence). Real finds, verified against source then
+  fixed: CRITICAL non-UTF-8 `CEC_FINGERPRINT_SALT` silently treated as unset (fail-open to the public
+  salt) → startup refusal + cfg(unix) e2e; MEDIUM missing fault/config fingerprint domain separation →
+  `domain:` line in the MAC message (fixture regen #3); HIGH silent cold-start at the serve boundary →
+  one-line NOTICE (live-smoked) + `fingerprint_salt_is_configured()`. The §7 method earned its keep again:
+  the NotUnicode fail-open was invisible to the sighted tests because they were written against the same
+  `Err(_) => unset` premise. Two FOLLOWUPS filed (corpus-ingest salt-loader parity; strip-downgrade
+  re-flag). Pushed; **PR #17 is open** (https://github.com/nathanfraske/cec-support-agent/pull/17) with the
+  operator re-ingest + salt note in the body. Next: watch CI → merge → restart the branch from main.
+
+- **2026-07-04 19:10 UTC** — **Migration bundle (items 4+6) built green in 3 commits + docs/tracking; §7
+  blind panel launched.** Picked up the 03:15 baton on the designated branch
+  `claude/workflow-model-optimization-e1y1sx`. F2 chain-v2 (`92df52d`), leak-C7 keyed fingerprint + salt
+  custody (`e17f38f`), POST-body query (`90ff2c2`); 235 tests; every new guard proven red-on-revert
+  (including the silent salt-ignore regression, the one that matters). Fixture regenerated twice (once per
+  kernel) and fragment-split to keep the invariant hook's corpus-row backstop alive (pattern widened
+  16→16-64 hex). Lesson recorded below (mtime/mv). Owner asked for a full project status report — delivered
+  in-session; the standing/gates summary lives in this file's Current state + Pick up here.
 
 - **2026-07-03 03:15 UTC** — **Execution-zone trio merged (PR #16); 4 owner decisions locked; B4 re-scoped.**
   Merged PR #16 (all 10 checks green, no review threads) via merge-commit (`44aaa88`) — items 1/2/3 now on

@@ -73,11 +73,14 @@ see `.claude/audit/confirmed-findings.txt` and HANDOFFS). These are the deeper r
   row (planned, P3 acceptance (d) in `docs/integration-myown-family.md`); apply the same hardening to
   `HttpCorpus` (carry attestation-bearing rows on the query path, or re-verify). — where to resume:
   `crates/corpus-client/src/store.rs` (HttpCorpus::query) + the mesh adapter.
-- [ ] [added 2026-06-14 23:05 UTC] **[chain_hash canonical encoding]** `chain_hash` now carries a version
+- [x] [added 2026-06-14 23:05 UTC] **[chain_hash canonical encoding]** `chain_hash` now carries a version
   prefix (`cec-corpus-chain-v1`) but still hashes the `serde_json` image of the row — coupled to struct
   field order, fine for same-code recompute but not cross-language. If the chain ever needs external
   verification, switch it to the serde-independent canonical encoder used for the attestation/plan
-  signatures. — where to resume: `crates/corpus-client/src/schema.rs` (chain_hash).
+  signatures. — where to resume: `crates/corpus-client/src/schema.rs` (chain_hash). · closed 2026-07-04
+  19:05 UTC → F2 landed on the migration-bundle PR (`92df52d`): `chain_canonical` explicit field-by-field
+  length-prefixed encoding, domain tag `cec-corpus-chain-v2`, serde-independence pinned by a hand-assembled
+  canonical-bytes test + a 25-mutation binding sweep; v1-era files refused at open (hard cutover).
 - [ ] [added 2026-06-14 23:05 UTC] **[Authority key rotation interacts with at-rest re-admission]** Now
   that `with_authority` re-verifies every at-rest row, rotating the sign-off authority key makes a corpus
   accreted under the OLD key un-openable under the NEW one. The single-key limitation is already filed
@@ -200,7 +203,7 @@ recommends that are NOT yet built, each attributed to the threat doc's §3 contr
   (FOLLOWUPS "[MH-1 — key rotation + audit log]" above). — why deferred: a real identity to attribute to
   needs rung-2/E3; a hashed-key+timestamp skeleton is greenlightable now. Resume:
   `docs/corpus-cartography-threat.md` §3 control B; `serve`/`serve_corpus`.
-- [ ] [added 2026-07-02 18:53 UTC] **[Corpus cartography — control E, keyed/salted HMAC fingerprint]** The
+- [x] [added 2026-07-02 18:53 UTC] **[Corpus cartography — control E, keyed/salted HMAC fingerprint]** The
   fingerprint and config-class key are unsalted FNV-1a — dictionary-reversible, and (per leak-C7) the exact
   reason the cartography probe space is enumerable rather than opaque (a caller can compute-then-probe keys
   offline against the planned `POST /v1/corpus/query`). This is the SAME item as the existing leak-C7
@@ -208,6 +211,10 @@ recommends that are NOT yet built, each attributed to the threat doc's §3 contr
   is the non-mappability prerequisite that makes the probe space opaque. — why deferred: not yet scheduled;
   no blocker. Resume: `crates/common/src/hash.rs` (`fingerprint_of`/`from_inventory` → keyed HMAC,
   per-deployment salt); move retrieval keys out of logged/GET URLs into request bodies (`store.rs:434-439`).
+  · closed 2026-07-04 19:05 UTC → BOTH halves landed on the migration-bundle PR (`e17f38f` keyed
+  HMAC-SHA256 `cec-fingerprint-v2` + `CEC_FINGERPRINT_SALT` custody per the owner's 2026-07-03
+  decision; `90ff2c2` retrieval keys into the `POST /v1/mappings/query` body). Docs: leak doc
+  §3.1(2) BUILT note; cartography control E BUILT note.
 - [ ] [added 2026-07-02 18:53 UTC] **[Corpus cartography — control C, B4 provenance-graph minimization]** B4
   proposes serving essentially the whole `Contribution` minus `integrity`, including `RowProvenance`
   (`primed_from`, the priming graph) and possibly `confirmations` — both disclose corpus derivation/
@@ -314,3 +321,19 @@ recommends that are NOT yet built, each attributed to the threat doc's §3 contr
   concept exists in code at all; largest greenfield, mostly policy/legal not engine. — why deferred: infra +
   legal + owner sequencing, all downstream of the greenlight items and the Q7/Q1 forks. Resume:
   `docs/test-validation-fleet-design.md` §5; `docs/consolidated-work-plan.md` F4/F5.
+
+- [ ] [added 2026-07-04 19:40 UTC] **[Private corpus-ingest — salt-loader parity]** The private
+  `corpus-ingest` (and the future corpus service) must load `CEC_FINGERPRINT_SALT` with EXACTLY the
+  engine's semantics or the two sides silently disagree on every fingerprint: trim() the UTF-8 value,
+  refuse <16 bytes, refuse set-but-not-UTF-8 (never treat as unset), set before the first fingerprint
+  (`common::set_fingerprint_salt`; probe `fingerprint_salt_is_configured()`). Flagged by the 2026-07-04
+  blind panel (auditor 2, trim-normalization divergence). — why deferred: private-repo change, lands with
+  the one-time v2 re-ingest. Resume: `/mnt/e/cec-corpus-private` compile path; engine loader
+  `crates/support-agent/src/main.rs::load_fingerprint_salt`.
+- [ ] [added 2026-07-04 19:40 UTC] **[Keyless-chain strip-downgrade — re-flagged by the blind panel]**
+  Auditor 2 independently re-derived the known keyless-chain residual in a sharper form: stripping
+  `integrity` from EVERY row demotes a chained file to accepted-unchained legacy (`verify_chain` with==0
+  path) — strictly easier than rechaining. Same class as the existing "[Chain integrity — key or anchor
+  the head]" item (attestation still guards confirmed rows under an authority; unattested cold-start
+  files remain soft). No new code action beyond that item; recorded so the panel's convergence is
+  auditable. — why deferred: duplicate of the tracked head-anchor item, listed for the audit trail.
