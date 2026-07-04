@@ -117,7 +117,7 @@ Sketches respect the pinned snake_case enum grammar (RFC lines 114-120) and D2 a
 - **De-id analysis.** The app-side allowlist (`inventory_to_config_keys`, MIT side) drops
   hostname/mac/ip/serial *before* the wire; the engine re-hashes and never trusts the filter (defense on
   both sides, `integration-myown-family.md` license-resolution §). The residual is C7: the config-class
-  key is an **unsalted FNV** emitted in the envelope (`config_class` field, `main.rs:1131`) —
+  key is an **unsalted FNV** emitted in the envelope (`config_class` field, `main.rs:1131`) — *(since 2026-07-04 a keyed HMAC-SHA256 under `CEC_FINGERPRINT_SALT`, `cec-fingerprint-v2`; this paragraph's analysis is the pre-migration record)* —
   dictionary-reversible over a low-cardinality inventory. **New guard:** keyed/salted HMAC
   (leak §3.1(2), Phase 4 / F-track). Not blocking, but note it before the class becomes a cross-instance
   correlation tag.
