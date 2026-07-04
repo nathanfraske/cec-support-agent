@@ -24,8 +24,12 @@ paths = [
 
 [[rules]]
 id = "cec-corpus-row"
-description = "A serialized corpus row (contiguous outcome/signature/fingerprint shape)"
-regex = '''"outcome"\s*:\s*\{\s*"signature"\s*:\s*\{\s*"fingerprint"'''
+description = "A serialized corpus row (contiguous outcome/signature shape WITH a hex fingerprint value)"
+# Requires the actual 16-64-hex VALUE, matching the invariant hook's backstop:
+# the shape PREFIX alone appears legitimately in the fragment-split fixture,
+# in-crate test JSON, and methodology prose that quotes it — a real row always
+# carries the value.
+regex = '''"outcome"\s*:\s*\{\s*"signature"\s*:\s*\{\s*"fingerprint"\s*:\s*"[0-9a-f]{16,64}"'''
 
 [allowlist]
 paths = [
