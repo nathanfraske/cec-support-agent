@@ -10,6 +10,7 @@
 
 mod candidate;
 mod config_class;
+mod config_transition;
 mod diagnostic;
 mod execution;
 mod extract;
@@ -23,6 +24,7 @@ mod verification;
 
 pub use candidate::{Candidate, CandidateSource};
 pub use config_class::ConfigClass;
+pub use config_transition::{CategoryDelta, ConfigTransition, FamilyRelation, StructuredInventory};
 pub use diagnostic::{DiagnosticEvent, EventKind, Severity};
 pub use execution::{ExecutionResult, StepResult};
 pub use extract::{extract_symptoms, is_symptom_token};

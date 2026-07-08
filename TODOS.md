@@ -463,8 +463,13 @@ _(completed items stay above, in place, with their `· done` tombstone)_
   Partial{cleared}}` (additive, serde-default Full); `fix_mappings` accumulates partial mappings keyed by
   (plan, cleared-set) with the same independence rule; revocation filters both kinds; consumers label
   partials honestly (`mapping_rationale`). 264 tests green (+4), clippy clean, red-on-revert proven.
-- [ ] [added 2026-07-08 05:40 UTC] **Config-transition primitive** — structured categorized inventory +
-  `ConfigTransition::between` emitting a de-id transition trigger token. (building next)
+- [x] [added 2026-07-08 05:40 UTC · done 2026-07-08 06:00 UTC] **Config-transition primitive** — new
+  `common::config_transition` module: `StructuredInventory::from_keys` (parses the existing `category:value`
+  keys), `ConfigTransition::between(prior, current)` → per-category `CategoryDelta::{Changed{relation},
+  Added, Removed}` with `FamilyRelation::{WithinFamily, CrossFamily}` (leading-alphanumeric family token, so
+  rtx-5070→rtx-5080 reads within-family). NOT a symptom token (kept a separate typed concept, not forced
+  into the closed de-id grammar). 271 tests green (+7), clippy clean. Corpus-keying + config ledger deferred
+  (FOLLOWUPS).
 - [ ] [added 2026-07-08 05:40 UTC] Ask owner: retirement gating posture (Q-retire) + formatting page surface (Q-page).
 - [ ] [added 2026-07-08 05:40 UTC] **Workflow retirement** (pending Q-retire; §7 blind audit — new corpus-mutation gate).
 - [ ] [added 2026-07-08 05:40 UTC] **Corpus query service** (separate authenticated read API; §7 blind audit — new egress).
