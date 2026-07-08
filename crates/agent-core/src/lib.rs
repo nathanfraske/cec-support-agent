@@ -12,6 +12,7 @@
 mod agent;
 mod consent;
 mod dispatch;
+mod eula;
 mod execute;
 mod tool;
 mod verify;
@@ -19,6 +20,7 @@ mod verify;
 pub use agent::{Agent, AgentRun, AgentStep};
 pub use consent::Consent;
 pub use dispatch::{Dispatcher, RiskCorrection};
+pub use eula::EulaAcceptances;
 pub use execute::{execute_plan, execute_signed_plan};
 pub use tool::{Tool, ToolError, ToolOutcome};
 pub use verify::{verify_outcome, Verdict, VerificationClass};
@@ -251,10 +253,119 @@ mod tests {
             risk: Risk::ReadOnly,
         });
 
-        let result = execute_plan(&dispatcher, &plan, Consent::ReadOnlyOnly).await;
+        let result = execute_plan(
+            &dispatcher,
+            &plan,
+            Consent::ReadOnlyOnly,
+            &EulaAcceptances::none(),
+        )
+        .await;
         assert!(result.completed);
         assert!(result.all_ok());
         assert_eq!(result.steps.len(), 1);
+    }
+
+    /// A tool that installs EULA-bearing software. Reversible risk (installs are
+    /// not destructive), so the RISK consent gate would let it run — only the
+    /// EULA gate stands between it and execution. `invoked` proves the installer
+    /// never ran when the license was not accepted.
+    struct EulaInstaller {
+        invoked: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    #[async_trait]
+    impl Tool for EulaInstaller {
+        fn name(&self) -> &str {
+            "install_signalrgb"
+        }
+        fn description(&self) -> &str {
+            "install SignalRGB (carries a EULA)"
+        }
+        fn risk(&self) -> Risk {
+            Risk::Reversible
+        }
+        fn requires_eula(&self) -> Option<&str> {
+            Some("signalrgb")
+        }
+        async fn invoke(&self, _args: serde_json::Value) -> Result<ToolOutcome, ToolError> {
+            self.invoked
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(ToolOutcome::success("installed"))
+        }
+    }
+
+    fn eula_plan() -> Plan {
+        let mut plan = Plan::new("p", "install app");
+        plan.steps.push(PlanStep {
+            description: "install the RGB app".into(),
+            action: "install_signalrgb".into(),
+            risk: Risk::Reversible,
+        });
+        plan
+    }
+
+    #[tokio::test]
+    async fn a_eula_install_is_refused_and_never_runs_without_on_screen_acceptance() {
+        // The liability gate: even with reversible-risk consent GRANTED, an
+        // install whose license the user did NOT accept on screen must be
+        // refused, and the installer must never be invoked — the shop does not
+        // accept a EULA for the user.
+        let invoked = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut dispatcher = Dispatcher::new();
+        dispatcher.register(Box::new(EulaInstaller {
+            invoked: invoked.clone(),
+        }));
+
+        let result = execute_plan(
+            &dispatcher,
+            &eula_plan(),
+            Consent::AllowReversible, // risk is permitted...
+            &EulaAcceptances::none(), // ...but the EULA was not accepted
+        )
+        .await;
+
+        assert!(
+            !result.completed,
+            "the plan must stop at the refused install"
+        );
+        assert!(!result.all_ok());
+        assert!(
+            !invoked.load(std::sync::atomic::Ordering::SeqCst),
+            "the installer must NEVER run without on-screen acceptance"
+        );
+        assert!(
+            result.steps[0]
+                .summary
+                .as_str()
+                .contains("license agreement"),
+            "the refusal must name the EULA requirement: {}",
+            result.steps[0].summary.as_str()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_eula_install_runs_once_the_user_accepted_on_screen() {
+        // The same install runs when the acceptance is recorded — the gate
+        // permits it, it does not block installs outright.
+        let invoked = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut dispatcher = Dispatcher::new();
+        dispatcher.register(Box::new(EulaInstaller {
+            invoked: invoked.clone(),
+        }));
+
+        let result = execute_plan(
+            &dispatcher,
+            &eula_plan(),
+            Consent::AllowReversible,
+            &EulaAcceptances::none().accept("signalrgb"),
+        )
+        .await;
+
+        assert!(result.completed && result.all_ok());
+        assert!(
+            invoked.load(std::sync::atomic::Ordering::SeqCst),
+            "an accepted EULA lets the install run"
+        );
     }
 
     #[tokio::test]
@@ -272,7 +383,13 @@ mod tests {
             risk: Risk::ReadOnly,
         });
 
-        let result = execute_plan(&dispatcher, &plan, Consent::ReadOnlyOnly).await;
+        let result = execute_plan(
+            &dispatcher,
+            &plan,
+            Consent::ReadOnlyOnly,
+            &EulaAcceptances::none(),
+        )
+        .await;
         assert!(!result.completed);
         assert_eq!(result.steps.len(), 1, "must stop at the first failing step");
         assert!(!result.steps[0].ok);
@@ -293,9 +410,15 @@ mod tests {
 
         let key = SigningKey::generate();
         let signed = key.sign(&plan);
-        let result = execute_signed_plan(&dispatcher, &signed, &key, Consent::ReadOnlyOnly)
-            .await
-            .expect("valid signature");
+        let result = execute_signed_plan(
+            &dispatcher,
+            &signed,
+            &key,
+            Consent::ReadOnlyOnly,
+            &EulaAcceptances::none(),
+        )
+        .await
+        .expect("valid signature");
         assert!(result.completed);
     }
 
@@ -316,9 +439,15 @@ mod tests {
         let mut signed = key.sign(&plan);
         // Tamper after signing: swap in a different action.
         signed.plan.steps[0].action = "wipe".into();
-        let refused = execute_signed_plan(&dispatcher, &signed, &key, Consent::AllowDestructive)
-            .await
-            .expect_err("tampered plan must be refused");
+        let refused = execute_signed_plan(
+            &dispatcher,
+            &signed,
+            &key,
+            Consent::AllowDestructive,
+            &EulaAcceptances::none(),
+        )
+        .await
+        .expect_err("tampered plan must be refused");
         assert_eq!(refused, provenance::ProvenanceError::BadSignature);
     }
 
@@ -341,7 +470,13 @@ mod tests {
             risk: Risk::Destructive,
         });
 
-        let result = execute_plan(&dispatcher, &plan, Consent::ReadOnlyOnly).await;
+        let result = execute_plan(
+            &dispatcher,
+            &plan,
+            Consent::ReadOnlyOnly,
+            &EulaAcceptances::none(),
+        )
+        .await;
         assert!(!result.completed);
         assert!(!result.steps[0].ok);
         assert!(result.steps[0].summary.as_str().contains("consent"));

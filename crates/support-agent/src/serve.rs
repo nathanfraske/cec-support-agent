@@ -605,12 +605,17 @@ async fn handle_execute(
     // refuses any step exceeding the granted level.
     let signer = SigningKey::generate();
     let signed = signer.sign(&candidate.plan);
-    let execution = agent_core::execute_signed_plan(&dispatcher, &signed, &signer, granted)
-        .await
-        .map_err(|error| {
-            eprintln!("serve: execution refused: {error}");
-            ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "execution_refused")
-        })?;
+    // No on-screen EULA acceptance on this served path, so a EULA-bearing
+    // install fails closed (refused); the target-side executor supplies
+    // acceptances after the user accepts each license on screen.
+    let accepted_eulas = agent_core::EulaAcceptances::none();
+    let execution =
+        agent_core::execute_signed_plan(&dispatcher, &signed, &signer, granted, &accepted_eulas)
+            .await
+            .map_err(|error| {
+                eprintln!("serve: execution refused: {error}");
+                ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "execution_refused")
+            })?;
 
     let class = verification_class_for(&session.route, session.reproducibility);
     // Same F4 seam as the CLI: the no-op collector today (→ Unverified), a real
