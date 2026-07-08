@@ -455,3 +455,28 @@ recommends that are NOT yet built, each attributed to the threat doc's §3 contr
   (`audit.rs` ExecutionRecord — currently a closed field set with no receipt). — why deferred: small; only
   needed if a legal/dispute receipt is required beyond the attested authority fact. Resume:
   `crates/corpus-client/src/schema.rs` Contribution; `crates/support-agent/src/audit.rs`.
+
+- [ ] [added 2026-07-08 02:50 UTC] **[repertoire knowledge tier + autonomous VerifierConfirmed learning (owner 2026-07-08)]**
+  A third candidate provenance tier — reasoned from a KNOWLEDGE REPERTOIRE (vendor KB, documented-but-
+  unproven procedures, cec-autosetep's driver library), between `ColdModel` (prior 0.6) and `CorpusPrimed`
+  (0.8): grounded in real knowledge but NOT corpus-authored for this signature×config_class. Slots at ~0.7
+  so corpus precedent still outranks it and it only fills the gap. Surfaced to the customer/tech as "high
+  confidence, reasoned, NOT corpus-confirmed — may not fully work." **The self-learning loop** = the
+  EXISTING `VerifierConfirmed` sign-off + `ResolvedProvisional` label: a repertoire fix that runs and F4
+  machine-verifies as resolved earns an AUTOMATED (no-human) sign-off, enters the corpus as provisional
+  (monitored, auto-reopen), and graduates via INDEPENDENT confirmations — the system expands its own
+  knowledge without a human. GATED ON F4 (no observed post-fix state ⇒ nothing to auto-confirm). Guardrails
+  (3 of 4 ALREADY enforced): (1) confidence RANKS but never PROMOTES past a consent/escalation gate —
+  `panel/src/lib.rs:315` escalation is independent of the judge score, destructive reasoned fix still needs
+  HumanConfirm; (2) repertoire is READ-side (generates candidates), corpus stays WRITE-side (earned truth
+  only) — a reasoned fix earns a row only through the gate, a failure is a hard negative; (3) truth needs
+  INDEPENDENT repetition + provisional parole + auto-reopen, never one confident pass; (4) TO BUILD — the
+  automated verifier that turns an F4 observation into VerifierConfirmed is a custodied authority (Q1/Q7
+  key). Leak-C10 constraint: the "uncertain/reasoned" flag is CUSTOMER-facing only, never a served-corpus
+  membership signal (the `source` label was dropped from the wire for exactly this). NEW work: the
+  repertoire store + a reasoning generator (cec-autosetep driver library = first stock); the auto-verifier;
+  a `CandidateSource::Repertoire` variant + its 0.7 prior. Everything else composes existing tiers.
+  — why deferred: owner scoping; self-learning half gated on F4 + the auto-verifier; the repertoire store is
+  net-new. Resume: `crates/common/src/candidate.rs` (CandidateSource), `crates/panel/src/lib.rs` (priors +
+  escalation), sign-off ladder `crates/corpus-client/src/schema.rs`, F4 stub `main.rs:1144`, cec-autosetep
+  `src/DriverLibrary.psm1`.

@@ -897,6 +897,16 @@ See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementati
 
 ## Handoff log (reverse-chronological)
 
+- **2026-07-08 02:50 UTC** — **Owner scoping: a repertoire/reasoned-knowledge candidate tier + autonomous learning
+  (no engine code).** Maps onto EXISTING tiers: CandidateSource ColdModel(0.6)/CorpusPrimed(0.8) gains a
+  ~0.7 \`Repertoire\` tier (reasoned from KB/cec-autosetep driver library, flagged not-corpus-authored);
+  the "learn without a human" half IS the existing VerifierConfirmed sign-off + ResolvedProvisional
+  parole + independent-confirmation counting, gated on F4 + an auto-verifier. Confirmed 3 of 4 guardrails
+  are ALREADY enforced (escalation independent of confidence — panel:315; read-side repertoire vs
+  write-side corpus; independent-repetition-before-trust). Leak-C10: the uncertain flag is customer-facing
+  only, not a served-wire membership signal. Filed to FOLLOWUPS. cec-autosetep's driver library is the
+  first stock of the repertoire — unifies with the tool-vocabulary item.
+
 - **2026-07-08 01:45 UTC** — **Owner DECIDED the identity/de-id egress boundary (RFC D4): de-identify on egress,
   release trigger = SCHEDULING a session.** Local ledger holds identity while local; booking a session is
   the release consent; de-identified history attaches to the shop ticket there. Verified the premise:
