@@ -92,9 +92,27 @@ code moves.
   `signature_of` — never hand-build a signature.
 - **Fail closed.** If re-collection cannot run (tool error, access denied),
   return `None`, not an empty/clean signature. `None` → `Unverified` → escalate.
-  An empty signature would falsely read as "fault gone" → a fabricated pass.
   This is the single most important rule: **absence of evidence is not evidence
-  of a fix.**
+  of a fix.** The engine now backs this up — `recollect_post_signature` maps a
+  `Some(vec![])` (ran but observed nothing) to `None`/Unverified, so an empty
+  return can never be scored as a pass (blind-audit finding 2026-07-08). But do
+  not rely on that: return `None` on failure explicitly.
+- **Prove coverage — re-exercise the fault, do not just look.** A `Pass`
+  requires that the re-collection actually covered the fault's domain: re-run
+  the reproducing workload (the thing that triggered the original symptoms),
+  then collect — collecting a healthy-looking snapshot from a machine that never
+  re-ran the failing path is a false pass the engine cannot detect. This is the
+  collector's contract (M2); the engine trusts that a `Some(events)` came from a
+  real, fault-covering re-observation, so the collector must make that true.
+- **Autonomous verification REQUIRES a configured verifier authority.** A store
+  with no sign-off authority (cold start) accepts a `VerifierConfirmed` row on
+  the flag alone — fine for a human operator's manual `--sign-off verifier`, but
+  for the AUTONOMOUS loop it means an unattested self-asserted resolved row.
+  **Never run autonomous verification against a no-authority store.** Provision
+  `CEC_SIGNOFF_SEED`/`CEC_SIGNOFF_PUBKEY` (the verifier key) so every
+  autonomously-resolved row is ed25519-attested by the custodied verifier, and a
+  compromised box cannot mint corpus truth. See `docs/operator-runbook.md` §1
+  and the FOLLOWUPS "autonomous verification authority" item.
 - **Intermittent faults.** `verification_class_for` already routes intermittent
   faults to `ProvisionalPass`/`ResolvedProvisional` (monitored parole,
   auto-reopen on recurrence). The collector does not decide this — it just

@@ -825,10 +825,20 @@ async fn run(args: Args) -> anyhow::Result<()> {
 
                 let signed = signer.sign(&candidate.plan);
                 human!("  plan signature: {}…", &signed.signature[..16]);
-                let execution =
-                    agent_core::execute_signed_plan(&dispatcher, &signed, &signer, granted)
-                        .await
-                        .map_err(|error| anyhow::anyhow!(error))?;
+                // No on-screen EULA acceptance is collected on this headless
+                // path, so a EULA-bearing install would fail closed (refuse).
+                // The target-side executor populates acceptances after the user
+                // accepts each license on screen (docs/eula-acceptance-playbook.md).
+                let accepted_eulas = agent_core::EulaAcceptances::none();
+                let execution = agent_core::execute_signed_plan(
+                    &dispatcher,
+                    &signed,
+                    &signer,
+                    granted,
+                    &accepted_eulas,
+                )
+                .await
+                .map_err(|error| anyhow::anyhow!(error))?;
                 for step in &execution.steps {
                     human!(
                         "  step {} [{}] {} -> {}",
@@ -1182,9 +1192,22 @@ fn post_fix_collector() -> Box<dyn PostFixCollector> {
 }
 
 /// Turn a collector's re-observation into the post-fix signature for the
-/// verification diff. `None` collector output stays `None` (→ Unverified).
+/// verification diff. Fails closed on the absence of a real observation: a
+/// collector that returns `None` (could not run) OR `Some(vec![])` (ran but
+/// observed nothing) yields `None` → `Verdict::Unverified` → escalate, NEVER a
+/// pass. This is the guard against "absence of evidence scored as evidence of a
+/// fix" (blind-audit finding 2026-07-08): an empty re-collection is
+/// indistinguishable from a failed one, so it must not be diffed as a clean
+/// machine. A genuine live re-collection always observes SOMETHING — at least
+/// benign boot/info events — so a real healed machine returns a NON-empty event
+/// set that simply carries no fault-grammar symptoms, which correctly diffs to
+/// a pass. (The deeper requirement that the collection actually re-exercised the
+/// fault domain is the collector's own contract; see the playbook.)
 fn recollect_post_signature(collector: &dyn PostFixCollector) -> Option<FaultSignature> {
-    collector.recollect().map(|events| signature_of(&events))
+    match collector.recollect() {
+        Some(events) if !events.is_empty() => Some(signature_of(&events)),
+        _ => None,
+    }
 }
 
 /// Build the fault signature from the structured symptoms of every event.
@@ -2254,6 +2277,32 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn an_empty_recollection_is_unverified_not_a_fabricated_pass() {
+        // The blind-audit guard (2026-07-08): a collector that returns
+        // Some(vec![]) — ran but observed nothing, or failed and returned an
+        // empty Some instead of None — must NOT be scored as a clean pass. An
+        // empty re-collection is indistinguishable from no re-collection, so it
+        // fails closed to Unverified → escalate, never a resolved row.
+        struct EmptyCollector;
+        impl PostFixCollector for EmptyCollector {
+            fn recollect(&self) -> Option<Vec<DiagnosticEvent>> {
+                Some(vec![])
+            }
+        }
+        let original = FaultSignature::from_symptoms(extract_symptoms("bsod 0x1234"));
+        let post = recollect_post_signature(&EmptyCollector);
+        assert!(
+            post.is_none(),
+            "an empty observation must not become a signature"
+        );
+        assert_eq!(
+            verify_outcome(&original, post.as_ref(), VerificationClass::Deterministic),
+            Verdict::Unverified,
+            "an empty re-collection escalates; it is never a fabricated pass"
+        );
+    }
+
     #[test]
     fn the_null_collector_keeps_every_outcome_unverified() {
         // The pre-seam invariant, now a property of NullCollector: no live
@@ -2534,7 +2583,13 @@ mod tests {
             dispatcher.register(tool);
         }
         let candidate = heuristic_candidate("disk is full");
-        let result = execute_plan(&dispatcher, &candidate.plan, Consent::AllowReversible).await;
+        let result = execute_plan(
+            &dispatcher,
+            &candidate.plan,
+            Consent::AllowReversible,
+            &agent_core::EulaAcceptances::none(),
+        )
+        .await;
 
         // The executor returns a per-step record for the winning plan. On
         // non-Windows hosts the Windows tools report "unsupported", so execution
