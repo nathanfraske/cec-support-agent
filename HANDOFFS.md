@@ -897,6 +897,18 @@ See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementati
 
 ## Handoff log (reverse-chronological)
 
+- **2026-07-08 01:39 UTC** — **cec-autosetep added to session + 2 more scoping items (no engine code).** Owner shared
+  \`nathanfraske/cec-autosetep\` (Apache-2.0 PowerShell driver-automation toolkit; cloned to
+  /workspace/cec-autosetep, registered). It is the engine's HANDS + EYES: Install-DriverPackage returns a
+  Status/Method/Detail result == StepResult (with -WhatIf dry-run + hash verify); Detect-Hardware/Gpu/
+  Peripherals = the F4 collector + config_class enrichment; Serve-DriverLibrary = a shop library-server
+  precedent. Answered the reinstall-durable troubleshooting-ledger question: YES — a per-machine
+  hardware-keyed tamper-evident LOCAL ledger (corpus data shape at a local privacy tier; re-attaches via
+  config_class-on-hardware + baseboard serial across a wipe; integrity via the existing chain + the Q5
+  anchor). **Unified 4 scoping items under ONE owner decision:** where the identity/de-id line falls when
+  data leaves the customer box (PromptPayload-strict, shop-server residency, ledger backup, brain
+  ephemerality all follow from it). All filed in FOLLOWUPS. cec-autosetep CLAUDE.md loads next turn.
+
 - **2026-07-08 01:35 UTC** — **Owner scoping (no code): shop-server identity tier + interactive customer-driven
   multi-fix.** Confirmed both fit the design; filed 2 FOLLOWUPS. Key findings verified against `main`:
   the serve path NEVER persists raw `describe` (transient for signature-derivation + inference, then
