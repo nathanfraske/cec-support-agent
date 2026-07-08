@@ -55,7 +55,9 @@ use common::{
     Candidate, CandidateSource, CoarseHostInventory, ConfigClass, ExternalInventory,
     FaultSignature, InventoryProvider, Risk,
 };
-use corpus_client::{CorpusStore, FileCorpus, LocalCorpus, OutcomeLabel, RowProvenance, SignOff};
+use corpus_client::{
+    CorpusStore, FileCorpus, LocalCorpus, OutcomeLabel, RetirementReason, RowProvenance, SignOff,
+};
 use intake::{Interview, Reproducibility};
 use panel::{best_of_n, required_escalation, route_for, Escalation, HeuristicJudge, Judge, Route};
 use provenance::SigningKey;
@@ -159,6 +161,13 @@ pub(crate) fn wire_label(label: &OutcomeLabel) -> String {
         }
         OutcomeLabel::EscalatedHumanUnresolved => "escalated_human_unresolved".into(),
         OutcomeLabel::Withdrawn => "withdrawn".into(),
+        OutcomeLabel::Retired { reason } => match reason {
+            RetirementReason::Deprecated => "retired:deprecated".into(),
+            RetirementReason::SupersededBy { successor } => {
+                format!("retired:superseded_by:{}", successor.as_str())
+            }
+            RetirementReason::ProvenHarmful => "retired:proven_harmful".into(),
+        },
     }
 }
 

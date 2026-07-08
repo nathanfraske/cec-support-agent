@@ -8,7 +8,7 @@ use thiserror::Error;
 use crate::gate::{ensure_attested, ensure_evidence_integrity, GateError};
 use crate::schema::{
     attestation_message, chain_hash, de_identify_plan, Contribution, FixMapping, MappingKind,
-    OutcomeLabel, RowIntegrity,
+    OutcomeLabel, RetirementCandidate, RowIntegrity,
 };
 use crate::stored::{StoredPlan, StoredSignature, StoredSymptom};
 
@@ -132,6 +132,12 @@ fn fix_mappings(
 
     let mut order: Vec<String> = Vec::new();
     let mut accs: HashMap<String, Acc> = HashMap::new();
+    // Plans RETIRED for this exact (signature, config class): a signed `Retired`
+    // row deprecates the mapping, so the plan is offered in NEITHER kind here —
+    // the attested, auditable evolution of the `revoked` primitive. Retirement is
+    // mapping-scoped: rows are already filtered to this signature+class above, so
+    // a `Retired` row only retires the plan for the mapping it names.
+    let mut retired: HashSet<String> = HashSet::new();
 
     for row in rows {
         if row.outcome.signature.fingerprint != signature.fingerprint
@@ -148,6 +154,10 @@ fn fix_mappings(
             Partial(Vec<StoredSymptom>),
         }
         let feed = match &row.outcome.label {
+            l if l.is_retirement() => {
+                retired.insert(plan_id);
+                continue;
+            }
             l if l.is_resolved() => Feed::FullConfirm,
             OutcomeLabel::Reopened => Feed::FullReopen,
             OutcomeLabel::ResolvedPartial => {
@@ -213,8 +223,10 @@ fn fix_mappings(
         .iter()
         .filter_map(|map_key| {
             let acc = &accs[map_key];
-            if revoked.contains(&acc.plan_id) {
-                return None; // owner-revoked: never offered as a fix (full or partial)
+            if revoked.contains(&acc.plan_id) || retired.contains(&acc.plan_id) {
+                // owner-revoked (manual) OR retired (attested, this sig+class):
+                // never offered as a fix, in either kind.
+                return None;
             }
             // Each DISTINCT reopen run cancels one independent confirmation;
             // circular (self-primed) rows never counted on either side.
@@ -225,6 +237,95 @@ fn fix_mappings(
                 plan: acc.plan.clone(),
                 confirmations,
                 kind: acc.kind.clone(),
+            })
+        })
+        .collect()
+}
+
+/// Propose retirement CANDIDATES from the corpus rows for a config class — the
+/// read-only "evidence proposes" half of retirement. A mapping is flagged when it
+/// was once a confirmed fix (≥1 independent confirmation) but has since been
+/// `Reopened` at least as many independent times — i.e. its net support has
+/// evaporated, so it looks deprecated at this config class. Computing this
+/// changes NOTHING: a human reviews the candidates and, if they agree, enacts a
+/// retirement with a signed `Retired` row (which the gate requires be human).
+///
+/// A mapping already retired (a `Retired` row present) or owner-`revoked` is not
+/// re-proposed. Grouped by (fault signature, plan), so a proposal is
+/// mapping-scoped, exactly like an enacted retirement.
+fn compute_retirement_candidates(
+    rows: &[Contribution],
+    config_class: &ConfigClass,
+    revoked: &HashSet<String>,
+) -> Vec<RetirementCandidate> {
+    use std::collections::HashMap;
+
+    struct Acc {
+        signature: StoredSignature,
+        plan: StoredPlan,
+        contributors: HashSet<String>,
+        reopens: HashSet<String>,
+        retired: bool,
+    }
+
+    let mut order: Vec<(String, String)> = Vec::new();
+    let mut accs: HashMap<(String, String), Acc> = HashMap::new();
+
+    for row in rows {
+        if row.config_class != *config_class {
+            continue;
+        }
+        let plan_id = row.outcome.plan.id().to_string();
+        let retirement = row.outcome.label.is_retirement();
+        let resolved = row.outcome.label.is_resolved();
+        let reopened = matches!(row.outcome.label, OutcomeLabel::Reopened);
+        if !retirement && !resolved && !reopened {
+            continue;
+        }
+        let key = (row.outcome.signature.fingerprint.clone(), plan_id.clone());
+        let acc = accs.entry(key.clone()).or_insert_with(|| {
+            order.push(key.clone());
+            Acc {
+                signature: row.outcome.signature.clone(),
+                plan: row.outcome.plan.clone(),
+                contributors: HashSet::new(),
+                reopens: HashSet::new(),
+                retired: false,
+            }
+        });
+        if retirement {
+            acc.retired = true;
+            continue;
+        }
+        if let Some(ck) = confirmation_key(row, &plan_id) {
+            if resolved {
+                acc.contributors.insert(ck);
+            } else {
+                acc.reopens.insert(ck);
+            }
+        }
+    }
+
+    order
+        .iter()
+        .filter_map(|key| {
+            let acc = &accs[key];
+            let plan_id = &key.1;
+            if acc.retired || revoked.contains(plan_id) {
+                return None; // already retired or owner-revoked: nothing to propose
+            }
+            let confirmations = acc.contributors.len() as u32;
+            let reopens = acc.reopens.len() as u32;
+            // Was a proven fix, now cancelled out (reopens ≥ confirmations).
+            (confirmations > 0 && reopens >= confirmations).then(|| RetirementCandidate {
+                signature: acc.signature.clone(),
+                plan: acc.plan.clone(),
+                confirmations,
+                reopens,
+                rationale: format!(
+                    "was a confirmed fix ({confirmations} independent confirmation(s)) but has \
+                     since reopened {reopens} time(s) at this config class — no net support remains"
+                ),
             })
         })
         .collect()
@@ -322,6 +423,15 @@ impl LocalCorpus {
     /// Whether the corpus holds no rows (true at cold start).
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// Propose retirement candidates for a config class (read-only — see
+    /// [`compute_retirement_candidates`]). Surfaces mappings whose net support has
+    /// evaporated for a human to review; enacting a retirement still takes a
+    /// human-signed `Retired` row.
+    pub fn retirement_candidates(&self, config_class: &ConfigClass) -> Vec<RetirementCandidate> {
+        let guard = self.rows.lock().expect("corpus mutex poisoned");
+        compute_retirement_candidates(&guard, config_class, &self.revoked)
     }
 }
 
@@ -462,6 +572,15 @@ impl FileCorpus {
     /// Whether the corpus holds no rows.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// Propose retirement candidates for a config class (read-only — see
+    /// [`compute_retirement_candidates`]). Surfaces mappings whose net support has
+    /// evaporated for a human to review; enacting a retirement still takes a
+    /// human-signed `Retired` row.
+    pub fn retirement_candidates(&self, config_class: &ConfigClass) -> Vec<RetirementCandidate> {
+        let guard = self.rows.lock().expect("corpus mutex poisoned");
+        compute_retirement_candidates(&guard, config_class, &self.revoked)
     }
 }
 
@@ -626,7 +745,8 @@ impl CorpusStore for HttpCorpus {
 mod tests {
     use super::*;
     use crate::schema::{
-        chain_hash, Outcome, OutcomeLabel, RowIntegrity, RowProvenance, SignOff, SignOffAttestation,
+        chain_hash, Outcome, OutcomeLabel, RetirementReason, RowIntegrity, RowProvenance, SignOff,
+        SignOffAttestation,
     };
     use crate::stored::{StoredAction, StoredPlanId, StoredStep, StoredSymptom};
     use common::{
@@ -858,6 +978,185 @@ mod tests {
             .await
             .unwrap();
         assert!(hits.is_empty(), "a revoked plan offers no partial mapping");
+    }
+
+    // --- Workflow retirement: a gated, attested, mapping-scoped deprecation -----
+
+    /// A human-signed `Retired` row for plan `p1` at `signature` + `config_class`.
+    fn retire(signature: &FaultSignature, reason: RetirementReason) -> Contribution {
+        Contribution::new(
+            Outcome {
+                signature: signature.clone(),
+                plan: Plan::new("p1", "restart service"),
+                label: OutcomeLabel::Retired { reason },
+                verification: None,
+            },
+            config_class(),
+            SignOff::HumanConfirmed,
+        )
+        .expect("de-identifies")
+    }
+
+    #[tokio::test]
+    async fn a_retired_mapping_is_no_longer_offered() {
+        // Red-on-revert: p1 resolves this signature (offered), then a human-signed
+        // retirement deprecates the mapping → it is no longer offered, though the
+        // resolved row and the retirement BOTH stay on the tamper-evident chain.
+        let corpus = LocalCorpus::new();
+        let resolved = contribution(OutcomeLabel::ResolvedConfirmed, SignOff::HumanConfirmed);
+        let signature = resolved.outcome.signature.to_signature();
+        corpus.submit(&resolved).await.unwrap();
+        assert_eq!(
+            corpus
+                .query(&signature, &config_class())
+                .await
+                .unwrap()
+                .len(),
+            1,
+            "offered before retirement"
+        );
+
+        corpus
+            .submit(&retire(&signature, RetirementReason::Deprecated))
+            .await
+            .expect("a human-signed retirement is admitted");
+        assert_eq!(
+            corpus.len(),
+            2,
+            "both rows stay on the chain (nothing deleted)"
+        );
+        assert!(
+            corpus
+                .query(&signature, &config_class())
+                .await
+                .unwrap()
+                .is_empty(),
+            "a retired mapping is no longer offered"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_verifier_cannot_enact_a_retirement() {
+        // The store gate enforces human-only retirement end to end (not just the
+        // pure gate fn): a verifier-signed retirement never reaches the corpus.
+        let corpus = LocalCorpus::new();
+        let signature = FaultSignature::from_symptoms(vec![Symptom("event_41".into())]);
+        let verifier_retire = Contribution::new(
+            Outcome {
+                signature,
+                plan: Plan::new("p1", "restart service"),
+                label: OutcomeLabel::Retired {
+                    reason: RetirementReason::Deprecated,
+                },
+                verification: None,
+            },
+            config_class(),
+            SignOff::VerifierConfirmed,
+        )
+        .expect("de-identifies");
+        let error = corpus
+            .submit(&verifier_retire)
+            .await
+            .expect_err("a verifier retirement is refused");
+        assert!(matches!(
+            error,
+            CorpusError::Gate(GateError::RetirementNeedsHuman)
+        ));
+        assert!(corpus.is_empty(), "the refused retirement is not stored");
+    }
+
+    #[tokio::test]
+    async fn retirement_is_scoped_to_the_signature_it_names() {
+        // p1 resolves TWO signatures at the same config class; retiring it for one
+        // must not touch the other — retirement is mapping-scoped, not global.
+        let corpus = LocalCorpus::new();
+        let sig_a = FaultSignature::from_symptoms(vec![Symptom("event_41".into())]);
+        let sig_b = FaultSignature::from_symptoms(vec![Symptom("0x1234".into())]);
+        for (sig, run) in [(&sig_a, "run-a"), (&sig_b, "run-b")] {
+            let row = Contribution::new(
+                Outcome {
+                    signature: sig.clone(),
+                    plan: Plan::new("p1", "restart service"),
+                    label: OutcomeLabel::ResolvedConfirmed,
+                    verification: Some(Verification::pass()),
+                },
+                config_class(),
+                SignOff::HumanConfirmed,
+            )
+            .expect("de-identifies")
+            .with_provenance(provenance(run, false, &[]));
+            corpus.submit(&row).await.unwrap();
+        }
+        // Retire p1 for sig_a only.
+        corpus
+            .submit(&retire(&sig_a, RetirementReason::ProvenHarmful))
+            .await
+            .unwrap();
+        assert!(
+            corpus
+                .query(&sig_a, &config_class())
+                .await
+                .unwrap()
+                .is_empty(),
+            "retired for the signature it names"
+        );
+        assert_eq!(
+            corpus.query(&sig_b, &config_class()).await.unwrap().len(),
+            1,
+            "still offered for the signature it does NOT name"
+        );
+    }
+
+    #[tokio::test]
+    async fn evidence_proposes_a_retirement_candidate_but_does_not_enact_it() {
+        // A mapping that was a confirmed fix but has since reopened as many
+        // independent times is surfaced as a retirement CANDIDATE — read-only, it
+        // does not retire anything. (The mapping also drops from `query` on its
+        // own once net support hits zero; retirement is the human's explicit,
+        // recorded act on top of that signal.)
+        let corpus = LocalCorpus::new();
+        let signature = FaultSignature::from_symptoms(vec![Symptom("event_41".into())]);
+        let row = |label: OutcomeLabel, run: &str| {
+            let verification = verification_for(&label);
+            Contribution::new(
+                Outcome {
+                    signature: signature.clone(),
+                    plan: Plan::new("p1", "restart service"),
+                    label,
+                    verification,
+                },
+                config_class(),
+                SignOff::HumanConfirmed,
+            )
+            .expect("de-identifies")
+            .with_provenance(provenance(run, false, &[]))
+        };
+        // One confirmation, then one independent reopen → net zero.
+        corpus
+            .submit(&row(OutcomeLabel::ResolvedConfirmed, "run-fix"))
+            .await
+            .unwrap();
+        corpus
+            .submit(&row(OutcomeLabel::Reopened, "run-reopen"))
+            .await
+            .unwrap();
+
+        let candidates = corpus.retirement_candidates(&config_class());
+        assert_eq!(candidates.len(), 1, "the flipped mapping is proposed");
+        assert_eq!(candidates[0].confirmations, 1);
+        assert_eq!(candidates[0].reopens, 1);
+        // Proposing changed nothing: no Retired row was written.
+        assert_eq!(corpus.len(), 2, "proposal is read-only — no row added");
+
+        // Once a human enacts it, it is no longer proposed (already retired).
+        corpus
+            .submit(&retire(&signature, RetirementReason::Deprecated))
+            .await
+            .unwrap();
+        assert!(
+            corpus.retirement_candidates(&config_class()).is_empty(),
+            "an already-retired mapping is not re-proposed"
+        );
     }
 
     #[tokio::test]

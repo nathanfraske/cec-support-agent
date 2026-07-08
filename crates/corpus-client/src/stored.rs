@@ -106,7 +106,7 @@ impl From<&str> for StoredAction {
 /// or at-rest id must be a clean bounded slug ([`deid::plan_id`]), so a
 /// path/host/email string that a server or hand-edited file routed into the id
 /// fails to *deserialize*.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String")]
 pub struct StoredPlanId(pub(crate) String);
 

@@ -79,6 +79,12 @@ pub enum GateError {
     /// regression claim and the evidence disagree.
     #[error("refused: the regression label does not match the verification verdict")]
     RegressionLabelMismatch,
+    /// A `Retired` row carries less than human sign-off. Retirement removes a
+    /// proven fix from what the corpus offers — it is heavily gated: a verifier
+    /// may never autonomously retire a workflow, only a human may. (Evidence can
+    /// PROPOSE a retirement; only a human-signed row ENACTS one.)
+    #[error("refused: a retirement requires human sign-off")]
+    RetirementNeedsHuman,
 }
 
 /// The evidence-integrity gate: the single checkpoint that admits a row into the
@@ -211,6 +217,17 @@ pub fn ensure_evidence_integrity(contribution: &Contribution) -> Result<(), Gate
         return Err(GateError::DestructiveFixNeedsHuman);
     }
 
+    // (4) A RETIREMENT is heavily gated: it removes a proven fix from what the
+    // corpus offers, so only a HUMAN may enact one — a verifier sign-off (the
+    // autonomous rung) can never retire a workflow. Evidence may PROPOSE a
+    // retirement (computed read-only), but enacting it takes a human-signed row.
+    // Enforced here, not only at a CLI, so an embedder cannot mint a retirement
+    // with a verifier sign-off; the attestation check (`ensure_attested`) then
+    // binds the signed reason cryptographically when an authority is configured.
+    if outcome.label.is_retirement() && contribution.sign_off != SignOff::HumanConfirmed {
+        return Err(GateError::RetirementNeedsHuman);
+    }
+
     Ok(())
 }
 
@@ -247,7 +264,7 @@ pub fn ensure_attested(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::{Contribution, Outcome, RowProvenance};
+    use crate::schema::{Contribution, Outcome, RetirementReason, RowProvenance};
     use common::{ConfigClass, FaultSignature, Plan, PlanStep, Symptom, Verification};
 
     fn config_class() -> ConfigClass {
@@ -483,6 +500,43 @@ mod tests {
             ensure_evidence_integrity(&no_remainder),
             Err(GateError::PartialWithoutBenefit)
         );
+    }
+
+    #[test]
+    fn a_retirement_requires_human_sign_off() {
+        // A retirement removes a proven fix from what the corpus offers, so a
+        // verifier (the autonomous rung) may never enact one — only a human.
+        for reason in [
+            RetirementReason::Deprecated,
+            RetirementReason::ProvenHarmful,
+            RetirementReason::SupersededBy {
+                successor: "heuristic-2".to_string().try_into().unwrap(),
+            },
+        ] {
+            let verifier = contribution(
+                OutcomeLabel::Retired {
+                    reason: reason.clone(),
+                },
+                SignOff::VerifierConfirmed,
+                Risk::Reversible,
+                None,
+            );
+            assert_eq!(
+                ensure_evidence_integrity(&verifier),
+                Err(GateError::RetirementNeedsHuman),
+                "a verifier must not be able to retire ({reason:?})"
+            );
+            let human = contribution(
+                OutcomeLabel::Retired { reason },
+                SignOff::HumanConfirmed,
+                Risk::Reversible,
+                None,
+            );
+            assert!(
+                ensure_evidence_integrity(&human).is_ok(),
+                "a human-signed retirement is admitted"
+            );
+        }
     }
 
     #[test]

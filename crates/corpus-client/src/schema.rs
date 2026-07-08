@@ -76,6 +76,42 @@ pub enum OutcomeLabel {
     EscalatedHumanUnresolved,
     /// The customer withdrew the ticket.
     Withdrawn,
+    /// A gated RETIREMENT of a mapping: this plan, for the row's fault signature
+    /// at the row's config class, is deprecated and must no longer be OFFERED as
+    /// a fix. It is NOT a run outcome and NOT beneficial — it is a lifecycle
+    /// action recorded as its own appended, attested, chained row (so the fact
+    /// that the plan once resolved this signature stays on the tamper-evident
+    /// chain forever; retirement hides the mapping from retrieval, it does not
+    /// erase truth). Heavily gated: a `Retired` row requires HUMAN sign-off (a
+    /// verifier may not autonomously retire a fix) — enforced at the gate. The
+    /// evidence that *proposes* a retirement is computed read-only; only a signed
+    /// `Retired` row enacts one.
+    Retired {
+        /// Why the mapping is retired — bound into the attestation (via
+        /// [`label_tag`]) so a forger cannot swap the reason or the successor.
+        reason: RetirementReason,
+    },
+}
+
+/// Why a mapping was retired. Bound into the row's attestation, so the reason (and
+/// any named successor) is tamper-evident.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "reason")]
+pub enum RetirementReason {
+    /// Deprecated at this config class — no longer the right approach, with no
+    /// specific replacement named.
+    Deprecated,
+    /// Superseded by a specific successor workflow at this config class. The
+    /// successor is a de-identified plan id (a bounded slug — validating
+    /// deserialize via [`StoredPlanId`]), so retrieval can prefer it (future) and
+    /// the supersession link is auditable.
+    SupersededBy {
+        /// The successor plan's de-identified id.
+        successor: StoredPlanId,
+    },
+    /// Now known to cause harm at this config class (e.g. a config transition
+    /// turned a once-safe fix damaging). The strongest reason to stop offering it.
+    ProvenHarmful,
 }
 
 impl OutcomeLabel {
@@ -92,9 +128,17 @@ impl OutcomeLabel {
     /// Whether this label recorded a proven benefit — a full resolution OR a
     /// partial one. A `ResolvedPartial` is beneficial without being resolved: it
     /// earns a corpus precedent (keyed on the symptoms it cleared) but does not
-    /// close the ticket. Every resolved label is also beneficial.
+    /// close the ticket. Every resolved label is also beneficial. A `Retired`
+    /// row is neither resolved nor beneficial — it is a lifecycle action.
     pub fn is_beneficial(&self) -> bool {
         self.is_resolved() || matches!(self, OutcomeLabel::ResolvedPartial)
+    }
+
+    /// Whether this label RETIRES a mapping (a gated lifecycle action, not a run
+    /// outcome). A retirement filters the plan from offered mappings at the row's
+    /// signature + config class.
+    pub fn is_retirement(&self) -> bool {
+        matches!(self, OutcomeLabel::Retired { .. })
     }
 }
 
@@ -129,6 +173,26 @@ impl MappingKind {
     pub fn is_full(&self) -> bool {
         matches!(self, MappingKind::Full)
     }
+}
+
+/// A PROPOSED retirement: a mapping that evidence suggests is no longer useful,
+/// surfaced for a human to review and (if they agree) enact with a signed
+/// `Retired` row. This is the read-only "evidence proposes" half of retirement —
+/// computing it changes nothing; only a human-signed row enacts a retirement.
+///
+/// Carries de-identified payload types, like [`FixMapping`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RetirementCandidate {
+    /// The fault signature whose mapping is proposed for retirement.
+    pub signature: StoredSignature,
+    /// The de-identified plan proposed for retirement.
+    pub plan: StoredPlan,
+    /// Independent confirmations this mapping once earned.
+    pub confirmations: u32,
+    /// Distinct reopen events since — the evidence it has stopped working.
+    pub reopens: u32,
+    /// A plain-language reason the mapping was flagged, for the human reviewer.
+    pub rationale: String,
 }
 
 /// A fault-signature → plan mapping retrieved from the corpus.
@@ -709,6 +773,13 @@ fn label_tag(label: &OutcomeLabel) -> String {
         }
         OutcomeLabel::EscalatedHumanUnresolved => "escalated_human_unresolved".into(),
         OutcomeLabel::Withdrawn => "withdrawn".into(),
+        OutcomeLabel::Retired { reason } => match reason {
+            RetirementReason::Deprecated => "retired:deprecated".into(),
+            RetirementReason::SupersededBy { successor } => {
+                format!("retired:superseded_by:{}", successor.as_str())
+            }
+            RetirementReason::ProvenHarmful => "retired:proven_harmful".into(),
+        },
     }
 }
 

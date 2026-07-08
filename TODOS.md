@@ -470,7 +470,12 @@ _(completed items stay above, in place, with their `· done` tombstone)_
   rtx-5070→rtx-5080 reads within-family). NOT a symptom token (kept a separate typed concept, not forced
   into the closed de-id grammar). 271 tests green (+7), clippy clean. Corpus-keying + config ledger deferred
   (FOLLOWUPS).
-- [ ] [added 2026-07-08 05:40 UTC] Ask owner: retirement gating posture (Q-retire) + formatting page surface (Q-page).
-- [ ] [added 2026-07-08 05:40 UTC] **Workflow retirement** (pending Q-retire; §7 blind audit — new corpus-mutation gate).
+- [x] [added 2026-07-08 05:40 UTC · done 2026-07-08 06:15 UTC] Ask owner: retirement gating + page surface + intent check → answered **#1 (recommended) on all three**: propose-but-human-enacts retirement; web page + engine normalizer; structural read-back + confirm.
+- [x] [added 2026-07-08 05:40 UTC · done 2026-07-08 06:30 UTC] **Workflow retirement** — `OutcomeLabel::Retired{reason}` on a
+  Contribution (reuses de-id + attestation + hash chain; never deletes); `RetirementReason::{Deprecated,
+  SupersededBy{successor}, ProvenHarmful}` bound into the attestation via label_tag; gate requires HUMAN
+  sign-off (`RetirementNeedsHuman`); `fix_mappings` filters a retired plan (both kinds) mapping-scoped;
+  `compute_retirement_candidates` proposes (read-only). 276 tests green (+5), clippy clean, red-on-revert
+  proven. §7 blind audit next.
 - [ ] [added 2026-07-08 05:40 UTC] **Corpus query service** (separate authenticated read API; §7 blind audit — new egress).
 - [ ] [added 2026-07-08 05:40 UTC] **Formatting/intent page** (pending Q-page).

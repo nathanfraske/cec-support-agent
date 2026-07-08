@@ -1022,6 +1022,11 @@ fn explain_label(label: &OutcomeLabel) -> &'static str {
             "You declined, so nothing was changed on the computer and the case is \
              closed."
         }
+        OutcomeLabel::Retired { .. } => {
+            "This is a maintenance record, not a repair result: a workflow that used to \
+             be offered for this situation has been retired by a person, so it will no \
+             longer be suggested here."
+        }
     }
 }
 

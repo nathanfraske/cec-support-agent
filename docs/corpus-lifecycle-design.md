@@ -122,20 +122,33 @@ are found is still a nice to have."*
   can be *linked* as the successor (`SupersededBy`), so retrieval prefers the
   successor while the retired one stays on record.
 
-**THE DECISION (Q-retire):** may the system *autonomously propose* a retirement
-candidate (evidence — sustained independent failures / `Reopened` events at a
-config class — flags "this looks deprecated", a human confirms), or is retirement
-**human-initiated only** (no autonomous proposal at all)? Recommendation:
-**propose-but-never-enact** — evidence surfaces a candidate, a human always
-enacts. This gives the "adapt over time" nice-to-have without ever letting the
-machine remove a fix on its own.
+**DECISION (Q-retire) — RESOLVED by owner: propose-but-never-enact.** Evidence
+surfaces a candidate; a human always enacts. Adapts over time without ever letting
+the machine remove a fix on its own.
 
-Mechanism either way: `RetirementRecord { plan_id, config_class, reason,
-superseded_by? }`, gated (`ensure_evidence_integrity` extended: a retirement needs
-HumanConfirmed + attestation), chained like any row, and folded into
-`fix_mappings` (a plan retired for a class is filtered exactly where `revoked` is
-today — so retirement is the attested, auditable evolution of the `revoked`
-primitive).
+**BUILT (this arc):**
+- Enactment is `OutcomeLabel::Retired { reason: RetirementReason }` on a normal
+  `Contribution` — so it reuses the WHOLE machinery: de-id, the ed25519
+  attestation, and the v2 hash chain. A retirement is therefore appended and
+  chained (never deletes), and its reason is bound into the attestation via
+  `label_tag` (a forger cannot swap `deprecated` for `superseded_by:X`, nor change
+  the successor). `RetirementReason::{Deprecated, SupersededBy{successor}, ProvenHarmful}`;
+  the successor is a `StoredPlanId` (validating deserialize).
+- The gate requires HUMAN sign-off for a `Retired` row (`RetirementNeedsHuman`) —
+  a verifier can never autonomously retire. Enforced in `ensure_evidence_integrity`,
+  end-to-end through `submit`.
+- `fix_mappings` folds retirement: a `Retired` row filters its plan from offered
+  mappings (BOTH full and partial) for exactly the (signature, config class) it
+  names — mapping-scoped, the attested evolution of the `revoked` primitive.
+- Proposal is `compute_retirement_candidates` (read-only): a mapping that was a
+  confirmed fix but has since reopened ≥ as many independent times is surfaced as
+  a `RetirementCandidate` for a human. Computing it changes nothing.
+- Red-on-revert proven for the retirement filter; a §7 blind audit covers the new
+  gate + attestation binding.
+
+**DEFERRED (FOLLOWUPS):** retrieval PREFERRING a named successor (`SupersededBy`)
+over the retired plan (today the retired plan is simply filtered); richer proposal
+heuristics (recency windows, cross-signature signals).
 
 ## 5. Corpus-entry formatting / intent page  ·  *DECISION NEEDED — surface*
 
