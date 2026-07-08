@@ -478,4 +478,14 @@ _(completed items stay above, in place, with their `· done` tombstone)_
   `compute_retirement_candidates` proposes (read-only). 276 tests green (+5), clippy clean, red-on-revert
   proven. §7 blind audit next.
 - [ ] [added 2026-07-08 05:40 UTC] **Corpus query service** (separate authenticated read API; §7 blind audit — new egress).
-- [ ] [added 2026-07-08 05:40 UTC] **Formatting/intent page** (pending Q-page).
+- [x] [added 2026-07-08 05:40 UTC · done 2026-07-08 06:55 UTC] **Formatting/intent page — engine normalizer core**
+  (`corpus_client::authoring`): `normalize_workflow` maps authored steps to the frozen ACTION_VOCABULARY
+  (Clean/Normalized/Unmapped+suggestions), flags unregistered actions (the DDU-not-implemented gap) instead
+  of dropping them, and a structural read-back states the corpus stores only the canonical action sequence.
+  `is_clean()`/`to_plan()` gate submission. 282 tests green (+6), clippy clean.
+- [x] [added 2026-07-08 06:45 UTC · done 2026-07-08 06:55 UTC] Retirement blind audit (opus, packet-only): inv
+  1–6,8 hold no defect; one real low-sev hole H1 (Retired must carry no verdict) — FIXED
+  (`RetirementCarriesVerdict` gate arm + test). M2/M5 noted (defense-in-depth, not defects).
+- [ ] [added 2026-07-08 06:55 UTC] **Formatting page — web surface** (rendered HTML, thin client over the normalizer).
+- [ ] [added 2026-07-08 05:40 UTC] **Corpus query service** (separate authenticated read API; §7 blind audit — new egress) — DEFERRED to a focused turn.
+- [ ] [added 2026-07-08 06:55 UTC] Research: vetted tooling-primitive sources (cost-tiered research workflow).

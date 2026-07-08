@@ -179,14 +179,28 @@ the write-side complement to the authoring guide.
 4. **Confirm** — only an explicitly confirmed, unambiguous entry is eligible to
    enter the gated submit path.
 
-**THE DECISION (Q-page):** what is the "page"? (a) a **rendered web page**
-(Artifact/HTML) staff use directly, backed by an engine normalization capability;
-(b) a **CLI tool** in the engine (normalize + read-back + confirm in the
-terminal); (c) an **API endpoint only** (normalization + verification over the
-authenticated API, the front-end built separately). Recommendation: **(a)** — the
-audience is shop staff, "page" was the ask, and the read-back/confirm loop is
-inherently visual; the engine still owns the normalization so the page is a thin
-client over a tested core.
+**DECISION (Q-page) — RESOLVED by owner: web page + engine normalizer, with a
+structural read-back (no model dependency).**
+
+**BUILT (this arc) — the engine normalizer core** (`corpus_client::authoring`):
+- `AuthoredWorkflow`/`AuthoredStep` (shop free text) → `normalize_workflow` →
+  `NormalizationReport`: each step's action resolves against the frozen
+  `ACTION_VOCABULARY` as `Clean` / `Normalized{authored→action}` (case/space) /
+  `Unmapped{suggestions}`. Nothing is silently dropped — an unregistered action
+  (e.g. `display_driver_uninstaller`, no tool yet) is FLAGGED, surfacing the
+  missing-tool gap.
+- The read-back (`readback_lines`) states plainly that the corpus stores ONLY the
+  canonical action sequence (descriptions are advisory, stripped at the de-id
+  boundary), so the author confirms the SEQUENCE — the honest "no ambiguity" check.
+- `is_clean()` gates submission; `to_plan()` yields a corpus-admissible `Plan` only
+  when every step resolved and the id is a clean slug. The normalizer is a preview
+  aid — the gate re-mints and re-validates on submit, so it is not the trust
+  boundary.
+
+**REMAINING (next): the web page surface** — a rendered HTML page (staff paste a
+workflow → see the read-back → confirm), a thin client over this tested core.
+Deterministic structural check only; the optional LLM-assisted semantic diff was
+NOT selected.
 
 ---
 

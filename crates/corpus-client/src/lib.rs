@@ -22,11 +22,16 @@
 //! whole path and asserts zero leakage into the serialized row — a scrubbing
 //! pass that is never adversarially tested is a scrubbing pass that leaks.
 
+mod authoring;
 mod gate;
 mod schema;
 mod store;
 mod stored;
 
+pub use authoring::{
+    normalize_workflow, AuthoredStep, AuthoredWorkflow, NormalizationReport, StepReadback,
+    StepResolution,
+};
 pub use gate::{ensure_attested, ensure_evidence_integrity, ensure_signed_off, GateError};
 pub use schema::{
     de_identify_plan, Contribution, FixMapping, MappingKind, Outcome, OutcomeLabel,

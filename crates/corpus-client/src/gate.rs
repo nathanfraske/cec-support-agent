@@ -85,6 +85,11 @@ pub enum GateError {
     /// PROPOSE a retirement; only a human-signed row ENACTS one.)
     #[error("refused: a retirement requires human sign-off")]
     RetirementNeedsHuman,
+    /// A `Retired` row carries a verification verdict. A retirement is a lifecycle
+    /// action, not a run outcome, so it must carry none — a stray verdict is
+    /// refused rather than chained.
+    #[error("refused: a retirement must not carry a verification verdict")]
+    RetirementCarriesVerdict,
 }
 
 /// The evidence-integrity gate: the single checkpoint that admits a row into the
@@ -224,8 +229,17 @@ pub fn ensure_evidence_integrity(contribution: &Contribution) -> Result<(), Gate
     // Enforced here, not only at a CLI, so an embedder cannot mint a retirement
     // with a verifier sign-off; the attestation check (`ensure_attested`) then
     // binds the signed reason cryptographically when an authority is configured.
-    if outcome.label.is_retirement() && contribution.sign_off != SignOff::HumanConfirmed {
-        return Err(GateError::RetirementNeedsHuman);
+    // A retirement is NOT a run outcome, so it must carry no verification verdict —
+    // enforced explicitly (rather than trusted) so a `Retired` row cannot smuggle a
+    // stray verdict onto the chain, symmetric with the resolved/partial/regressed
+    // arms above.
+    if outcome.label.is_retirement() {
+        if contribution.sign_off != SignOff::HumanConfirmed {
+            return Err(GateError::RetirementNeedsHuman);
+        }
+        if outcome.verification.is_some() {
+            return Err(GateError::RetirementCarriesVerdict);
+        }
     }
 
     Ok(())
@@ -527,7 +541,9 @@ mod tests {
                 "a verifier must not be able to retire ({reason:?})"
             );
             let human = contribution(
-                OutcomeLabel::Retired { reason },
+                OutcomeLabel::Retired {
+                    reason: reason.clone(),
+                },
                 SignOff::HumanConfirmed,
                 Risk::Reversible,
                 None,
@@ -535,6 +551,20 @@ mod tests {
             assert!(
                 ensure_evidence_integrity(&human).is_ok(),
                 "a human-signed retirement is admitted"
+            );
+
+            // A retirement is not a run outcome: a stray verdict is refused, not
+            // chained (the substrate `verification: None` property, enforced).
+            let with_verdict = contribution(
+                OutcomeLabel::Retired { reason },
+                SignOff::HumanConfirmed,
+                Risk::Reversible,
+                Some(Verification::pass()),
+            );
+            assert_eq!(
+                ensure_evidence_integrity(&with_verdict),
+                Err(GateError::RetirementCarriesVerdict),
+                "a retirement carrying a verdict is refused"
             );
         }
     }
