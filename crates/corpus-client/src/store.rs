@@ -597,6 +597,71 @@ mod tests {
         .expect("test contribution de-identifies")
     }
 
+    // --- Partial resolution: a beneficial-but-incomplete outcome -------------
+
+    #[tokio::test]
+    async fn a_partial_resolution_with_cleared_evidence_is_admitted_as_beneficial() {
+        // A fix that cleared SOME original symptoms (a proven benefit) but left
+        // others is admitted to the corpus as beneficial truth — under a verifier
+        // sign-off, no human — even though it is not a full resolution.
+        let corpus = LocalCorpus::new();
+        let signature = FaultSignature::from_symptoms(vec![
+            Symptom("event_41".into()),
+            Symptom("0x1234".into()),
+        ]);
+        let verification = Verification::partial(
+            vec![Symptom("0x1234".into())],   // cleared — the proven benefit
+            vec![Symptom("event_41".into())], // remaining — the remainder
+        );
+        let row = Contribution::new(
+            Outcome {
+                signature,
+                plan: Plan::new("p1", "restart service"),
+                label: OutcomeLabel::ResolvedPartial,
+                verification: Some(verification),
+            },
+            config_class(),
+            SignOff::VerifierConfirmed,
+        )
+        .expect("de-identifies");
+        corpus
+            .submit(&row)
+            .await
+            .expect("a partial with cleared evidence is admitted");
+        assert_eq!(corpus.len(), 1);
+        // Beneficial, but NOT a resolved fix — it is recorded, not yet retrieved.
+        assert!(!row.outcome().label().is_resolved());
+        assert!(row.outcome().label().is_beneficial());
+    }
+
+    #[tokio::test]
+    async fn a_partial_label_without_cleared_evidence_is_refused() {
+        // A `ResolvedPartial` label with no `PartialPass`+cleared behind it is a
+        // partial claim with no proven improvement — the gate refuses it, so a
+        // fabricated "improvement" cannot earn a beneficial precedent.
+        let corpus = LocalCorpus::new();
+        let row = Contribution::new(
+            Outcome {
+                signature: FaultSignature::from_symptoms(vec![Symptom("event_41".into())]),
+                plan: Plan::new("p1", "restart service"),
+                label: OutcomeLabel::ResolvedPartial,
+                verification: Some(Verification::pass()), // wrong verdict, no cleared
+            },
+            config_class(),
+            SignOff::VerifierConfirmed,
+        )
+        .expect("de-identifies");
+        let error = corpus
+            .submit(&row)
+            .await
+            .expect_err("a partial without proven benefit is refused");
+        assert!(matches!(
+            error,
+            CorpusError::Gate(GateError::PartialWithoutBenefit)
+        ));
+        assert!(corpus.is_empty());
+    }
+
     #[tokio::test]
     async fn submit_refuses_unconfirmed_and_keeps_store_empty() {
         let corpus = LocalCorpus::new();
@@ -1188,6 +1253,8 @@ mod tests {
             result: VerificationResult::Pass,
             class: Some(VerificationClass::Deterministic),
             recurring: Vec::new(),
+            cleared: Vec::new(),
+            introduced: Vec::new(),
         });
         let error = corpus.submit(&tampered).await.expect_err("swapped verdict");
         assert!(matches!(
@@ -1455,6 +1522,8 @@ mod tests {
                     result: VerificationResult::Fail,
                     class: Some(VerificationClass::Intermittent),
                     recurring: vec![Symptom("event_41".into()), Symptom("0x1234".into())],
+                    cleared: Vec::new(),
+                    introduced: Vec::new(),
                 }),
             },
             ConfigClass::from_bom("rev-a"),

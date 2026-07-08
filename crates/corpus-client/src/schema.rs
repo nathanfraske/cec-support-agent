@@ -43,6 +43,20 @@ pub enum OutcomeLabel {
     /// Provisional pass: the fault class is intermittent, so the ticket is
     /// monitored over a horizon and auto-reopens on signature recurrence.
     ResolvedProvisional,
+    /// A partial resolution: the fix cleared SOME of the original symptoms (a
+    /// proven benefit, attributable to the single signed plan) but not all, and
+    /// introduced no new ones. Not a fix (`is_resolved()` is false — the ticket
+    /// is not done), but a beneficial precedent (`is_beneficial()` is true): the
+    /// corpus learns "this plan clears these symptoms at this config class" even
+    /// when it never fully resolves. The cleared/remaining split lives on the
+    /// bound `Verification`.
+    ResolvedPartial,
+    /// The fix INTRODUCED symptoms that were not present before (a regression).
+    /// Never autonomous credit — it escalates to a human — but recorded as a
+    /// distinct, visible outcome rather than hidden inside a plain failure, so a
+    /// "fix" that trades one problem for another is auditable. The introduced
+    /// symptoms live on the bound `Verification`.
+    Regressed,
     /// The signature recurred inside the monitoring horizon.
     Reopened,
     /// The evidence names a part; the deliverable is a diagnosis plus an RMA
@@ -72,6 +86,14 @@ impl OutcomeLabel {
             self,
             OutcomeLabel::ResolvedConfirmed | OutcomeLabel::ResolvedProvisional
         )
+    }
+
+    /// Whether this label recorded a proven benefit — a full resolution OR a
+    /// partial one. A `ResolvedPartial` is beneficial without being resolved: it
+    /// earns a corpus precedent (keyed on the symptoms it cleared) but does not
+    /// close the ticket. Every resolved label is also beneficial.
+    pub fn is_beneficial(&self) -> bool {
+        self.is_resolved() || matches!(self, OutcomeLabel::ResolvedPartial)
     }
 }
 
@@ -403,6 +425,24 @@ impl Contribution {
 /// row (attested outcome + commitment, no raw provenance) is verifiable by a
 /// consumer. Tampering with any covered field changes these bytes and breaks
 /// verification.
+/// Bind a symptom list additively into a canonical encoding: emit a
+/// `<tag>:{n}\n` count line plus a sorted length-prefixed line per symptom, but
+/// ONLY when the list is non-empty. Empty ⇒ nothing emitted, so a row without
+/// this delta (every row predating partial resolution) is byte-identical.
+/// Shared by [`attestation_message`] and [`chain_canonical`].
+fn bind_symptoms(s: &mut String, tag: &str, symptoms: &[common::Symptom]) {
+    use std::fmt::Write as _;
+    if symptoms.is_empty() {
+        return;
+    }
+    let mut sorted: Vec<&str> = symptoms.iter().map(|x| x.0.as_str()).collect();
+    sorted.sort_unstable();
+    let _ = writeln!(s, "{tag}:{}", sorted.len());
+    for sym in &sorted {
+        let _ = writeln!(s, "{tag}[{}]={sym}", sym.len());
+    }
+}
+
 pub(crate) fn attestation_message(c: &Contribution) -> Vec<u8> {
     use std::fmt::Write as _;
 
@@ -445,6 +485,14 @@ pub(crate) fn attestation_message(c: &Contribution) -> Vec<u8> {
             for r in &recurring {
                 lp(&mut s, "rec", r);
             }
+            // Partial-resolution deltas — bound ADDITIVELY: emitted only when
+            // non-empty, so every row that predates partial resolution (both
+            // sets empty) produces byte-identical bytes and needs no migration,
+            // while a partial/regressed row has its cleared benefit and any
+            // introduced regression signed too (a forger cannot inflate the
+            // proven benefit or hide a regression without breaking the signature).
+            bind_symptoms(&mut s, "clr", &v.cleared);
+            bind_symptoms(&mut s, "intr", &v.introduced);
         }
     }
     let _ = writeln!(s, "signoff:{:?}", c.sign_off);
@@ -560,6 +608,21 @@ fn chain_canonical(prev: &str, c: &Contribution) -> Vec<u8> {
             for r in &v.recurring {
                 lp(&mut s, "rec", &r.0);
             }
+            // Partial-resolution deltas — bound ADDITIVELY in STORED order (the
+            // chain's discipline: tamper-evidence the row as written). Emitted
+            // only when non-empty, so a pre-partial-resolution row is unchanged.
+            if !v.cleared.is_empty() {
+                let _ = writeln!(s, "clr:{}", v.cleared.len());
+                for c in &v.cleared {
+                    lp(&mut s, "clr", &c.0);
+                }
+            }
+            if !v.introduced.is_empty() {
+                let _ = writeln!(s, "intr:{}", v.introduced.len());
+                for i in &v.introduced {
+                    lp(&mut s, "intr", &i.0);
+                }
+            }
         }
     }
     let _ = writeln!(s, "signoff:{:?}", c.sign_off);
@@ -599,6 +662,8 @@ fn label_tag(label: &OutcomeLabel) -> String {
     match label {
         OutcomeLabel::ResolvedConfirmed => "resolved_confirmed".into(),
         OutcomeLabel::ResolvedProvisional => "resolved_provisional".into(),
+        OutcomeLabel::ResolvedPartial => "resolved_partial".into(),
+        OutcomeLabel::Regressed => "regressed".into(),
         OutcomeLabel::Reopened => "reopened".into(),
         OutcomeLabel::EscalatedHardware { part_class } => {
             format!("escalated_hardware:{part_class}")

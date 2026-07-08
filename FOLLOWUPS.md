@@ -509,3 +509,52 @@ recommends that are NOT yet built, each attributed to the threat doc's §3 contr
   exist. Consider binding independence to real signals (distinct time windows, distinct observed post-state,
   rate limits). — why deferred: pre-existing design item; broader than the F4 seam. Resume:
   `corpus-client/src/store.rs` confirmation counting; `docs/corpus-cartography-threat.md`.
+
+- [ ] [added 2026-07-08 04:10 UTC] **[tool-vocabulary backlog surfaced by shop workflow authoring (owner 2026-07-08)]** The
+  workflow authoring format (`docs/workflow-authoring-guide.md`) maps each proven shop step to an
+  ACTION_VOCABULARY member or flags `NEEDS-TOOL`. The DDU example alone surfaces three missing actions:
+  `display_driver_uninstaller` (clean display-driver wipe), `restart`, `driver_install` (cec-autosetep already has the pnputil
+  install machinery — wire it as this action). Other likely gaps named in the guide: `system_file_check`,
+  `dism_repair`, `uninstall_program`, `winget_install`. Naming convention: actions are spelled out
+  (self-documenting, no shop jargon) — `display_driver_uninstaller` not `ddu`. As shop authors submit workflows, tally the NEEDS-TOOL flags and
+  prioritize the vocabulary additions by frequency — each new action = a registered `Tool` in
+  `crates/tools-windows` + a member added to the frozen `deid::ACTION_VOCABULARY` (sorted; the drift test
+  pins it) + a risk class. — why deferred: driven by the shop's submitted workflows; Windows-side tool
+  builds. Resume: `crates/deid/src/lib.rs` ACTION_VOCABULARY; `crates/tools-windows`; cec-autosetep
+  `src/Install-Engine.psm1` for the driver_install half; the authoring guide's NEEDS-TOOL tallies.
+
+- [ ] [added 2026-07-08 04:33 UTC] **[partial resolution — first-class beneficial-but-incomplete outcome (owner 2026-07-08,
+  DESIGNED)]** "An improvement is an improvement, especially when we can prove it happened because of the
+  fix." Design: `docs/partial-resolution-design.md`. Add the three-way verification diff
+  (cleared/remaining/new) + `VerificationResult::PartialPass{cleared,remaining}` +
+  `OutcomeLabel::ResolvedPartial` (is_resolved()=false, is_beneficial()=true, earns a precedent keyed on the
+  cleared benefit) + `Regressed{cleared,introduced}` (new symptoms ⇒ escalate, never silent credit). Causal
+  attribution: the pre/post signatures bracket ONE signed plan bound by run_id, so a cleared symptom is
+  attributable; independent repetition turns it into a per-symptom clear rate. Retry loop carries `remaining`
+  forward as PROGRESS (chains partials → full resolution; the DDU case). — why deferred: precision-critical
+  verification+outcome+de-id/crypto change (label_tag is in attestation_message AND chain_canonical — wire
+  surface); build in green sub-steps + §7 blind audit. Owner naming/policy decisions in design §8. Resume:
+  the design doc §6 surface map; `agent-core/verify.rs`; `common` diff; `corpus-client` schema/gate.
+- [ ] [added 2026-07-08 04:33 UTC] **[config-transition triggers (surfaced by the 5070→5080 case, owner 2026-07-08)]** Many
+  convoluted fixes are triggered by a CONFIG TRANSITION (part swapped, Windows updated, setting changed), not
+  a symptom out of nowhere. The engine keys on config_class as a static class; recognize a transition (old
+  class → new class) as a first-class trigger — "a GPU changed within the NVIDIA line ⇒ expect a
+  display-driver clean-uninstall even after a fresh install." Composes with partial resolution (transition
+  triggers the workflow; partial resolution scores the multi-step fix). — why deferred: needs the config-
+  transition detection (compare successive config_class observations for a machine — pairs with the
+  reinstall-durable per-machine ledger, which HAS the history) + a transition-keyed retrieval path. Resume:
+  `common/src/config_class.rs`; the per-machine ledger FOLLOWUP; `docs/partial-resolution-design.md` §7.
+
+- [ ] [added 2026-07-08 04:56 UTC] **[partial resolution — deferred follow-ons (built the core 2026-07-08)]** Partial
+  resolution shipped (`PartialPass` verdict, `ResolvedPartial` gated+admitted beneficial row, additive
+  crypto binding, byte-identical to pre-change rows). Three follow-ons: **(a) autonomous regression
+  detection** — `verify_outcome` does NOT emit `Regressed` because a naive post-only-symptom diff flags
+  benign post-fix log noise (`reboot`/`boot`) as false regressions; `Regressed` stays a recordable outcome
+  (label+verdict+gate wired) for a fault-aware signal (the Windows collector distinguishing new FAULT events
+  from noise, or a human). **(b) retrieval-as-partial** — a `ResolvedPartial` is admitted but
+  `fix_mappings` counts only `is_resolved()`, so a partial is not yet OFFERED as a partial-fix step keyed
+  on its cleared set; add a partial-mapping retrieval path (design §3/§5). **(c) retry progress-carry** —
+  the retry loop should carry a partial's `remaining` forward so the next attempt works the remainder, not
+  from scratch (the DDU multi-step case; design §5). — why deferred: (a) needs the fault-aware collector;
+  (b)/(c) are follow-on engine work. Resume: `agent-core/verify.rs`; `corpus-client/store.rs` fix_mappings;
+  `support-agent/main.rs` retry loop; `docs/partial-resolution-design.md`.

@@ -15,6 +15,39 @@ Below "Pick up here", keep a reverse-chronological **handoff log** of dated entr
 
 ## Current state
 
+**As of 2026-07-08 05:10 UTC.** **Partial resolution BUILT + blind-audited clean** on branch
+`claude/workflow-model-optimization-e1y1sx` (off `main` @ `194f881`), **260 tests green, clippy clean,
+pending push + PR.** A fix that clears SOME original symptoms is now a first-class `ResolvedPartial`
+outcome: `verify_outcome` emits `PartialPass{cleared,remaining}`; the gate requires a WELL-FORMED
+`PartialPass` verdict — a non-empty cleared benefit AND a non-empty remainder (else
+`PartialWithoutBenefit`) so a full clear cannot be mislabeled as a partial — and admits it as beneficial
+(`is_beneficial`, not `is_resolved` — recorded, doesn't back a fix mapping yet); the cleared/introduced
+deltas bind ADDITIVELY into the attestation + chain so pre-change rows stay byte-identical (no migration —
+the canned fixture test confirms). Regression is a recordable outcome (label/verdict/gate wired) but NOT
+autonomously detected (naive post-diff flags benign log noise). Red-on-revert proven for BOTH the
+partial-benefit guard and the new remainder guard. **A §7 blind audit (opus, packet-only) worked all six
+invariants and found NO defects; its one conservative note — the gate trusted rather than verified the
+remainder — is the guard I just added.** 3 follow-ons filed (regression auto-detection needs the
+fault-aware collector; retrieval-as-partial; retry progress-carry). Owner decisions honored + recorded in
+the design doc §8: label `ResolvedPartial`, autonomous partial credit under the same rules as full
+resolution, destructive partial needs human (gate extended to `is_beneficial`), always escalate `Regressed`.
+
+**Pick up here:** push `claude/workflow-model-optimization-e1y1sx` (`git push -u origin ...`), open the
+PR (owner asked to "scope and add" partial resolution + approved the design — this lands it), then merge
+on green CI and restart the branch clean from the new main, per the #17–#20 pattern.
+
+--- previous ---
+
+**As of 2026-07-08 03:22 UTC.** **PR #20 MERGED — `main` @ `194f881`.** Branch restarted clean from main. The F4
+autonomous-learning seam, the `Repertoire` candidate tier, and the EULA on-screen-acceptance gate are all
+on main; 255 tests. The engine-side autonomous-learning loop is complete and proven with a mock collector
+(the §7 blind panel caught + I fixed a real empty-observation fabrication vector). **The remaining F4 piece
+is the real Windows collector** — a one-trait drop-in per `docs/f4-windows-collector-playbook.md` (Windows
+box required; left for another agent per owner). EULA target-side presentation likewise a drop-in
+(`docs/eula-acceptance-playbook.md`).
+
+--- previous ---
+
 **As of 2026-07-04 ~23:20 UTC.** **PRs #17, #18, AND #19 all MERGED** — `main` @ `0c54578`. Branch
 restarted clean from that main. On main: the full v2 migration (chain-v2, fingerprint-v2 with salt +
 domains), attestation-v4 (provenance commitment — Q6 wrinkle RESOLVED, blind-panel clean 2/2), leak
@@ -896,6 +929,39 @@ See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementati
   PREDICATE, not the type tag.
 
 ## Handoff log (reverse-chronological)
+
+- **2026-07-08 05:10 UTC** — **Built partial resolution + blind-audited clean; hardened the gate on the audit's
+  one note.** `verify_outcome` → `PartialPass{cleared,remaining}`; `OutcomeLabel::ResolvedPartial` +
+  `Regressed`; `is_beneficial()` (admits the cleared benefit without closing the ticket); cleared/introduced
+  bind ADDITIVELY into attestation + chain (empty ⇒ zero bytes ⇒ pre-change rows byte-identical, no
+  migration). The gate requires a WELL-FORMED `PartialPass` — non-empty cleared AND non-empty remainder —
+  and extends destructive-needs-human from `is_resolved` to `is_beneficial`. A §7 blind audit (opus,
+  packet-only, agent `a94f80c98807e9133`) worked all six invariants (no fabricated benefit, byte-identity,
+  autonomy bound, de-id, no-partial-from-empty-post, regression coherence) and found NO defects; its lone
+  conservative note (the gate did not verify the remainder, only trusted it) is now the extra guard, with a
+  red-on-revert test. Owner decisions recorded in design §8. 260 tests green, clippy clean. Commit `661e53e`
+  (build) + this turn's hardening. **Pick up: push + open the PR, merge on green, restart the branch.**
+
+- **2026-07-08 04:33 UTC** — **Designed partial resolution (owner-confirmed) + surfaced config-transition triggers;
+  addressed the "how do we tackle all this ambiguity" concern (no code).** Design doc
+  \`docs/partial-resolution-design.md\`: three-way verification diff (cleared/remaining/new),
+  \`VerificationResult::PartialPass\` + \`OutcomeLabel::ResolvedPartial\` (is_beneficial, earns a precedent on
+  the cleared delta) + \`Regressed\` (new symptoms escalate). The owner's causal requirement grounded in the
+  existing pre/post-bound-to-one-signed-plan structure + independent repetition = a per-symptom clear rate.
+  Retry loop carries \`remaining\` forward as progress (the DDU multi-step case). The 5070→5080 example
+  surfaced config-TRANSITION triggers as a second FOLLOWUP (pairs with the per-machine ledger which holds
+  the config history). Precision-critical (label_tag is a wire/crypto surface) → build in green sub-steps +
+  §7 blind audit; owner naming/policy calls in design §8. **Pick up: build partial resolution as the next PR
+  (start with the common-crate three-way diff), after the owner picks the label name (§8).**
+
+- **2026-07-08 04:10 UTC** — **Authored the shop workflow authoring format (`docs/workflow-authoring-guide.md`).**
+  The ground-truth capture template for shop staff — two kinds (fix + diagnostic), grounded in the real
+  engine model (fault shape/symptoms → ordered steps mapped to ACTION_VOCABULARY → verification
+  type/test → escalation), with the owner's DDU example fully worked. Key insight surfaced: authoring maps
+  each step to a tool action or flags NEEDS-TOOL, so proven workflows double as the prioritized
+  tool-vocabulary backlog — the DDU flow alone needs `ddu`/`restart`/`driver_install` (filed to FOLLOWUPS;
+  cec-autosetep has the install half). Boundary-scan clean (synthetic content). No engine code. Offered
+  the user a shareable Artifact / fillable rendering as a follow-up.
 
 - **2026-07-08 03:18 UTC** — **BUILD: F4 autonomous-learning seam + repertoire tier + EULA gate (3 commits, PR next).**
   The engine-side half of the self-learning capability the owner greenlit. F4: `recollect_post_signature`
