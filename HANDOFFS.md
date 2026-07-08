@@ -15,6 +15,29 @@ Below "Pick up here", keep a reverse-chronological **handoff log** of dated entr
 
 ## Current state
 
+**As of 2026-07-08 05:10 UTC.** **Partial resolution BUILT + blind-audited clean** on branch
+`claude/workflow-model-optimization-e1y1sx` (off `main` @ `194f881`), **260 tests green, clippy clean,
+pending push + PR.** A fix that clears SOME original symptoms is now a first-class `ResolvedPartial`
+outcome: `verify_outcome` emits `PartialPass{cleared,remaining}`; the gate requires a WELL-FORMED
+`PartialPass` verdict — a non-empty cleared benefit AND a non-empty remainder (else
+`PartialWithoutBenefit`) so a full clear cannot be mislabeled as a partial — and admits it as beneficial
+(`is_beneficial`, not `is_resolved` — recorded, doesn't back a fix mapping yet); the cleared/introduced
+deltas bind ADDITIVELY into the attestation + chain so pre-change rows stay byte-identical (no migration —
+the canned fixture test confirms). Regression is a recordable outcome (label/verdict/gate wired) but NOT
+autonomously detected (naive post-diff flags benign log noise). Red-on-revert proven for BOTH the
+partial-benefit guard and the new remainder guard. **A §7 blind audit (opus, packet-only) worked all six
+invariants and found NO defects; its one conservative note — the gate trusted rather than verified the
+remainder — is the guard I just added.** 3 follow-ons filed (regression auto-detection needs the
+fault-aware collector; retrieval-as-partial; retry progress-carry). Owner decisions honored + recorded in
+the design doc §8: label `ResolvedPartial`, autonomous partial credit under the same rules as full
+resolution, destructive partial needs human (gate extended to `is_beneficial`), always escalate `Regressed`.
+
+**Pick up here:** push `claude/workflow-model-optimization-e1y1sx` (`git push -u origin ...`), open the
+PR (owner asked to "scope and add" partial resolution + approved the design — this lands it), then merge
+on green CI and restart the branch clean from the new main, per the #17–#20 pattern.
+
+--- previous ---
+
 **As of 2026-07-08 03:22 UTC.** **PR #20 MERGED — `main` @ `194f881`.** Branch restarted clean from main. The F4
 autonomous-learning seam, the `Repertoire` candidate tier, and the EULA on-screen-acceptance gate are all
 on main; 255 tests. The engine-side autonomous-learning loop is complete and proven with a mock collector
@@ -906,6 +929,18 @@ See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementati
   PREDICATE, not the type tag.
 
 ## Handoff log (reverse-chronological)
+
+- **2026-07-08 05:10 UTC** — **Built partial resolution + blind-audited clean; hardened the gate on the audit's
+  one note.** `verify_outcome` → `PartialPass{cleared,remaining}`; `OutcomeLabel::ResolvedPartial` +
+  `Regressed`; `is_beneficial()` (admits the cleared benefit without closing the ticket); cleared/introduced
+  bind ADDITIVELY into attestation + chain (empty ⇒ zero bytes ⇒ pre-change rows byte-identical, no
+  migration). The gate requires a WELL-FORMED `PartialPass` — non-empty cleared AND non-empty remainder —
+  and extends destructive-needs-human from `is_resolved` to `is_beneficial`. A §7 blind audit (opus,
+  packet-only, agent `a94f80c98807e9133`) worked all six invariants (no fabricated benefit, byte-identity,
+  autonomy bound, de-id, no-partial-from-empty-post, regression coherence) and found NO defects; its lone
+  conservative note (the gate did not verify the remainder, only trusted it) is now the extra guard, with a
+  red-on-revert test. Owner decisions recorded in design §8. 260 tests green, clippy clean. Commit `661e53e`
+  (build) + this turn's hardening. **Pick up: push + open the PR, merge on green, restart the branch.**
 
 - **2026-07-08 04:33 UTC** — **Designed partial resolution (owner-confirmed) + surfaced config-transition triggers;
   addressed the "how do we tackle all this ambiguity" concern (no code).** Design doc

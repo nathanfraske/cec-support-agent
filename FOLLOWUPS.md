@@ -544,3 +544,17 @@ recommends that are NOT yet built, each attributed to the threat doc's §3 contr
   transition detection (compare successive config_class observations for a machine — pairs with the
   reinstall-durable per-machine ledger, which HAS the history) + a transition-keyed retrieval path. Resume:
   `common/src/config_class.rs`; the per-machine ledger FOLLOWUP; `docs/partial-resolution-design.md` §7.
+
+- [ ] [added 2026-07-08 04:56 UTC] **[partial resolution — deferred follow-ons (built the core 2026-07-08)]** Partial
+  resolution shipped (`PartialPass` verdict, `ResolvedPartial` gated+admitted beneficial row, additive
+  crypto binding, byte-identical to pre-change rows). Three follow-ons: **(a) autonomous regression
+  detection** — `verify_outcome` does NOT emit `Regressed` because a naive post-only-symptom diff flags
+  benign post-fix log noise (`reboot`/`boot`) as false regressions; `Regressed` stays a recordable outcome
+  (label+verdict+gate wired) for a fault-aware signal (the Windows collector distinguishing new FAULT events
+  from noise, or a human). **(b) retrieval-as-partial** — a `ResolvedPartial` is admitted but
+  `fix_mappings` counts only `is_resolved()`, so a partial is not yet OFFERED as a partial-fix step keyed
+  on its cleared set; add a partial-mapping retrieval path (design §3/§5). **(c) retry progress-carry** —
+  the retry loop should carry a partial's `remaining` forward so the next attempt works the remainder, not
+  from scratch (the DDU multi-step case; design §5). — why deferred: (a) needs the fault-aware collector;
+  (b)/(c) are follow-on engine work. Resume: `agent-core/verify.rs`; `corpus-client/store.rs` fix_mappings;
+  `support-agent/main.rs` retry loop; `docs/partial-resolution-design.md`.
