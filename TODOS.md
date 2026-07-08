@@ -447,5 +447,6 @@ _(completed items stay above, in place, with their `· done` tombstone)_
 - [x] [added 2026-07-08 05:05 UTC · done 2026-07-08 05:10 UTC] Close the audit's one conservative note:
   gate now requires a `PartialPass` to carry a non-empty remainder too (a full clear can't be mislabeled as
   a partial), with a red-on-revert test. Design doc §8 records owner decisions. 260 tests green, clippy clean.
-- [ ] [added 2026-07-08 05:10 UTC] Push branch + open PR for partial resolution; merge on green CI; restart
-  branch clean from new main.
+- [x] [added 2026-07-08 05:10 UTC · done 2026-07-08 05:14 UTC] Push branch + open PR for partial resolution
+  → **PR #21** (https://github.com/nathanfraske/cec-support-agent/pull/21).
+- [ ] [added 2026-07-08 05:14 UTC] Merge PR #21 on green CI; restart branch clean from new main.
