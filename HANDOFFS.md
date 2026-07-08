@@ -15,36 +15,43 @@ Below "Pick up here", keep a reverse-chronological **handoff log** of dated entr
 
 ## Current state
 
-**As of 2026-07-08 05:15 UTC.** **PR #21 MERGED — `main` @ `081ad3d`.** Partial resolution is on main:
-a fix that clears SOME original symptoms is a first-class `ResolvedPartial` outcome. `verify_outcome`
-emits `PartialPass{cleared,remaining}`; the gate requires a WELL-FORMED `PartialPass` — a non-empty
-cleared benefit AND a non-empty remainder (else `PartialWithoutBenefit`) so a full clear cannot be
-mislabeled as a partial — and admits it as beneficial (`is_beneficial`, not `is_resolved` — recorded,
-doesn't back a fix mapping yet); the cleared/introduced deltas bind ADDITIVELY into the attestation + chain
-so pre-change rows stay byte-identical (no migration — the canned fixture confirms). Regression is a
-recordable outcome (label/verdict/gate wired) but NOT autonomously detected (naive post-diff flags benign
-log noise). Also on main: `docs/workflow-authoring-guide.md` (the shop authoring format). **A §7 blind
-audit (opus, packet-only) worked all six invariants and found NO defects**; its one conservative note (the
-gate trusted rather than verified the remainder) became the well-formedness guard. 260 tests green. Owner
-decisions recorded in design §8: label `ResolvedPartial`, autonomous partial credit under full-resolution
-rules, destructive partial needs human, always escalate `Regressed`. 3 follow-ons filed (regression
-auto-detection needs the fault-aware collector; retrieval-as-partial; retry progress-carry) + the config-
-transition trigger class.
+**As of 2026-07-08 08:50 UTC.** **PR #21 (partial resolution) is MERGED to `main` @ `081ad3d`.** Since then a
+FIVE-feature arc + a safe-core tool catalog are BUILT + PUSHED on branch `claude/workflow-model-optimization-e1y1sx`
+(HEAD `6275f10`, off `main` @ `081ad3d`) but **NOT yet PR'd** (owner said implement, hasn't asked to merge).
+All committed work is pushed — nothing uncommitted. 287 tests green, clippy clean throughout.
 
-**Branch state:** local `claude/workflow-model-optimization-e1y1sx` is reset to `origin/main` @ `081ad3d`;
-the REMOTE branch still points at the pre-squash tip (`37ce9d6`, fully merged into `081ad3d`). Resetting
-the remote branch needs a `git push --force-with-lease` — blessed for an already-merged branch, but
-auto-mode declined it this turn pending explicit owner direction. It is cosmetic: the next work turn's
-`checkout -B origin/main` + force-with-lease push will reconcile it anyway.
+On the branch, in order:
+- **retrieval-as-partial** (`d39d392`) — `MappingKind::{Full,Partial{cleared}}`; `fix_mappings` offers a
+  ResolvedPartial's cleared set as a partial mapping (additive, revocation filters both kinds).
+- **config-transition primitive** (`0fe7e2f`) — `common::config_transition`: StructuredInventory +
+  `ConfigTransition::between` → within/cross-family deltas (the 5070→5080 case). Not a symptom token.
+- **workflow retirement** (`4135b32`) — `OutcomeLabel::Retired{reason}`, human-only gate
+  (`RetirementNeedsHuman` + `RetirementCarriesVerdict`), mapping-scoped fix_mappings filter, read-only
+  `compute_retirement_candidates` (evidence proposes, human enacts). §7 blind-audited (finding H1 fixed).
+- **authoring normalizer** (`73c97e1`) — `corpus_client::authoring`: authored workflow → canonical de-id
+  format + structural read-back; flags unregistered actions (e.g. DDU). Engine core of the "formatting page".
+- **safe-core tool catalog** (`6275f10`) — `tools-windows/catalog.rs`: 50 built-in primitives (de-jargoned,
+  data-driven `CatalogTool`) registered; `ACTION_VOCABULARY`→58 (drift test in lockstep). `DESTRUCTIVE_OPS`
+  (13) = separate DIFFERENTIATED list, NOT registered/not in vocab, human-gated. Windows command execution
+  for arg-taking + destructive ops = documented drop-in (`docs/safe-core-windows-execution-playbook.md`).
 
-**Pick up here:** next ENGINE build (main @ `081ad3d`, all decided infra present). Strongest candidates:
-(a) the corpus service — `POST /v1/mappings/query` server side + B4 attested reads over the Q6-minimal
-served row + the Q5 anchor; (b) retrieval-as-partial (offer a `ResolvedPartial`'s cleared set as a
-partial-fix step — `fix_mappings` today counts only `is_resolved`) now that partial resolution is on main;
-(c) the config-transition trigger (the 5070→5080 DDU case). The real Windows F4 collector + EULA target
-presentation remain drop-in playbooks left for a Windows-box agent. Restart the branch clean from `main`
-before starting (`git fetch origin main && git checkout -B <branch> origin/main`); a force-with-lease push
-of the new work is fine.
+**Research (multi-agent panels, cost-tiered Haiku→Sonnet→Opus-bias-audit):** tool/primitive space researched,
+corrected (v1 panels were flawed — Opus caught an inversion + my own netsh slip), and BANKED durably in
+`docs/research/` (tool-inventory-consolidated + panel1/panel2 catalogs + audits + research-menu-and-status).
+**Priority A–H knowledge panel is RUNNING** (workflow run `wf_6bbdfda9-f63`, task `w10g0ycy7`): C1 reversal/risk,
+A1 stop-codes, A2 event-IDs, B1 collector signals, D1/D2/D3 legal (2-source), E1 local LLM. If it completed,
+its briefs+audit should be saved to `docs/research/`; if the session ended mid-run, RE-RUN it (the script is
+`priority-knowledge-panel`; design is in `docs/research/research-menu-and-status.md`).
+
+**Pick up here:**
+1. If the priority panel finished, extract its `briefs_markdown` + `bias_audit_markdown` from its journal and
+   save to `docs/research/priority-knowledge-briefs.md` + `...-audit.md`; present to owner.
+2. Owner's open decisions: (a) OPEN A PR for the branch (5 features + safe core) when they say so; (b) pick
+   from the A–H menu for the next research batch; (c) confirm the arg-taking catalog tools staying
+   non-executing until the Windows drop-in is intended.
+3. Next ENGINE builds still open: corpus query service (`POST /v1/mappings/query` + B4 attested reads),
+   retrieval preferring a `SupersededBy` successor, the config ledger, the formatting-page web surface.
+   Windows F4 collector + EULA presentation + safe-core arg/execution wiring remain Windows-box drop-ins.
 
 --- previous ---
 
