@@ -81,6 +81,16 @@ pub trait Tool: Send + Sync {
     fn description(&self) -> &str;
     /// The risk of invoking this tool; the dispatcher enforces consent on it.
     fn risk(&self) -> Risk;
+    /// If this tool installs software that carries an end-user license
+    /// agreement, the stable id of that EULA (e.g. the product name); otherwise
+    /// `None`. A step whose tool returns `Some` is REFUSED by
+    /// [`crate::execute_plan`] unless the USER accepted that EULA on screen
+    /// ([`crate::EulaAcceptances`]) — the engine never accepts a license on the
+    /// user's behalf, so the liability stays with the user who accepted, not the
+    /// shop that ran the installer. Default `None`: most tools install nothing.
+    fn requires_eula(&self) -> Option<&str> {
+        None
+    }
     /// Run the tool with JSON arguments.
     async fn invoke(&self, args: serde_json::Value) -> Result<ToolOutcome, ToolError>;
 }

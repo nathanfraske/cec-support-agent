@@ -367,3 +367,145 @@ recommends that are NOT yet built, each attributed to the threat doc's §3 contr
   only). — why deferred: needs that owner call + pairs naturally with L3a; nothing blocks on it while
   inference is loopback-gated. Resume: `crates/inference` ChatMessage; call sites `main.rs:1487`,
   `agent-core/src/agent.rs:69/101/128`, `intake/src/lib.rs:495`.
+
+- [ ] [added 2026-07-08 01:35 UTC] **[shop-server identity tier + brain ephemerality (owner scoping 2026-07-08)]** The
+  identity-bearing customer/ticket data lives on a SHOP SERVER (system of record); it sends the engine only
+  `describe` + inventory keys and stores the returned envelope against its own ticket. The engine holds no
+  customer identity (de-id boundary). Already true: the serve path never persists raw `describe` — it is
+  used transiently for signature-derivation + inference then dropped; the stored session
+  (`serve.rs:71`) holds only de-identified signature + hashed config class + de-identified candidates.
+  BUILD: (1) the shop-server client + ticket store (mostly not engine work — an API client like the
+  AllMyStuff one); (2) OPTIONAL brain hardening — documented "never log `describe`" invariant + zeroize
+  raw prose after inference. The STRONG residency property ("raw customer text never reaches the home box
+  even transiently") == PromptPayload-strict (below). — why deferred: owner scoping; gated on the
+  PromptPayload strict/explicit decision + the corpus-service/API tier. Resume: `serve.rs` handle_diagnose;
+  `docs/operator-runbook.md` §4; the PromptPayload item.
+- [ ] [added 2026-07-08 01:35 UTC] **[interactive customer-driven multi-fix session (owner scoping 2026-07-08)]** Let the
+  customer work through multiple fixes and request/prompt more before booking a human. AUTO multi-fix is
+  ALREADY built (ranked slate + bounded retry, `MAX_ATTEMPTS=2`, per-candidate escalation recompute, hard
+  negatives, next-best fallback). NEW work: (a) a MULTI-TURN serve session (today's is one-shot / consumed
+  on execute, TTL 15m) that survives multiple execute attempts, tracks the tried-failed set, and can
+  generate fresh candidates / re-diagnose on new customer input; (b) a customer-OPTIONAL escalation policy
+  in the SAFE/reversible band only — the safety floor (destructive/hardware/unverified ⇒ human) is fixed and
+  must never be widened by the customer choosing "try more" (consent authority ≠ attempt count). Safety
+  primitives all exist + audited; the corpus is thrash-proof (only signed-off outcomes mint rows).
+  VALUE-GATED ON F4: without real re-collection every attempt is Unverified, so the loop can't self-assess
+  ("worked" vs "still broken"). "Prompt fixes" = more raw prose → brain, ties to PromptPayload. — why
+  deferred: owner scoping + needs the F4 re-collection to be worth it + a session-lifecycle decision.
+  Resume: `serve.rs` Session/one-shot model; `main.rs:700-790` retry loop; F4 stub `main.rs:1144`.
+
+- [ ] [added 2026-07-08 01:39 UTC] **[cec-autosetep integration — the target-side executor's hands + eyes (owner
+  2026-07-08)]** Repo `nathanfraske/cec-autosetep` (Apache-2.0, PowerShell 5.1 + in-box Windows tools,
+  USB-resident) is the concrete driver-automation toolkit the engine's coarse tool vocabulary lacks.
+  Three integration surfaces: (1) TOOL VOCABULARY — `Install-DriverPackage` (download→hash-verify→
+  pnputil/msiexec silent install) already returns a Status/Method/Detail result == the engine's
+  StepResult/ExecutionResult, with a -WhatIf dry-run (plan preview) + hash verify (integrity); register
+  these as dispatcher actions with risk classes. (2) F4 + config_class — Detect-Hardware (Win32_BaseBoard
+  vendor/model/version + serial), Detect-Gpu, Detect-Peripherals are the collection instrument F4 needs +
+  the inventory enrichment that closes the coarse-config-class (A7/MH-6) gap; the baseboard serial is a
+  stable per-machine id. (3) SHOP-SERVER precedent — `tools/Serve-DriverLibrary.ps1` + systemd + nginx is
+  a LAN driver-library server with content hashes (clients use -Mirror); the same shop-hosted/thin-client
+  split as the shop-server identity tier. Apache-2.0 ⇒ the thin target executor can shell out to it (no
+  AGPL friction) OR port its provider/detect logic. Seam: engine signs a plan of cec-autosetep ops → thin
+  executor runs them → $result objects become StepResults; Detect-Hardware feeds config_class + F4.
+  — why deferred: owner scoping; pairs with the target-side executor + F4 build (F3 judge-key custody).
+  Resume: cec-autosetep `src/Install-Engine.psm1`, `src/Detect-Hardware.psm1`, `tools/Serve-DriverLibrary.ps1`;
+  engine dispatcher `crates/tools-windows`; F4 stub `main.rs:1144`.
+- [ ] [added 2026-07-08 01:39 UTC] **[reinstall-durable per-machine troubleshooting ledger (owner scoping 2026-07-08)]** A
+  per-machine, HARDWARE-keyed, tamper-evident LOCAL ledger of (signature → plan tried → outcome →
+  verification) that survives a Windows reinstall. Design: it is the corpus data shape at a LOCAL privacy
+  tier — same triples, scoped to one machine, ALLOWED to hold identity because it never leaves the box; a
+  resolved+signed-off local outcome de-identifies and promotes to the shared corpus (two tiers of one
+  store). Re-attach survives reinstall because config_class keys on HARDWARE not the OS install (confirmed);
+  pin to one physical machine via the baseboard serial (cec-autosetep Detect-Hardware already reads it).
+  Reinstall-durable storage: USB/imaging stick (cec-autosetep is already USB-resident + logs to
+  %ProgramData%), a second partition, a shop-server copy keyed by hardware id (driver-library-server
+  pattern), or mesh backup. Integrity across the gap = the EXISTING RowIntegrity chain + attestation + the
+  Q5 tail-truncation ANCHOR (this is the concrete reason the anchor matters — a returning machine must not
+  truncate/forge "everything was tried" or "it worked"). Payoff: retrieval-first against the LOCAL ledger
+  before the shared corpus stops re-treading, powers the customer multi-fix loop, feeds F4, and hands a
+  tech the machine history a reinstall normally wipes. — why deferred: owner scoping; needs the ledger
+  store (a machine-scoped CorpusStore variant), the re-attach/hardware-id logic, and the ONE shared privacy
+  decision below. Resume: `crates/corpus-client` (CorpusStore + RowIntegrity + anchor); config_class
+  `crates/common/src/config_class.rs`; cec-autosetep Detect-Hardware.
+- [x] [added 2026-07-08 01:39 UTC] **[THE single identity/de-id-boundary decision — unifies 4 scoping items]** PromptPayload
+  strict-vs-explicit, the shop-server identity tier, and the reinstall-durable ledger backup all fork on the
+  SAME question: where does the identity/de-id line fall when data leaves the customer's box? One decision:
+  data off-box is either encrypted-at-rest under a key only owner/customer holds, or de-identified. Decide
+  once; PromptPayload-strict (brain never sees raw prose), shop-server residency, and ledger-backup custody
+  all follow from it. — why deferred: owner decision. Resume: the 3 scoping FOLLOWUPS above + the
+  PromptPayload item + `docs/operator-runbook.md` §5.
+  · DECIDED (owner, 2026-07-08): **de-identify on egress; the release trigger is the SCHEDULING event.**
+  Local ledger holds identity while on the customer box; booking a session IS the release consent, and at
+  that moment the DE-IDENTIFIED history (signature, plan-tried with risk + attested sign_off, outcome/
+  verification) is released to the shop and attaches to the identity-bearing ticket THERE. Verified the row
+  already carries the consent AUTHORITY (attested `sign_off` == the granted consent level, `main.rs:695`) +
+  risk + outcome — so "what was tried and that it was authorized" is present and tamper-evident. RESOLVES:
+  shop-server identity tier + reinstall-ledger off-box backup (de-id, so no encryption-key custody needed
+  for shop-bound copies; a LOCAL customer-media backup may still hold identity). STILL OPEN (one sub-fork):
+  the diagnosis BRAIN — does the same de-id-on-egress rule bind it (PromptPayload-STRICT; agent recommends
+  this — "raw prose would help" IS the human-escalation signal) or is the home brain a trusted exception
+  (raw prose pre-scheduling OK)? Awaiting owner.
+
+- [ ] [added 2026-07-08 01:45 UTC] **[consent RECEIPT on the ledger entry (small; owner 2026-07-08)]** The row records the
+  consent AUTHORITY (attested `sign_off` = granted level) + plan risk + outcome — enough for "was this
+  authorized and to what level," tamper-evident. A rich consent RECEIPT (timestamp, the exact rendered plan
+  the customer saw, restore-point scope) for a dispute/liability trail is NOT a stored field. Add either an
+  explicit de-identified consent-receipt field on the ledger entry or surface it from the audit log
+  (`audit.rs` ExecutionRecord — currently a closed field set with no receipt). — why deferred: small; only
+  needed if a legal/dispute receipt is required beyond the attested authority fact. Resume:
+  `crates/corpus-client/src/schema.rs` Contribution; `crates/support-agent/src/audit.rs`.
+
+- [ ] [added 2026-07-08 02:50 UTC] **[repertoire knowledge tier + autonomous VerifierConfirmed learning (owner 2026-07-08)]**
+  A third candidate provenance tier — reasoned from a KNOWLEDGE REPERTOIRE (vendor KB, documented-but-
+  unproven procedures, cec-autosetep's driver library), between `ColdModel` (prior 0.6) and `CorpusPrimed`
+  (0.8): grounded in real knowledge but NOT corpus-authored for this signature×config_class. Slots at ~0.7
+  so corpus precedent still outranks it and it only fills the gap. Surfaced to the customer/tech as "high
+  confidence, reasoned, NOT corpus-confirmed — may not fully work." **The self-learning loop** = the
+  EXISTING `VerifierConfirmed` sign-off + `ResolvedProvisional` label: a repertoire fix that runs and F4
+  machine-verifies as resolved earns an AUTOMATED (no-human) sign-off, enters the corpus as provisional
+  (monitored, auto-reopen), and graduates via INDEPENDENT confirmations — the system expands its own
+  knowledge without a human. GATED ON F4 (no observed post-fix state ⇒ nothing to auto-confirm). Guardrails
+  (3 of 4 ALREADY enforced): (1) confidence RANKS but never PROMOTES past a consent/escalation gate —
+  `panel/src/lib.rs:315` escalation is independent of the judge score, destructive reasoned fix still needs
+  HumanConfirm; (2) repertoire is READ-side (generates candidates), corpus stays WRITE-side (earned truth
+  only) — a reasoned fix earns a row only through the gate, a failure is a hard negative; (3) truth needs
+  INDEPENDENT repetition + provisional parole + auto-reopen, never one confident pass; (4) TO BUILD — the
+  automated verifier that turns an F4 observation into VerifierConfirmed is a custodied authority (Q1/Q7
+  key). Leak-C10 constraint: the "uncertain/reasoned" flag is CUSTOMER-facing only, never a served-corpus
+  membership signal (the `source` label was dropped from the wire for exactly this). NEW work: the
+  repertoire store + a reasoning generator (cec-autosetep driver library = first stock); the auto-verifier;
+  a `CandidateSource::Repertoire` variant + its 0.7 prior. Everything else composes existing tiers.
+  — why deferred: owner scoping; self-learning half gated on F4 + the auto-verifier; the repertoire store is
+  net-new. Resume: `crates/common/src/candidate.rs` (CandidateSource), `crates/panel/src/lib.rs` (priors +
+  escalation), sign-off ladder `crates/corpus-client/src/schema.rs`, F4 stub `main.rs:1144`, cec-autosetep
+  `src/DriverLibrary.psm1`.
+
+- [ ] [added 2026-07-08 03:18 UTC] **[F4 collector correctness residuals (blind-audit 2026-07-08, Windows-side)]** The §7
+  panel on the autonomous-verification seam flagged three items that are inherent to the real collector's
+  correctness and cannot be enforced engine-side from Linux (the engine-side empty-observation guard is
+  DONE, `8bf9047`): **(M2) coverage/pre-post binding** — a Pass requires the collector re-EXERCISED the
+  fault (re-ran the reproducing workload) before collecting, and that `post` came from the same target
+  strictly after the fix; a healthy-looking snapshot from a machine that never re-ran the failing path is a
+  false pass. **(M6) closed-grammar false negatives** — `extract_symptoms` drops out-of-grammar tokens, so
+  a recurrence presenting with a novel/renamed/localized token reads as resolved even for an honest
+  collector; consider a coverage/liveness token or widening the grammar as the corpus matures. Both are
+  documented as hard requirements in `docs/f4-windows-collector-playbook.md`. — why deferred: needs the
+  real Windows collector + hardware. Resume: the playbook; `crates/tools-windows`; `common/src/extract.rs`.
+- [ ] [added 2026-07-08 03:18 UTC] **[autonomous verification REQUIRES a configured verifier authority (blind-audit Path B)]**
+  A no-authority (cold-start) corpus admits a `VerifierConfirmed` row on the flag alone — fine for a human's
+  manual `--sign-off verifier`, but for the AUTONOMOUS loop it means an unattested self-asserted resolved
+  row a compromised box could mint. Documented as a hard deployment requirement (f4 playbook + operator
+  runbook §1: provision the verifier ed25519 key). DEFENSE-IN-DEPTH to build: have the engine REFUSE a
+  machine-originated (autonomous) resolved sign-off when no authority is configured — needs a way to mark a
+  sign-off as autonomous vs operator-supplied (today `--sign-off verifier` is indistinguishable from an
+  auto-verifier sign-off). — why deferred: needs the autonomous-verifier wiring (comes with the F4 Windows
+  collector) to carry the distinction. Resume: `record_outcome`/gate `admit`; the auto-verifier in the F4
+  build; `docs/operator-runbook.md`.
+- [ ] [added 2026-07-08 03:18 UTC] **[evidentiary independence of confirmations (blind-audit Path C)]** Confirmation counting
+  treats "distinct run_id" as independent, but run_id is caller-minted, so an autonomous loop could emit N
+  fresh-run_id clean passes and graduate a `ResolvedProvisional` to durable confidence without genuinely
+  independent evidence. Pre-existing (not introduced by this change) but sharper now that autonomous rows
+  exist. Consider binding independence to real signals (distinct time windows, distinct observed post-state,
+  rate limits). — why deferred: pre-existing design item; broader than the F4 seam. Resume:
+  `corpus-client/src/store.rs` confirmation counting; `docs/corpus-cartography-threat.md`.

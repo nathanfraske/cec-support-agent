@@ -416,3 +416,19 @@ _(completed items stay above, in place, with their `· done` tombstone)_
   absent from signed bytes + commitment binding/sort completeness); proven red on a raw-binding revert.
   247 tests green. Timed deliberately BEFORE the one-time private-corpus re-ingest so the operator
   re-ingests exactly once. §7 blind panel (2 auditors) running.
+- [x] [added 2026-07-04 23:15 UTC · done 2026-07-04 23:20 UTC] PR #19 (attestation v4 + operator
+  runbook): 12/12 green, MERGED → `main` @ `0c54578`; branch restarted. Re-ingest window open —
+  operator steps handed off via docs/operator-runbook.md.
+
+### Session 2026-07-08 — F4 seam + autonomous loop + repertoire tier + EULA gate (BUILD)
+
+- [x] [added 2026-07-08 03:18 UTC · done 2026-07-08 03:18 UTC] F4 re-collection SEAM (`PostFixCollector`/`NullCollector`/
+  `post_fix_collector` swap point), wired CLI+serve; the autonomous VerifierConfirmed→ResolvedProvisional
+  loop proven end-to-end with a mock collector (clean→resolved row no human; recurring→hard negative;
+  Null→Unverified); red-on-revert. `CandidateSource::Repertoire` (0.7 prior). `6b367a4`.
+- [x] [added 2026-07-08 03:18 UTC · done 2026-07-08 03:18 UTC] §7 blind panel on the autonomous path found a real fabrication vector
+  (empty `Some(vec![])` → Pass); FIXED (`8bf9047`: empty re-collection fails closed to Unverified) + guard
+  test; 2 collector-correctness residuals + Path B/C filed to FOLLOWUPS; playbook hardened.
+- [x] [added 2026-07-08 03:18 UTC · done 2026-07-08 03:18 UTC] EULA on-screen acceptance gate: `Tool::requires_eula` +
+  `Dispatcher::eula_of` + `EulaAcceptances` + `execute_plan` refusal BEFORE dispatch (installer never runs
+  without acceptance); red-on-revert; `docs/eula-acceptance-playbook.md`. 255 tests green.

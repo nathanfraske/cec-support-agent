@@ -53,6 +53,14 @@ impl Dispatcher {
         self.tools.get(name).map(|tool| tool.risk())
     }
 
+    /// The EULA id a registered tool requires the user to accept on screen, or
+    /// `None` if the tool installs nothing license-bearing (or is not
+    /// registered). [`crate::execute_plan`] refuses such a step without a
+    /// recorded on-screen acceptance.
+    pub fn eula_of(&self, name: &str) -> Option<&str> {
+        self.tools.get(name).and_then(|tool| tool.requires_eula())
+    }
+
     /// Reconcile a (possibly model-generated) plan's claimed risks against the
     /// real risk of each registered tool. A model cannot mislabel a
     /// state-changing action as `ReadOnly` to slip it past the consent gate or

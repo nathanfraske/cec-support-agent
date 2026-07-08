@@ -15,6 +15,20 @@ Below "Pick up here", keep a reverse-chronological **handoff log** of dated entr
 
 ## Current state
 
+**As of 2026-07-04 ~23:20 UTC.** **PRs #17, #18, AND #19 all MERGED** — `main` @ `0c54578`. Branch
+restarted clean from that main. On main: the full v2 migration (chain-v2, fingerprint-v2 with salt +
+domains), attestation-v4 (provenance commitment — Q6 wrinkle RESOLVED, blind-panel clean 2/2), leak
+Phase-3 3b/3c rails, all decision records (Q1/Q2/Q3/Q4/Q5/Q6/Q7/D3), and
+**`docs/operator-runbook.md`** — the owner's exact stand-up steps. 247 tests green. The engine work is
+now WAITING ON THE OPERATOR for: salt provisioning, the one-time private-corpus re-ingest (v2 hashes +
+v4 attestations in ONE pass — the window is open now), branch protection incl. the `boundary` check, and
+`cargo xtask install-hooks` on clones. Next ENGINE build: the corpus service (`POST /v1/mappings/query`
+server side + B4 attested reads over the Q6-minimal served row + the Q5 anchor) — everything it needs
+(v4 commitment, decided wire bar) is on main. Then: F4 (needs owner ground truth), L3a dylint,
+PromptPayload (needs the owner's strict-vs-explicit call).
+
+--- previous (superseded by the three-merges state above) ---
+
 **As of 2026-07-04 ~21:55 UTC.** **PR #17 (migration bundle) AND PR #18 (leak Phase-3 3b/3c boundary
 gate) are both MERGED** — `main` @ `44d623a`. Branch `claude/workflow-model-optimization-e1y1sx`
 restarted from that main, clean. 245 tests, clippy `-D warnings`, fmt all green on main.
@@ -882,6 +896,75 @@ See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementati
   PREDICATE, not the type tag.
 
 ## Handoff log (reverse-chronological)
+
+- **2026-07-08 03:18 UTC** — **BUILD: F4 autonomous-learning seam + repertoire tier + EULA gate (3 commits, PR next).**
+  The engine-side half of the self-learning capability the owner greenlit. F4: `recollect_post_signature`
+  is now a `PostFixCollector` seam (NullCollector default; `post_fix_collector` is the single Windows swap
+  point) — the autonomous VerifierConfirmed→ResolvedProvisional loop is proven end-to-end with a mock
+  collector (clean re-collection → resolved corpus row, NO human), plus the safety half (recurring → hard
+  negative; empty/None → Unverified). `CandidateSource::Repertoire` (0.7 prior, between ColdModel 0.6 and
+  CorpusPrimed 0.8). A §7 blind panel caught a real fabrication vector I introduced (empty `Some(vec![])`
+  scored as Pass) — FIXED (empty re-collection fails closed) with a guard test; residuals (coverage,
+  grammar false-negatives, cold-start-authority Path B, evidentiary-independence Path C) filed to
+  FOLLOWUPS + hardened in the f4 playbook. EULA gate: a EULA-bearing install is refused unless the user
+  accepted on screen (`EulaAcceptances`), the installer never runs without it (red-on-revert). Two Windows/
+  target-side playbooks written (f4 collector; eula acceptance) per the owner's "leave the Windows playbook
+  for another agent" steer. 255 tests, clippy clean. **Pick up: push + PR; then the real Windows collector
+  (f4 playbook) is the remaining F4 piece.**
+
+- **2026-07-08 02:50 UTC** — **Owner scoping: a repertoire/reasoned-knowledge candidate tier + autonomous learning
+  (no engine code).** Maps onto EXISTING tiers: CandidateSource ColdModel(0.6)/CorpusPrimed(0.8) gains a
+  ~0.7 \`Repertoire\` tier (reasoned from KB/cec-autosetep driver library, flagged not-corpus-authored);
+  the "learn without a human" half IS the existing VerifierConfirmed sign-off + ResolvedProvisional
+  parole + independent-confirmation counting, gated on F4 + an auto-verifier. Confirmed 3 of 4 guardrails
+  are ALREADY enforced (escalation independent of confidence — panel:315; read-side repertoire vs
+  write-side corpus; independent-repetition-before-trust). Leak-C10: the uncertain flag is customer-facing
+  only, not a served-wire membership signal. Filed to FOLLOWUPS. cec-autosetep's driver library is the
+  first stock of the repertoire — unifies with the tool-vocabulary item.
+
+- **2026-07-08 01:45 UTC** — **Owner DECIDED the identity/de-id egress boundary (RFC D4): de-identify on egress,
+  release trigger = SCHEDULING a session.** Local ledger holds identity while local; booking a session is
+  the release consent; de-identified history attaches to the shop ticket there. Verified the premise:
+  the row carries the attested consent AUTHORITY (`sign_off` == granted level, `main.rs:695`) + risk +
+  outcome — "what was tried and that it was authorized," tamper-evident; only a rich consent RECEIPT
+  (timestamp/rendered-plan/restore-scope) would need a small add (filed). This resolves the shop-server
+  tier + reinstall-ledger backup (both de-identified off-box → no key custody). ONE sub-fork still open,
+  put to the owner with a recommendation: does de-id-on-egress ALSO bind the diagnosis brain
+  (PromptPayload-STRICT — recommended, since "raw prose would help" == the human-escalation signal) or is
+  the home brain a trusted exception. No code this turn.
+
+- **2026-07-08 01:39 UTC** — **cec-autosetep added to session + 2 more scoping items (no engine code).** Owner shared
+  \`nathanfraske/cec-autosetep\` (Apache-2.0 PowerShell driver-automation toolkit; cloned to
+  /workspace/cec-autosetep, registered). It is the engine's HANDS + EYES: Install-DriverPackage returns a
+  Status/Method/Detail result == StepResult (with -WhatIf dry-run + hash verify); Detect-Hardware/Gpu/
+  Peripherals = the F4 collector + config_class enrichment; Serve-DriverLibrary = a shop library-server
+  precedent. Answered the reinstall-durable troubleshooting-ledger question: YES — a per-machine
+  hardware-keyed tamper-evident LOCAL ledger (corpus data shape at a local privacy tier; re-attaches via
+  config_class-on-hardware + baseboard serial across a wipe; integrity via the existing chain + the Q5
+  anchor). **Unified 4 scoping items under ONE owner decision:** where the identity/de-id line falls when
+  data leaves the customer box (PromptPayload-strict, shop-server residency, ledger backup, brain
+  ephemerality all follow from it). All filed in FOLLOWUPS. cec-autosetep CLAUDE.md loads next turn.
+
+- **2026-07-08 01:35 UTC** — **Owner scoping (no code): shop-server identity tier + interactive customer-driven
+  multi-fix.** Confirmed both fit the design; filed 2 FOLLOWUPS. Key findings verified against `main`:
+  the serve path NEVER persists raw `describe` (transient for signature-derivation + inference, then
+  dropped; session holds only de-identified data — `serve.rs:71`), so the "identity at the shop, de-id
+  signal to the brain, brain holds it only for the request" split is largely already true. AUTO multi-fix
+  is already built (`MAX_ATTEMPTS=2` ranked-retry, per-candidate escalation recompute); the NEW work is a
+  multi-turn session + customer-optional escalation in the SAFE band only. **Reframed the pending
+  PromptPayload decision:** strict-vs-explicit is now clearly a DATA-RESIDENCY lever — strict = raw
+  customer text never reaches the home box even transiently (the strong version of the owner's Q1 concern),
+  explicit = brain sees it transiently for diagnosis quality. Both new features are VALUE-gated on F4
+  (without re-collection every attempt is Unverified). Corpus is thrash-proof either way (only signed-off
+  outcomes mint rows).
+
+- **2026-07-04 23:20 UTC** — **PR #19 MERGED (`main` @ `0c54578`): attestation v4 + the operator
+  runbook.** 12/12 checks green (incl. boundary + the tightened corpus-row secrets rule). Branch
+  restarted. The re-ingest window is OPEN: the operator runbook (docs/operator-runbook.md) is the
+  authoritative sequence — salt first, re-ingest once after this merge, never before. Session total:
+  three PRs designed-built-audited-merged (migration bundle, Phase-3 rails, attestation v4), two §7
+  blind panels (5 auditors total; every real finding fixed same-session; v4 panel clean), zero open
+  review threads.
 
 - **2026-07-04 23:00 UTC** — **Attestation v4 built + blind-panel CLEAN (2/2); PR opened.** v4 binds
   `RowProvenance::commitment()` (`cec-provenance-commitment-v1`) instead of raw provenance — the RFC Q6
