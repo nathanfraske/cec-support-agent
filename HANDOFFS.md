@@ -897,6 +897,21 @@ See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementati
 
 ## Handoff log (reverse-chronological)
 
+- **2026-07-08 03:18 UTC** — **BUILD: F4 autonomous-learning seam + repertoire tier + EULA gate (3 commits, PR next).**
+  The engine-side half of the self-learning capability the owner greenlit. F4: `recollect_post_signature`
+  is now a `PostFixCollector` seam (NullCollector default; `post_fix_collector` is the single Windows swap
+  point) — the autonomous VerifierConfirmed→ResolvedProvisional loop is proven end-to-end with a mock
+  collector (clean re-collection → resolved corpus row, NO human), plus the safety half (recurring → hard
+  negative; empty/None → Unverified). `CandidateSource::Repertoire` (0.7 prior, between ColdModel 0.6 and
+  CorpusPrimed 0.8). A §7 blind panel caught a real fabrication vector I introduced (empty `Some(vec![])`
+  scored as Pass) — FIXED (empty re-collection fails closed) with a guard test; residuals (coverage,
+  grammar false-negatives, cold-start-authority Path B, evidentiary-independence Path C) filed to
+  FOLLOWUPS + hardened in the f4 playbook. EULA gate: a EULA-bearing install is refused unless the user
+  accepted on screen (`EulaAcceptances`), the installer never runs without it (red-on-revert). Two Windows/
+  target-side playbooks written (f4 collector; eula acceptance) per the owner's "leave the Windows playbook
+  for another agent" steer. 255 tests, clippy clean. **Pick up: push + PR; then the real Windows collector
+  (f4 playbook) is the remaining F4 piece.**
+
 - **2026-07-08 02:50 UTC** — **Owner scoping: a repertoire/reasoned-knowledge candidate tier + autonomous learning
   (no engine code).** Maps onto EXISTING tiers: CandidateSource ColdModel(0.6)/CorpusPrimed(0.8) gains a
   ~0.7 \`Repertoire\` tier (reasoned from KB/cec-autosetep driver library, flagged not-corpus-authored);

@@ -480,3 +480,32 @@ recommends that are NOT yet built, each attributed to the threat doc's §3 contr
   net-new. Resume: `crates/common/src/candidate.rs` (CandidateSource), `crates/panel/src/lib.rs` (priors +
   escalation), sign-off ladder `crates/corpus-client/src/schema.rs`, F4 stub `main.rs:1144`, cec-autosetep
   `src/DriverLibrary.psm1`.
+
+- [ ] [added 2026-07-08 03:18 UTC] **[F4 collector correctness residuals (blind-audit 2026-07-08, Windows-side)]** The §7
+  panel on the autonomous-verification seam flagged three items that are inherent to the real collector's
+  correctness and cannot be enforced engine-side from Linux (the engine-side empty-observation guard is
+  DONE, `8bf9047`): **(M2) coverage/pre-post binding** — a Pass requires the collector re-EXERCISED the
+  fault (re-ran the reproducing workload) before collecting, and that `post` came from the same target
+  strictly after the fix; a healthy-looking snapshot from a machine that never re-ran the failing path is a
+  false pass. **(M6) closed-grammar false negatives** — `extract_symptoms` drops out-of-grammar tokens, so
+  a recurrence presenting with a novel/renamed/localized token reads as resolved even for an honest
+  collector; consider a coverage/liveness token or widening the grammar as the corpus matures. Both are
+  documented as hard requirements in `docs/f4-windows-collector-playbook.md`. — why deferred: needs the
+  real Windows collector + hardware. Resume: the playbook; `crates/tools-windows`; `common/src/extract.rs`.
+- [ ] [added 2026-07-08 03:18 UTC] **[autonomous verification REQUIRES a configured verifier authority (blind-audit Path B)]**
+  A no-authority (cold-start) corpus admits a `VerifierConfirmed` row on the flag alone — fine for a human's
+  manual `--sign-off verifier`, but for the AUTONOMOUS loop it means an unattested self-asserted resolved
+  row a compromised box could mint. Documented as a hard deployment requirement (f4 playbook + operator
+  runbook §1: provision the verifier ed25519 key). DEFENSE-IN-DEPTH to build: have the engine REFUSE a
+  machine-originated (autonomous) resolved sign-off when no authority is configured — needs a way to mark a
+  sign-off as autonomous vs operator-supplied (today `--sign-off verifier` is indistinguishable from an
+  auto-verifier sign-off). — why deferred: needs the autonomous-verifier wiring (comes with the F4 Windows
+  collector) to carry the distinction. Resume: `record_outcome`/gate `admit`; the auto-verifier in the F4
+  build; `docs/operator-runbook.md`.
+- [ ] [added 2026-07-08 03:18 UTC] **[evidentiary independence of confirmations (blind-audit Path C)]** Confirmation counting
+  treats "distinct run_id" as independent, but run_id is caller-minted, so an autonomous loop could emit N
+  fresh-run_id clean passes and graduate a `ResolvedProvisional` to durable confidence without genuinely
+  independent evidence. Pre-existing (not introduced by this change) but sharper now that autonomous rows
+  exist. Consider binding independence to real signals (distinct time windows, distinct observed post-state,
+  rate limits). — why deferred: pre-existing design item; broader than the F4 seam. Resume:
+  `corpus-client/src/store.rs` confirmation counting; `docs/corpus-cartography-threat.md`.
