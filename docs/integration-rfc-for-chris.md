@@ -33,6 +33,19 @@ code.) The engine stays standalone/cold-start; integration is additive trait sea
 
 ## Decided — please sanity-check
 
+> **D4. Identity/de-id egress boundary (owner, Nathan, 2026-07-08): de-identify on egress; the release
+> trigger is SCHEDULING a session.** A per-machine LOCAL troubleshooting ledger may hold identity while it
+> stays on the customer's box. When the customer schedules a session with the shop, that act is the release
+> consent, and the DE-IDENTIFIED history (fault signature, plan tried with risk + attested sign_off,
+> outcome/verification) is released to the shop and attaches to the identity-bearing ticket there — the
+> join of identity ⇄ history happens at the trusted shop tier, never on the wire. The corpus row already
+> carries the consent AUTHORITY (attested `sign_off`) + risk + outcome, so the released history is
+> "what was tried and that it was authorized," tamper-evident. Consequences: the shop-server tier + the
+> reinstall-durable ledger's off-box backup are de-identified (no key custody needed for shop copies).
+> ONE sub-fork remains open — whether the diagnosis brain is bound by the same rule (PromptPayload-strict)
+> or is a trusted exception; see the RFC/FOLLOWUPS PromptPayload item.
+
+
 - **D1. ~~Single-shot CLI, not a daemon~~ — SUPERSEDED 2026-07-02 (see banner): the engine
   presents as an API service.** Original rationale kept for the record: AllMyStuff spawns
   `cec-support-agent diagnose --json …` per diagnosis (nothing to orphan, simplest); a

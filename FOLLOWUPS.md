@@ -428,10 +428,30 @@ recommends that are NOT yet built, each attributed to the threat doc's §3 contr
   store (a machine-scoped CorpusStore variant), the re-attach/hardware-id logic, and the ONE shared privacy
   decision below. Resume: `crates/corpus-client` (CorpusStore + RowIntegrity + anchor); config_class
   `crates/common/src/config_class.rs`; cec-autosetep Detect-Hardware.
-- [ ] [added 2026-07-08 01:39 UTC] **[THE single identity/de-id-boundary decision — unifies 4 scoping items]** PromptPayload
+- [x] [added 2026-07-08 01:39 UTC] **[THE single identity/de-id-boundary decision — unifies 4 scoping items]** PromptPayload
   strict-vs-explicit, the shop-server identity tier, and the reinstall-durable ledger backup all fork on the
   SAME question: where does the identity/de-id line fall when data leaves the customer's box? One decision:
   data off-box is either encrypted-at-rest under a key only owner/customer holds, or de-identified. Decide
   once; PromptPayload-strict (brain never sees raw prose), shop-server residency, and ledger-backup custody
   all follow from it. — why deferred: owner decision. Resume: the 3 scoping FOLLOWUPS above + the
   PromptPayload item + `docs/operator-runbook.md` §5.
+  · DECIDED (owner, 2026-07-08): **de-identify on egress; the release trigger is the SCHEDULING event.**
+  Local ledger holds identity while on the customer box; booking a session IS the release consent, and at
+  that moment the DE-IDENTIFIED history (signature, plan-tried with risk + attested sign_off, outcome/
+  verification) is released to the shop and attaches to the identity-bearing ticket THERE. Verified the row
+  already carries the consent AUTHORITY (attested `sign_off` == the granted consent level, `main.rs:695`) +
+  risk + outcome — so "what was tried and that it was authorized" is present and tamper-evident. RESOLVES:
+  shop-server identity tier + reinstall-ledger off-box backup (de-id, so no encryption-key custody needed
+  for shop-bound copies; a LOCAL customer-media backup may still hold identity). STILL OPEN (one sub-fork):
+  the diagnosis BRAIN — does the same de-id-on-egress rule bind it (PromptPayload-STRICT; agent recommends
+  this — "raw prose would help" IS the human-escalation signal) or is the home brain a trusted exception
+  (raw prose pre-scheduling OK)? Awaiting owner.
+
+- [ ] [added 2026-07-08 01:45 UTC] **[consent RECEIPT on the ledger entry (small; owner 2026-07-08)]** The row records the
+  consent AUTHORITY (attested `sign_off` = granted level) + plan risk + outcome — enough for "was this
+  authorized and to what level," tamper-evident. A rich consent RECEIPT (timestamp, the exact rendered plan
+  the customer saw, restore-point scope) for a dispute/liability trail is NOT a stored field. Add either an
+  explicit de-identified consent-receipt field on the ledger entry or surface it from the audit log
+  (`audit.rs` ExecutionRecord — currently a closed field set with no receipt). — why deferred: small; only
+  needed if a legal/dispute receipt is required beyond the attested authority fact. Resume:
+  `crates/corpus-client/src/schema.rs` Contribution; `crates/support-agent/src/audit.rs`.

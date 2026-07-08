@@ -897,6 +897,17 @@ See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementati
 
 ## Handoff log (reverse-chronological)
 
+- **2026-07-08 01:45 UTC** — **Owner DECIDED the identity/de-id egress boundary (RFC D4): de-identify on egress,
+  release trigger = SCHEDULING a session.** Local ledger holds identity while local; booking a session is
+  the release consent; de-identified history attaches to the shop ticket there. Verified the premise:
+  the row carries the attested consent AUTHORITY (`sign_off` == granted level, `main.rs:695`) + risk +
+  outcome — "what was tried and that it was authorized," tamper-evident; only a rich consent RECEIPT
+  (timestamp/rendered-plan/restore-scope) would need a small add (filed). This resolves the shop-server
+  tier + reinstall-ledger backup (both de-identified off-box → no key custody). ONE sub-fork still open,
+  put to the owner with a recommendation: does de-id-on-egress ALSO bind the diagnosis brain
+  (PromptPayload-STRICT — recommended, since "raw prose would help" == the human-escalation signal) or is
+  the home brain a trusted exception. No code this turn.
+
 - **2026-07-08 01:39 UTC** — **cec-autosetep added to session + 2 more scoping items (no engine code).** Owner shared
   \`nathanfraske/cec-autosetep\` (Apache-2.0 PowerShell driver-automation toolkit; cloned to
   /workspace/cec-autosetep, registered). It is the engine's HANDS + EYES: Install-DriverPackage returns a
