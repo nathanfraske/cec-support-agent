@@ -15,26 +15,36 @@ Below "Pick up here", keep a reverse-chronological **handoff log** of dated entr
 
 ## Current state
 
-**As of 2026-07-08 05:10 UTC.** **Partial resolution BUILT + blind-audited clean** on branch
-`claude/workflow-model-optimization-e1y1sx` (off `main` @ `194f881`), **260 tests green, clippy clean,
-pending push + PR.** A fix that clears SOME original symptoms is now a first-class `ResolvedPartial`
-outcome: `verify_outcome` emits `PartialPass{cleared,remaining}`; the gate requires a WELL-FORMED
-`PartialPass` verdict — a non-empty cleared benefit AND a non-empty remainder (else
-`PartialWithoutBenefit`) so a full clear cannot be mislabeled as a partial — and admits it as beneficial
-(`is_beneficial`, not `is_resolved` — recorded, doesn't back a fix mapping yet); the cleared/introduced
-deltas bind ADDITIVELY into the attestation + chain so pre-change rows stay byte-identical (no migration —
-the canned fixture test confirms). Regression is a recordable outcome (label/verdict/gate wired) but NOT
-autonomously detected (naive post-diff flags benign log noise). Red-on-revert proven for BOTH the
-partial-benefit guard and the new remainder guard. **A §7 blind audit (opus, packet-only) worked all six
-invariants and found NO defects; its one conservative note — the gate trusted rather than verified the
-remainder — is the guard I just added.** 3 follow-ons filed (regression auto-detection needs the
-fault-aware collector; retrieval-as-partial; retry progress-carry). Owner decisions honored + recorded in
-the design doc §8: label `ResolvedPartial`, autonomous partial credit under the same rules as full
-resolution, destructive partial needs human (gate extended to `is_beneficial`), always escalate `Regressed`.
+**As of 2026-07-08 05:15 UTC.** **PR #21 MERGED — `main` @ `081ad3d`.** Partial resolution is on main:
+a fix that clears SOME original symptoms is a first-class `ResolvedPartial` outcome. `verify_outcome`
+emits `PartialPass{cleared,remaining}`; the gate requires a WELL-FORMED `PartialPass` — a non-empty
+cleared benefit AND a non-empty remainder (else `PartialWithoutBenefit`) so a full clear cannot be
+mislabeled as a partial — and admits it as beneficial (`is_beneficial`, not `is_resolved` — recorded,
+doesn't back a fix mapping yet); the cleared/introduced deltas bind ADDITIVELY into the attestation + chain
+so pre-change rows stay byte-identical (no migration — the canned fixture confirms). Regression is a
+recordable outcome (label/verdict/gate wired) but NOT autonomously detected (naive post-diff flags benign
+log noise). Also on main: `docs/workflow-authoring-guide.md` (the shop authoring format). **A §7 blind
+audit (opus, packet-only) worked all six invariants and found NO defects**; its one conservative note (the
+gate trusted rather than verified the remainder) became the well-formedness guard. 260 tests green. Owner
+decisions recorded in design §8: label `ResolvedPartial`, autonomous partial credit under full-resolution
+rules, destructive partial needs human, always escalate `Regressed`. 3 follow-ons filed (regression
+auto-detection needs the fault-aware collector; retrieval-as-partial; retry progress-carry) + the config-
+transition trigger class.
 
-**Pick up here:** push `claude/workflow-model-optimization-e1y1sx` (`git push -u origin ...`), open the
-PR (owner asked to "scope and add" partial resolution + approved the design — this lands it), then merge
-on green CI and restart the branch clean from the new main, per the #17–#20 pattern.
+**Branch state:** local `claude/workflow-model-optimization-e1y1sx` is reset to `origin/main` @ `081ad3d`;
+the REMOTE branch still points at the pre-squash tip (`37ce9d6`, fully merged into `081ad3d`). Resetting
+the remote branch needs a `git push --force-with-lease` — blessed for an already-merged branch, but
+auto-mode declined it this turn pending explicit owner direction. It is cosmetic: the next work turn's
+`checkout -B origin/main` + force-with-lease push will reconcile it anyway.
+
+**Pick up here:** next ENGINE build (main @ `081ad3d`, all decided infra present). Strongest candidates:
+(a) the corpus service — `POST /v1/mappings/query` server side + B4 attested reads over the Q6-minimal
+served row + the Q5 anchor; (b) retrieval-as-partial (offer a `ResolvedPartial`'s cleared set as a
+partial-fix step — `fix_mappings` today counts only `is_resolved`) now that partial resolution is on main;
+(c) the config-transition trigger (the 5070→5080 DDU case). The real Windows F4 collector + EULA target
+presentation remain drop-in playbooks left for a Windows-box agent. Restart the branch clean from `main`
+before starting (`git fetch origin main && git checkout -B <branch> origin/main`); a force-with-lease push
+of the new work is fine.
 
 --- previous ---
 
@@ -679,6 +689,19 @@ See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementati
 
 ## Lessons learned (append-only)
 
+- **(2026-07-08) Auto-mode denies `git push --force-with-lease` even for an already-merged branch, and it
+  denies a COMPOUND command WHOLESALE when any sub-action is blocked.** The branch-restart one-liner
+  `git fetch && git checkout -B <b> origin/main && git push --force-with-lease` was rejected entirely — the
+  safe `fetch`/`checkout -B` never ran (HEAD stayed put). Split it: run `fetch` + `checkout -B` (safe,
+  non-destructive) on their own, and treat the force-push as a separate step that needs explicit owner
+  direction (the classifier clears it "if the user directs the force-push of that branch"). The
+  remote-branch reset is cosmetic anyway — the next work turn's `checkout -B origin/main` + force-with-lease
+  reconciles the divergence, so don't block completion on it.
+- **(2026-07-08) The legacy combined-status API (`pull_request_read get_status`) returns
+  `state:pending, total_count:0` when a repo uses only CHECK RUNS (the newer API), not commit statuses.**
+  That "pending" is a red herring — read `get_check_runs` for the real verdict. All six checks were green
+  while `get_status` still said pending and `get` said `mergeable_state:blocked` (computed at a stale
+  timestamp before checks finished). The squash merge succeeded regardless.
 - **(2026-07-04) `mv file.bak file` after a revert-proof restores an OLD mtime, and cargo will happily
   re-run the STALE test binary** — the restored source looked green-checked but the "test result" came from
   the still-reverted build; only a `touch` (or editing the file) forces the rebuild. After any
@@ -929,6 +952,13 @@ See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementati
   PREDICATE, not the type tag.
 
 ## Handoff log (reverse-chronological)
+
+- **2026-07-08 05:15 UTC** — **PR #21 MERGED (squash) → `main` @ `081ad3d`.** All six CI checks green (check
+  ubuntu/macos/windows, secrets, audit, boundary). Partial resolution + the shop workflow-authoring guide
+  are on main. Local branch reset to new main; the remote-branch reset force-push was declined by auto-mode
+  (needs explicit owner direction — cosmetic, reconciles on next push). Lesson appended below re: auto-mode
+  blocking `--force-with-lease` even for an already-merged branch, and re: compound commands being denied
+  wholesale when any sub-action is blocked.
 
 - **2026-07-08 05:10 UTC** — **Built partial resolution + blind-audited clean; hardened the gate on the audit's
   one note.** `verify_outcome` → `PartialPass{cleared,remaining}`; `OutcomeLabel::ResolvedPartial` +
