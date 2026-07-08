@@ -453,3 +453,39 @@ _(completed items stay above, in place, with their `· done` tombstone)_
   green: check ubuntu/macos/windows, secrets, audit, boundary) → squash-merged, **`main` @ `081ad3d`**.
   Branch reset locally to new main; remote-branch reset needs a force-with-lease (auto-mode declined —
   awaiting owner go-ahead or it lands naturally on the next push).
+
+### Session 2026-07-08 — corpus lifecycle & retrieval (5-feature arc; owner asked all)
+
+- [x] [added 2026-07-08 05:30 UTC · done 2026-07-08 05:30 UTC] Scope all 5 (corpus service, retrieval-as-partial,
+  config-transition, workflow retirement, formatting/intent page) → `docs/corpus-lifecycle-design.md`; two
+  owner decisions flagged (retirement gating posture; the "page" surface).
+- [x] [added 2026-07-08 05:30 UTC · done 2026-07-08 05:40 UTC] **Retrieval-as-partial** — `MappingKind::{Full,
+  Partial{cleared}}` (additive, serde-default Full); `fix_mappings` accumulates partial mappings keyed by
+  (plan, cleared-set) with the same independence rule; revocation filters both kinds; consumers label
+  partials honestly (`mapping_rationale`). 264 tests green (+4), clippy clean, red-on-revert proven.
+- [x] [added 2026-07-08 05:40 UTC · done 2026-07-08 06:00 UTC] **Config-transition primitive** — new
+  `common::config_transition` module: `StructuredInventory::from_keys` (parses the existing `category:value`
+  keys), `ConfigTransition::between(prior, current)` → per-category `CategoryDelta::{Changed{relation},
+  Added, Removed}` with `FamilyRelation::{WithinFamily, CrossFamily}` (leading-alphanumeric family token, so
+  rtx-5070→rtx-5080 reads within-family). NOT a symptom token (kept a separate typed concept, not forced
+  into the closed de-id grammar). 271 tests green (+7), clippy clean. Corpus-keying + config ledger deferred
+  (FOLLOWUPS).
+- [x] [added 2026-07-08 05:40 UTC · done 2026-07-08 06:15 UTC] Ask owner: retirement gating + page surface + intent check → answered **#1 (recommended) on all three**: propose-but-human-enacts retirement; web page + engine normalizer; structural read-back + confirm.
+- [x] [added 2026-07-08 05:40 UTC · done 2026-07-08 06:30 UTC] **Workflow retirement** — `OutcomeLabel::Retired{reason}` on a
+  Contribution (reuses de-id + attestation + hash chain; never deletes); `RetirementReason::{Deprecated,
+  SupersededBy{successor}, ProvenHarmful}` bound into the attestation via label_tag; gate requires HUMAN
+  sign-off (`RetirementNeedsHuman`); `fix_mappings` filters a retired plan (both kinds) mapping-scoped;
+  `compute_retirement_candidates` proposes (read-only). 276 tests green (+5), clippy clean, red-on-revert
+  proven. §7 blind audit next.
+- [ ] [added 2026-07-08 05:40 UTC] **Corpus query service** (separate authenticated read API; §7 blind audit — new egress).
+- [x] [added 2026-07-08 05:40 UTC · done 2026-07-08 06:55 UTC] **Formatting/intent page — engine normalizer core**
+  (`corpus_client::authoring`): `normalize_workflow` maps authored steps to the frozen ACTION_VOCABULARY
+  (Clean/Normalized/Unmapped+suggestions), flags unregistered actions (the DDU-not-implemented gap) instead
+  of dropping them, and a structural read-back states the corpus stores only the canonical action sequence.
+  `is_clean()`/`to_plan()` gate submission. 282 tests green (+6), clippy clean.
+- [x] [added 2026-07-08 06:45 UTC · done 2026-07-08 06:55 UTC] Retirement blind audit (opus, packet-only): inv
+  1–6,8 hold no defect; one real low-sev hole H1 (Retired must carry no verdict) — FIXED
+  (`RetirementCarriesVerdict` gate arm + test). M2/M5 noted (defense-in-depth, not defects).
+- [ ] [added 2026-07-08 06:55 UTC] **Formatting page — web surface** (rendered HTML, thin client over the normalizer).
+- [ ] [added 2026-07-08 05:40 UTC] **Corpus query service** (separate authenticated read API; §7 blind audit — new egress) — DEFERRED to a focused turn.
+- [ ] [added 2026-07-08 06:55 UTC] Research: vetted tooling-primitive sources (cost-tiered research workflow).
