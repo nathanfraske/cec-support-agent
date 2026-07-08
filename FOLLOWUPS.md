@@ -367,3 +367,29 @@ recommends that are NOT yet built, each attributed to the threat doc's §3 contr
   only). — why deferred: needs that owner call + pairs naturally with L3a; nothing blocks on it while
   inference is loopback-gated. Resume: `crates/inference` ChatMessage; call sites `main.rs:1487`,
   `agent-core/src/agent.rs:69/101/128`, `intake/src/lib.rs:495`.
+
+- [ ] [added 2026-07-08 01:35 UTC] **[shop-server identity tier + brain ephemerality (owner scoping 2026-07-08)]** The
+  identity-bearing customer/ticket data lives on a SHOP SERVER (system of record); it sends the engine only
+  `describe` + inventory keys and stores the returned envelope against its own ticket. The engine holds no
+  customer identity (de-id boundary). Already true: the serve path never persists raw `describe` — it is
+  used transiently for signature-derivation + inference then dropped; the stored session
+  (`serve.rs:71`) holds only de-identified signature + hashed config class + de-identified candidates.
+  BUILD: (1) the shop-server client + ticket store (mostly not engine work — an API client like the
+  AllMyStuff one); (2) OPTIONAL brain hardening — documented "never log `describe`" invariant + zeroize
+  raw prose after inference. The STRONG residency property ("raw customer text never reaches the home box
+  even transiently") == PromptPayload-strict (below). — why deferred: owner scoping; gated on the
+  PromptPayload strict/explicit decision + the corpus-service/API tier. Resume: `serve.rs` handle_diagnose;
+  `docs/operator-runbook.md` §4; the PromptPayload item.
+- [ ] [added 2026-07-08 01:35 UTC] **[interactive customer-driven multi-fix session (owner scoping 2026-07-08)]** Let the
+  customer work through multiple fixes and request/prompt more before booking a human. AUTO multi-fix is
+  ALREADY built (ranked slate + bounded retry, `MAX_ATTEMPTS=2`, per-candidate escalation recompute, hard
+  negatives, next-best fallback). NEW work: (a) a MULTI-TURN serve session (today's is one-shot / consumed
+  on execute, TTL 15m) that survives multiple execute attempts, tracks the tried-failed set, and can
+  generate fresh candidates / re-diagnose on new customer input; (b) a customer-OPTIONAL escalation policy
+  in the SAFE/reversible band only — the safety floor (destructive/hardware/unverified ⇒ human) is fixed and
+  must never be widened by the customer choosing "try more" (consent authority ≠ attempt count). Safety
+  primitives all exist + audited; the corpus is thrash-proof (only signed-off outcomes mint rows).
+  VALUE-GATED ON F4: without real re-collection every attempt is Unverified, so the loop can't self-assess
+  ("worked" vs "still broken"). "Prompt fixes" = more raw prose → brain, ties to PromptPayload. — why
+  deferred: owner scoping + needs the F4 re-collection to be worth it + a session-lifecycle decision.
+  Resume: `serve.rs` Session/one-shot model; `main.rs:700-790` retry loop; F4 stub `main.rs:1144`.
