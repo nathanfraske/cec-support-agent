@@ -489,3 +489,15 @@ _(completed items stay above, in place, with their `· done` tombstone)_
 - [ ] [added 2026-07-08 06:55 UTC] **Formatting page — web surface** (rendered HTML, thin client over the normalizer).
 - [ ] [added 2026-07-08 05:40 UTC] **Corpus query service** (separate authenticated read API; §7 blind audit — new egress) — DEFERRED to a focused turn.
 - [ ] [added 2026-07-08 06:55 UTC] Research: vetted tooling-primitive sources (cost-tiered research workflow).
+
+### Session 2026-07-08 — safe-core tool catalog + priority research panel
+- [x] [added 2026-07-08 08:30 UTC · done 2026-07-08 08:45 UTC] **Safe-core implementation** — `tools-windows/catalog.rs`:
+  data-driven `CatalogEntry` + `SAFE_CORE` (50 read-only/reversible primitives, de-jargoned plain-language
+  title+summary+risk) registered as `CatalogTool`s in `windows_tools()`; names merged into
+  `deid::ACTION_VOCABULARY` (58 total, sorted); arg-free read-only ones run on Windows, arg-taking ones
+  declare their contract for the Windows drop-in. **`DESTRUCTIVE_OPS` (13) is a separate DIFFERENTIATED list**
+  — not registered, not in vocab, human-gated (owner: "add the destructive ops to a list as well, just
+  differentiated"). docs/tool-catalog.md (generated, plain-language) + docs/safe-core-windows-execution-playbook.md.
+  287 tests green (+5), clippy clean, drift test in lockstep.
+- [ ] [added 2026-07-08 08:45 UTC] Priority A–H research panel launched (w10g0ycy7): C1/A1/A2/B1/D1/D2/D3/E1,
+  legal-grade 2-source for D, Opus bias-check. Deliver briefs + audit on completion.

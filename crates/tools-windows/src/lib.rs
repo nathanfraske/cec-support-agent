@@ -14,23 +14,33 @@
 //! and they capture a restore point before they mutate anything.
 
 mod advisory;
+mod catalog;
 
 use agent_core::{Tool, ToolError, ToolOutcome};
 use async_trait::async_trait;
 use common::Risk;
 
 pub use advisory::{firmware_advisory, BoardIdentity, SupportAdvisory};
+pub use catalog::{
+    catalog_tools, safe_core_names, CatalogEntry, CatalogTool, DESTRUCTIVE_OPS, SAFE_CORE,
+};
 
-/// All Windows tools, ready to register with an `agent_core::Dispatcher`.
+/// All Windows tools, ready to register with an `agent_core::Dispatcher`: the six
+/// hand-written tools plus the data-driven [`SAFE_CORE`] catalog. The destructive
+/// ops ([`DESTRUCTIVE_OPS`]) are deliberately NOT registered here — they are a
+/// tracked, differentiated list that a Windows agent wires in behind human
+/// sign-off, not something the engine auto-dispatches.
 pub fn windows_tools() -> Vec<Box<dyn Tool>> {
-    vec![
+    let mut tools: Vec<Box<dyn Tool>> = vec![
         Box::new(CimQuery),
         Box::new(EventLogQuery),
         Box::new(CreateRestorePoint),
         Box::new(RegistrySet),
         Box::new(BoardInfo),
         Box::new(DownloadFile),
-    ]
+    ];
+    tools.extend(catalog_tools());
+    tools
 }
 
 #[cfg(windows)]
@@ -486,14 +496,31 @@ mod tests {
     #[test]
     fn builder_exposes_all_tools() {
         let tools = windows_tools();
-        assert_eq!(tools.len(), 6);
+        // The six hand-written tools plus the data-driven SAFE_CORE catalog.
+        assert_eq!(tools.len(), 6 + SAFE_CORE.len());
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
-        assert!(names.contains(&"cim_query"));
-        assert!(names.contains(&"event_log_query"));
-        assert!(names.contains(&"create_restore_point"));
-        assert!(names.contains(&"registry_set"));
-        assert!(names.contains(&"board_info"));
-        assert!(names.contains(&"download_file"));
+        for hand in [
+            "cim_query",
+            "event_log_query",
+            "create_restore_point",
+            "registry_set",
+            "board_info",
+            "download_file",
+        ] {
+            assert!(names.contains(&hand), "missing hand-written tool {hand}");
+        }
+        // Every safe-core catalog entry is registered too.
+        for e in SAFE_CORE {
+            assert!(names.contains(&e.name), "missing catalog tool {}", e.name);
+        }
+        // Destructive ops are NOT registered (differentiated, human-gated).
+        for e in DESTRUCTIVE_OPS {
+            assert!(
+                !names.contains(&e.name),
+                "destructive op {} must not be auto-registered",
+                e.name
+            );
+        }
     }
 
     #[test]
