@@ -367,3 +367,71 @@ recommends that are NOT yet built, each attributed to the threat doc's §3 contr
   only). — why deferred: needs that owner call + pairs naturally with L3a; nothing blocks on it while
   inference is loopback-gated. Resume: `crates/inference` ChatMessage; call sites `main.rs:1487`,
   `agent-core/src/agent.rs:69/101/128`, `intake/src/lib.rs:495`.
+
+- [ ] [added 2026-07-08 01:35 UTC] **[shop-server identity tier + brain ephemerality (owner scoping 2026-07-08)]** The
+  identity-bearing customer/ticket data lives on a SHOP SERVER (system of record); it sends the engine only
+  `describe` + inventory keys and stores the returned envelope against its own ticket. The engine holds no
+  customer identity (de-id boundary). Already true: the serve path never persists raw `describe` — it is
+  used transiently for signature-derivation + inference then dropped; the stored session
+  (`serve.rs:71`) holds only de-identified signature + hashed config class + de-identified candidates.
+  BUILD: (1) the shop-server client + ticket store (mostly not engine work — an API client like the
+  AllMyStuff one); (2) OPTIONAL brain hardening — documented "never log `describe`" invariant + zeroize
+  raw prose after inference. The STRONG residency property ("raw customer text never reaches the home box
+  even transiently") == PromptPayload-strict (below). — why deferred: owner scoping; gated on the
+  PromptPayload strict/explicit decision + the corpus-service/API tier. Resume: `serve.rs` handle_diagnose;
+  `docs/operator-runbook.md` §4; the PromptPayload item.
+- [ ] [added 2026-07-08 01:35 UTC] **[interactive customer-driven multi-fix session (owner scoping 2026-07-08)]** Let the
+  customer work through multiple fixes and request/prompt more before booking a human. AUTO multi-fix is
+  ALREADY built (ranked slate + bounded retry, `MAX_ATTEMPTS=2`, per-candidate escalation recompute, hard
+  negatives, next-best fallback). NEW work: (a) a MULTI-TURN serve session (today's is one-shot / consumed
+  on execute, TTL 15m) that survives multiple execute attempts, tracks the tried-failed set, and can
+  generate fresh candidates / re-diagnose on new customer input; (b) a customer-OPTIONAL escalation policy
+  in the SAFE/reversible band only — the safety floor (destructive/hardware/unverified ⇒ human) is fixed and
+  must never be widened by the customer choosing "try more" (consent authority ≠ attempt count). Safety
+  primitives all exist + audited; the corpus is thrash-proof (only signed-off outcomes mint rows).
+  VALUE-GATED ON F4: without real re-collection every attempt is Unverified, so the loop can't self-assess
+  ("worked" vs "still broken"). "Prompt fixes" = more raw prose → brain, ties to PromptPayload. — why
+  deferred: owner scoping + needs the F4 re-collection to be worth it + a session-lifecycle decision.
+  Resume: `serve.rs` Session/one-shot model; `main.rs:700-790` retry loop; F4 stub `main.rs:1144`.
+
+- [ ] [added 2026-07-08 01:39 UTC] **[cec-autosetep integration — the target-side executor's hands + eyes (owner
+  2026-07-08)]** Repo `nathanfraske/cec-autosetep` (Apache-2.0, PowerShell 5.1 + in-box Windows tools,
+  USB-resident) is the concrete driver-automation toolkit the engine's coarse tool vocabulary lacks.
+  Three integration surfaces: (1) TOOL VOCABULARY — `Install-DriverPackage` (download→hash-verify→
+  pnputil/msiexec silent install) already returns a Status/Method/Detail result == the engine's
+  StepResult/ExecutionResult, with a -WhatIf dry-run (plan preview) + hash verify (integrity); register
+  these as dispatcher actions with risk classes. (2) F4 + config_class — Detect-Hardware (Win32_BaseBoard
+  vendor/model/version + serial), Detect-Gpu, Detect-Peripherals are the collection instrument F4 needs +
+  the inventory enrichment that closes the coarse-config-class (A7/MH-6) gap; the baseboard serial is a
+  stable per-machine id. (3) SHOP-SERVER precedent — `tools/Serve-DriverLibrary.ps1` + systemd + nginx is
+  a LAN driver-library server with content hashes (clients use -Mirror); the same shop-hosted/thin-client
+  split as the shop-server identity tier. Apache-2.0 ⇒ the thin target executor can shell out to it (no
+  AGPL friction) OR port its provider/detect logic. Seam: engine signs a plan of cec-autosetep ops → thin
+  executor runs them → $result objects become StepResults; Detect-Hardware feeds config_class + F4.
+  — why deferred: owner scoping; pairs with the target-side executor + F4 build (F3 judge-key custody).
+  Resume: cec-autosetep `src/Install-Engine.psm1`, `src/Detect-Hardware.psm1`, `tools/Serve-DriverLibrary.ps1`;
+  engine dispatcher `crates/tools-windows`; F4 stub `main.rs:1144`.
+- [ ] [added 2026-07-08 01:39 UTC] **[reinstall-durable per-machine troubleshooting ledger (owner scoping 2026-07-08)]** A
+  per-machine, HARDWARE-keyed, tamper-evident LOCAL ledger of (signature → plan tried → outcome →
+  verification) that survives a Windows reinstall. Design: it is the corpus data shape at a LOCAL privacy
+  tier — same triples, scoped to one machine, ALLOWED to hold identity because it never leaves the box; a
+  resolved+signed-off local outcome de-identifies and promotes to the shared corpus (two tiers of one
+  store). Re-attach survives reinstall because config_class keys on HARDWARE not the OS install (confirmed);
+  pin to one physical machine via the baseboard serial (cec-autosetep Detect-Hardware already reads it).
+  Reinstall-durable storage: USB/imaging stick (cec-autosetep is already USB-resident + logs to
+  %ProgramData%), a second partition, a shop-server copy keyed by hardware id (driver-library-server
+  pattern), or mesh backup. Integrity across the gap = the EXISTING RowIntegrity chain + attestation + the
+  Q5 tail-truncation ANCHOR (this is the concrete reason the anchor matters — a returning machine must not
+  truncate/forge "everything was tried" or "it worked"). Payoff: retrieval-first against the LOCAL ledger
+  before the shared corpus stops re-treading, powers the customer multi-fix loop, feeds F4, and hands a
+  tech the machine history a reinstall normally wipes. — why deferred: owner scoping; needs the ledger
+  store (a machine-scoped CorpusStore variant), the re-attach/hardware-id logic, and the ONE shared privacy
+  decision below. Resume: `crates/corpus-client` (CorpusStore + RowIntegrity + anchor); config_class
+  `crates/common/src/config_class.rs`; cec-autosetep Detect-Hardware.
+- [ ] [added 2026-07-08 01:39 UTC] **[THE single identity/de-id-boundary decision — unifies 4 scoping items]** PromptPayload
+  strict-vs-explicit, the shop-server identity tier, and the reinstall-durable ledger backup all fork on the
+  SAME question: where does the identity/de-id line fall when data leaves the customer's box? One decision:
+  data off-box is either encrypted-at-rest under a key only owner/customer holds, or de-identified. Decide
+  once; PromptPayload-strict (brain never sees raw prose), shop-server residency, and ledger-backup custody
+  all follow from it. — why deferred: owner decision. Resume: the 3 scoping FOLLOWUPS above + the
+  PromptPayload item + `docs/operator-runbook.md` §5.

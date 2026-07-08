@@ -897,6 +897,31 @@ See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementati
 
 ## Handoff log (reverse-chronological)
 
+- **2026-07-08 01:39 UTC** — **cec-autosetep added to session + 2 more scoping items (no engine code).** Owner shared
+  \`nathanfraske/cec-autosetep\` (Apache-2.0 PowerShell driver-automation toolkit; cloned to
+  /workspace/cec-autosetep, registered). It is the engine's HANDS + EYES: Install-DriverPackage returns a
+  Status/Method/Detail result == StepResult (with -WhatIf dry-run + hash verify); Detect-Hardware/Gpu/
+  Peripherals = the F4 collector + config_class enrichment; Serve-DriverLibrary = a shop library-server
+  precedent. Answered the reinstall-durable troubleshooting-ledger question: YES — a per-machine
+  hardware-keyed tamper-evident LOCAL ledger (corpus data shape at a local privacy tier; re-attaches via
+  config_class-on-hardware + baseboard serial across a wipe; integrity via the existing chain + the Q5
+  anchor). **Unified 4 scoping items under ONE owner decision:** where the identity/de-id line falls when
+  data leaves the customer box (PromptPayload-strict, shop-server residency, ledger backup, brain
+  ephemerality all follow from it). All filed in FOLLOWUPS. cec-autosetep CLAUDE.md loads next turn.
+
+- **2026-07-08 01:35 UTC** — **Owner scoping (no code): shop-server identity tier + interactive customer-driven
+  multi-fix.** Confirmed both fit the design; filed 2 FOLLOWUPS. Key findings verified against `main`:
+  the serve path NEVER persists raw `describe` (transient for signature-derivation + inference, then
+  dropped; session holds only de-identified data — `serve.rs:71`), so the "identity at the shop, de-id
+  signal to the brain, brain holds it only for the request" split is largely already true. AUTO multi-fix
+  is already built (`MAX_ATTEMPTS=2` ranked-retry, per-candidate escalation recompute); the NEW work is a
+  multi-turn session + customer-optional escalation in the SAFE band only. **Reframed the pending
+  PromptPayload decision:** strict-vs-explicit is now clearly a DATA-RESIDENCY lever — strict = raw
+  customer text never reaches the home box even transiently (the strong version of the owner's Q1 concern),
+  explicit = brain sees it transiently for diagnosis quality. Both new features are VALUE-gated on F4
+  (without re-collection every attempt is Unverified). Corpus is thrash-proof either way (only signed-off
+  outcomes mint rows).
+
 - **2026-07-04 23:20 UTC** — **PR #19 MERGED (`main` @ `0c54578`): attestation v4 + the operator
   runbook.** 12/12 checks green (incl. boundary + the tightened corpus-row secrets rule). Branch
   restarted. The re-ingest window is OPEN: the operator runbook (docs/operator-runbook.md) is the
