@@ -522,3 +522,25 @@ recommends that are NOT yet built, each attributed to the threat doc's §3 contr
   pins it) + a risk class. — why deferred: driven by the shop's submitted workflows; Windows-side tool
   builds. Resume: `crates/deid/src/lib.rs` ACTION_VOCABULARY; `crates/tools-windows`; cec-autosetep
   `src/Install-Engine.psm1` for the driver_install half; the authoring guide's NEEDS-TOOL tallies.
+
+- [ ] [added 2026-07-08 04:33 UTC] **[partial resolution — first-class beneficial-but-incomplete outcome (owner 2026-07-08,
+  DESIGNED)]** "An improvement is an improvement, especially when we can prove it happened because of the
+  fix." Design: `docs/partial-resolution-design.md`. Add the three-way verification diff
+  (cleared/remaining/new) + `VerificationResult::PartialPass{cleared,remaining}` +
+  `OutcomeLabel::ResolvedPartial` (is_resolved()=false, is_beneficial()=true, earns a precedent keyed on the
+  cleared benefit) + `Regressed{cleared,introduced}` (new symptoms ⇒ escalate, never silent credit). Causal
+  attribution: the pre/post signatures bracket ONE signed plan bound by run_id, so a cleared symptom is
+  attributable; independent repetition turns it into a per-symptom clear rate. Retry loop carries `remaining`
+  forward as PROGRESS (chains partials → full resolution; the DDU case). — why deferred: precision-critical
+  verification+outcome+de-id/crypto change (label_tag is in attestation_message AND chain_canonical — wire
+  surface); build in green sub-steps + §7 blind audit. Owner naming/policy decisions in design §8. Resume:
+  the design doc §6 surface map; `agent-core/verify.rs`; `common` diff; `corpus-client` schema/gate.
+- [ ] [added 2026-07-08 04:33 UTC] **[config-transition triggers (surfaced by the 5070→5080 case, owner 2026-07-08)]** Many
+  convoluted fixes are triggered by a CONFIG TRANSITION (part swapped, Windows updated, setting changed), not
+  a symptom out of nowhere. The engine keys on config_class as a static class; recognize a transition (old
+  class → new class) as a first-class trigger — "a GPU changed within the NVIDIA line ⇒ expect a
+  display-driver clean-uninstall even after a fresh install." Composes with partial resolution (transition
+  triggers the workflow; partial resolution scores the multi-step fix). — why deferred: needs the config-
+  transition detection (compare successive config_class observations for a machine — pairs with the
+  reinstall-durable per-machine ledger, which HAS the history) + a transition-keyed retrieval path. Resume:
+  `common/src/config_class.rs`; the per-machine ledger FOLLOWUP; `docs/partial-resolution-design.md` §7.

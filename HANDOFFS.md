@@ -907,6 +907,18 @@ See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementati
 
 ## Handoff log (reverse-chronological)
 
+- **2026-07-08 04:33 UTC** — **Designed partial resolution (owner-confirmed) + surfaced config-transition triggers;
+  addressed the "how do we tackle all this ambiguity" concern (no code).** Design doc
+  \`docs/partial-resolution-design.md\`: three-way verification diff (cleared/remaining/new),
+  \`VerificationResult::PartialPass\` + \`OutcomeLabel::ResolvedPartial\` (is_beneficial, earns a precedent on
+  the cleared delta) + \`Regressed\` (new symptoms escalate). The owner's causal requirement grounded in the
+  existing pre/post-bound-to-one-signed-plan structure + independent repetition = a per-symptom clear rate.
+  Retry loop carries \`remaining\` forward as progress (the DDU multi-step case). The 5070→5080 example
+  surfaced config-TRANSITION triggers as a second FOLLOWUP (pairs with the per-machine ledger which holds
+  the config history). Precision-critical (label_tag is a wire/crypto surface) → build in green sub-steps +
+  §7 blind audit; owner naming/policy calls in design §8. **Pick up: build partial resolution as the next PR
+  (start with the common-crate three-way diff), after the owner picks the label name (§8).**
+
 - **2026-07-08 04:10 UTC** — **Authored the shop workflow authoring format (`docs/workflow-authoring-guide.md`).**
   The ground-truth capture template for shop staff — two kinds (fix + diagnostic), grounded in the real
   engine model (fault shape/symptoms → ordered steps mapped to ACTION_VOCABULARY → verification
