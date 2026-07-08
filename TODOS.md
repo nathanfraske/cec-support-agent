@@ -432,3 +432,20 @@ _(completed items stay above, in place, with their `· done` tombstone)_
 - [x] [added 2026-07-08 03:18 UTC · done 2026-07-08 03:18 UTC] EULA on-screen acceptance gate: `Tool::requires_eula` +
   `Dispatcher::eula_of` + `EulaAcceptances` + `execute_plan` refusal BEFORE dispatch (installer never runs
   without acceptance); red-on-revert; `docs/eula-acceptance-playbook.md`. 255 tests green.
+
+### Session 2026-07-08 — partial resolution (BUILD + blind audit + gate hardening)
+
+- [x] [added 2026-07-08 04:40 UTC · done 2026-07-08 04:56 UTC] Build partial resolution across common →
+  agent-core → corpus-client → support-agent: `VerificationResult::PartialPass`/`Regressed`,
+  `Verdict::PartialPass`/`Regressed`, `verify_outcome` three-way reasoning (originals only — no autonomous
+  regression detection), `OutcomeLabel::ResolvedPartial`/`Regressed` + `is_beneficial()`, additive
+  cleared/introduced binding in attestation + chain (byte-identical pre-change rows), gate block (2b) +
+  destructive-needs-human on `is_beneficial`, wire tokens. Commit `661e53e`. 259 tests green.
+- [x] [added 2026-07-08 04:56 UTC · done 2026-07-08 05:05 UTC] §7 blind audit (opus, packet-only) of the
+  partial-resolution verification + gate + crypto binding — all 6 invariants HOLD, NO defects. Verified
+  each against source myself.
+- [x] [added 2026-07-08 05:05 UTC · done 2026-07-08 05:10 UTC] Close the audit's one conservative note:
+  gate now requires a `PartialPass` to carry a non-empty remainder too (a full clear can't be mislabeled as
+  a partial), with a red-on-revert test. Design doc §8 records owner decisions. 260 tests green, clippy clean.
+- [ ] [added 2026-07-08 05:10 UTC] Push branch + open PR for partial resolution; merge on green CI; restart
+  branch clean from new main.

@@ -66,10 +66,14 @@ pub enum GateError {
     /// write gate bounds it; the read path additionally refuses it at deserialize.
     #[error("refused: a run-provenance run_id is not a bounded opaque token")]
     RunIdNotDeIdentified,
-    /// A `ResolvedPartial` label carries no `PartialPass` verdict with a real
-    /// cleared benefit — a "partial resolution" with no proven improvement
-    /// behind it is unauditable and must not earn a beneficial precedent.
-    #[error("refused: a partial-resolution outcome must carry a partial-pass verdict with cleared evidence")]
+    /// A `ResolvedPartial` label is not backed by a WELL-FORMED partial-pass: a
+    /// `PartialPass` verdict carrying both a non-empty `cleared` benefit AND a
+    /// non-empty `recurring` remainder. A partial with no cleared set has no
+    /// proven improvement; a partial with no remainder is a *full* clear
+    /// mislabeled as partial (it belongs under a resolved label, not here).
+    /// Either way the row is not the beneficial-but-incomplete precedent it
+    /// claims to be, so it is refused.
+    #[error("refused: a partial-resolution outcome must carry a partial-pass verdict with a cleared benefit and a remaining set")]
     PartialWithoutBenefit,
     /// A `Regressed` label without a `Regressed` verdict (or vice versa) — the
     /// regression claim and the evidence disagree.
@@ -171,13 +175,22 @@ pub fn ensure_evidence_integrity(contribution: &Contribution) -> Result<(), Gate
     }
 
     // (2b) The partial-resolution outcomes are backed the same way: a
-    // `ResolvedPartial` needs a `PartialPass` verdict carrying a real cleared
-    // benefit (a partial with no proven improvement is not a partial), and a
-    // `Regressed` label needs a `Regressed` verdict. A partial/regressed claim
-    // with no matching evidence cannot become a beneficial precedent.
+    // `ResolvedPartial` needs a WELL-FORMED `PartialPass` verdict — one carrying
+    // both a real cleared benefit (else there is no proven improvement) AND a
+    // non-empty remainder (else the fix cleared EVERYTHING and the row is a full
+    // resolution mislabeled as partial, which must go under a resolved label, not
+    // steal partial's weaker credit). `verify_outcome` only ever emits a
+    // `PartialPass` with both sets non-empty, so this rejects nothing the real
+    // verifier produces — it binds the gate to the invariant instead of trusting
+    // an embedder/hand-built row to honor it. A `Regressed` label needs a
+    // `Regressed` verdict. A partial/regressed claim with no matching evidence
+    // cannot become a beneficial precedent.
     match &outcome.label {
         OutcomeLabel::ResolvedPartial => match outcome.verification.as_ref() {
-            Some(v) if v.result == VerificationResult::PartialPass && !v.cleared.is_empty() => {}
+            Some(v)
+                if v.result == VerificationResult::PartialPass
+                    && !v.cleared.is_empty()
+                    && !v.recurring.is_empty() => {}
             _ => return Err(GateError::PartialWithoutBenefit),
         },
         OutcomeLabel::Regressed => match outcome.verification.as_ref().map(|v| v.result) {
@@ -414,6 +427,62 @@ mod tests {
                 "{result:?} must not back a resolved label"
             );
         }
+    }
+
+    #[test]
+    fn a_well_formed_partial_is_admitted_but_a_malformed_one_is_refused() {
+        // A partial with BOTH a cleared benefit and a remaining set is the real
+        // beneficial-but-incomplete precedent → admitted under a verifier sign-off.
+        let well_formed = contribution(
+            OutcomeLabel::ResolvedPartial,
+            SignOff::VerifierConfirmed,
+            Risk::Reversible,
+            Some(Verification::partial(
+                vec![Symptom("0x1234".into())],   // cleared — proven benefit
+                vec![Symptom("event_41".into())], // remaining — the remainder
+            )),
+        );
+        assert!(ensure_evidence_integrity(&well_formed).is_ok());
+
+        // No cleared benefit → PartialWithoutBenefit (the pre-existing guard).
+        let no_benefit = contribution(
+            OutcomeLabel::ResolvedPartial,
+            SignOff::VerifierConfirmed,
+            Risk::Reversible,
+            Some(Verification {
+                result: VerificationResult::PartialPass,
+                class: None,
+                recurring: vec![Symptom("event_41".into())],
+                cleared: Vec::new(),
+                introduced: Vec::new(),
+            }),
+        );
+        assert_eq!(
+            ensure_evidence_integrity(&no_benefit),
+            Err(GateError::PartialWithoutBenefit)
+        );
+
+        // A cleared benefit but NO remainder → the fix cleared everything, so this
+        // is a FULL resolution mislabeled as partial. It must not steal partial's
+        // weaker credit; the gate refuses it rather than trusting the label.
+        // `verify_outcome` never emits such a verdict (a PartialPass always has a
+        // non-empty remainder), so this only bites embedder/hand-built rows.
+        let no_remainder = contribution(
+            OutcomeLabel::ResolvedPartial,
+            SignOff::VerifierConfirmed,
+            Risk::Reversible,
+            Some(Verification {
+                result: VerificationResult::PartialPass,
+                class: None,
+                recurring: Vec::new(), // everything cleared — not a partial
+                cleared: vec![Symptom("event_41".into())],
+                introduced: Vec::new(),
+            }),
+        );
+        assert_eq!(
+            ensure_evidence_integrity(&no_remainder),
+            Err(GateError::PartialWithoutBenefit)
+        );
     }
 
     #[test]

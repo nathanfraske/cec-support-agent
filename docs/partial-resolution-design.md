@@ -2,12 +2,18 @@
 
 # Partial resolution — design
 
-> **STATUS 2026-07-08: partial resolution BUILT and merged (the autonomous path).**
+> **STATUS 2026-07-08: partial resolution BUILT (the autonomous path), blind-audited
+> clean, pending merge.**
 > `verify_outcome` emits `PartialPass{cleared, remaining}`; a `ResolvedPartial` row is
-> gated (needs a `PartialPass` verdict with a non-empty cleared benefit) and admitted as
+> gated (needs a WELL-FORMED `PartialPass` verdict — a non-empty cleared benefit AND a
+> non-empty remainder, so a full clear cannot be mislabeled as a partial and steal its
+> weaker credit) and admitted as
 > beneficial truth (`is_beneficial`, not `is_resolved`); the cleared/introduced deltas are
 > bound additively into the attestation + chain (pre-change rows stay byte-identical, no
-> migration). **DEFERRED (see FOLLOWUPS):** (a) autonomous regression DETECTION — the naive
+> migration). A §7 blind audit of all six invariants (no fabricated benefit, byte-identity,
+> autonomy bound, de-id, no-partial-from-empty-post, regression coherence) found NO defects;
+> its one conservative note — the gate trusted rather than verified that a partial carries a
+> remainder — is now closed by the well-formedness guard above. **DEFERRED (see FOLLOWUPS):** (a) autonomous regression DETECTION — the naive
 > post-symptom diff cannot tell a caused regression from benign post-fix log noise, so
 > `verify_outcome` does NOT emit `Regressed`; it stays a recordable outcome (label + verdict
 > + gate) for a future fault-aware collector or human. (b) RETRIEVAL offering a
@@ -144,12 +150,15 @@ that feel most arbitrary. Scoped separately (see FOLLOWUPS); it composes with
 partial resolution (the transition triggers the workflow; partial resolution
 scores the multi-step fix).
 
-## 8. Open naming / decision points for the owner
+## 8. Decision points — RESOLVED by the owner (2026-07-08)
 
-- Label name: `ResolvedPartial` vs `Improved` vs `PartiallyResolved`.
-- Does a clean partial (no regression) that a MACHINE verified autonomously earn
-  a `VerifierConfirmed` beneficial row, or does the first partial-credit require
-  a human until the pattern is established? (Recommend: same autonomy rules as a
-  full resolution — a proven per-symptom clear is as real as a full clear.)
-- Regression policy: always escalate a `Regressed` outcome (recommended), or
-  allow a net-positive threshold?
+- **Label name → `ResolvedPartial`** (over `Improved` / `PartiallyResolved`).
+- **Autonomy → same rules as a full resolution.** A clean partial a MACHINE
+  verified earns a `VerifierConfirmed` beneficial row — a proven per-symptom
+  clear is as real as a full clear — with the SAME destructive-needs-human bound
+  (a destructive partial still requires human sign-off).
+- **Regression policy → always escalate.** A `Regressed` outcome is never
+  autonomous credit (no net-positive threshold); it is `is_beneficial() == false`
+  and routes to a human.
+
+Owner's words: *"Yes, looks good to me."*
