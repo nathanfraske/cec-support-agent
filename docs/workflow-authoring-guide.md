@@ -110,7 +110,9 @@ fix_workflow:
       installs_licensed_software: no
       why: "safety net before removing drivers"
     - do: "Boot to safe mode and run DDU to fully remove the display driver"
-      action: NEEDS-TOOL: ddu            # <- not a tool yet; propose it below
+      action: NEEDS-TOOL: display_driver_uninstaller  # <- not a tool yet.
+                                         # Spelled out, not "ddu" — action names
+                                         # are self-documenting (see the note below).
       risk: reversible
       installs_licensed_software: no
       why: "a clean slate removes the corrupted driver a normal reinstall leaves"
@@ -211,9 +213,17 @@ useful — it's how we grow what the engine can do).
 | `review` | flag "a person should look at this" (advisory only) | read-only |
 
 Known gaps your workflows will likely hit (already on our radar):
-`ddu`, `restart`, `driver_install`, `sfc`/`dism` repair, `uninstall_program`,
-`winget_install`. Flag them with `NEEDS-TOOL:` and describe them — the more of
-you that hit the same gap, the higher it goes on the build list.
+`display_driver_uninstaller`, `restart`, `driver_install`, `system_file_check`,
+`dism_repair`, `uninstall_program`, `winget_install`. Flag them with
+`NEEDS-TOOL:` and describe them — the more of you that hit the same gap, the
+higher it goes on the build list.
+
+**Naming convention — spell actions out.** An action name is self-documenting
+and permanent: it rides on the (de-identified) record of every fix, so a person
+reading it later should understand it with no shop jargon. Write
+`display_driver_uninstaller`, not `ddu`; `system_file_check`, not `sfc`;
+`driver_install`, not `drvinst`. Lowercase, words joined by `_`. When you flag a
+`NEEDS-TOOL`, give it a spelled-out name — that name is what we register.
 
 ---
 

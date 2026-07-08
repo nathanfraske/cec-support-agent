@@ -513,9 +513,10 @@ recommends that are NOT yet built, each attributed to the threat doc's §3 contr
 - [ ] [added 2026-07-08 04:10 UTC] **[tool-vocabulary backlog surfaced by shop workflow authoring (owner 2026-07-08)]** The
   workflow authoring format (`docs/workflow-authoring-guide.md`) maps each proven shop step to an
   ACTION_VOCABULARY member or flags `NEEDS-TOOL`. The DDU example alone surfaces three missing actions:
-  `ddu` (clean display-driver wipe), `restart`, `driver_install` (cec-autosetep already has the pnputil
-  install machinery — wire it as this action). Other likely gaps named in the guide: `sfc`/`dism` repair,
-  `uninstall_program`, `winget_install`. As shop authors submit workflows, tally the NEEDS-TOOL flags and
+  `display_driver_uninstaller` (clean display-driver wipe), `restart`, `driver_install` (cec-autosetep already has the pnputil
+  install machinery — wire it as this action). Other likely gaps named in the guide: `system_file_check`,
+  `dism_repair`, `uninstall_program`, `winget_install`. Naming convention: actions are spelled out
+  (self-documenting, no shop jargon) — `display_driver_uninstaller` not `ddu`. As shop authors submit workflows, tally the NEEDS-TOOL flags and
   prioritize the vocabulary additions by frequency — each new action = a registered `Tool` in
   `crates/tools-windows` + a member added to the frozen `deid::ACTION_VOCABULARY` (sorted; the drift test
   pins it) + a risk class. — why deferred: driven by the shop's submitted workflows; Windows-side tool
