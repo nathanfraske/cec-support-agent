@@ -56,9 +56,14 @@ fix_workflow:
   # HOW will we know it worked?
   verification:
     type: <deterministic | intermittent | hardware>
-    # deterministic = you can re-test right away and see pass/fail
-    # intermittent  = it only happens sometimes; needs watching over time
-    # hardware      = the real test is a bench/RMA, not a software recheck
+    # This is about the PROBLEM, not the fix:
+    # deterministic = the problem shows up every time, so one re-test right
+    #                 after the fix is a real pass/fail.
+    # intermittent  = the PROBLEM itself only shows up sometimes, so a clean
+    #                 re-test isn't proof — it might just not have happened this
+    #                 time. The engine calls it a provisional pass and watches it
+    #                 over time, re-opening if the symptom comes back.
+    # hardware      = the real test is a bench/RMA, not a software recheck.
     test: >
       <exactly how you confirm the fix held. e.g. "re-run the game / re-check
        the event log — the TDR is gone and it runs clean">
@@ -137,10 +142,30 @@ fix_workflow:
 ```
 
 **What this one workflow just told us:** the `create_restore_point` and
-`download_file` steps run today; `ddu`, `restart`, and `driver_install` are
-**tools we need to build** (and cec-autosetep already has the driver-install
-half). So authoring your proven flows also writes our tool-building to-do list —
-that is the point.
+`download_file` steps run today; `display_driver_uninstaller`, `restart`, and
+`driver_install` are **tools we need to build** (and cec-autosetep already has
+the driver-install half). So authoring your proven flows also writes our
+tool-building to-do list — that is the point.
+
+### What if the fix itself is unreliable, or only works halfway?
+
+`intermittent` is about the *problem* not always showing up — it is **not** for
+"my fix sometimes works, sometimes doesn't." Handle those like this:
+
+- **The fix fully works sometimes and doesn't take other times.** If the
+  *problem* is also intermittent, use `intermittent` (the watch-and-reopen is
+  exactly for "looked fixed, came back"). If the problem is deterministic and
+  it's just the fix that's a coin flip, set `confidence: medium` and say when it
+  works in `notes`. The engine records every run honestly — worked → resolved,
+  didn't take → the symptom comes back → logged as a miss — so the trust in that
+  fix settles at its real success rate. That's wanted, not a problem.
+- **The fix reliably gets it *halfway* (some symptoms clear, others remain).**
+  The engine checks symptom by symptom, so leftover symptoms mean **not
+  resolved** — half-fixed is not fixed. Author it honestly: if it's really
+  "step 1 of 2," write the whole workflow through to the finishing steps; if the
+  remainder needs a person, put that in `if_still_broken`. Either way the engine
+  names exactly which symptoms are left, so nothing is lost — it just won't be
+  called "done" until they're all gone.
 
 ---
 
