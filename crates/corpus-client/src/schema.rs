@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::stored::{
     StoredAction, StoredOutcome, StoredPlan, StoredPlanId, StoredSignature, StoredStep,
+    StoredSymptom,
 };
 
 /// Whether an outcome has cleared the sign-off gate.
@@ -97,6 +98,39 @@ impl OutcomeLabel {
     }
 }
 
+/// What a retrieved mapping claims the plan does for the queried signature.
+///
+/// **Additive:** `Full` is the default and serializes/deserializes compatibly
+/// with a pre-partial-resolution `FixMapping` that had no `kind` field — an old
+/// mapping round-trips as `Full`, a new `Full` mapping carries the same payload
+/// it always did. Only a `Partial` mapping introduces the `cleared` set.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum MappingKind {
+    /// The plan is confirmed to fully resolve the queried signature — the
+    /// classic mapping. Backed by `ResolvedConfirmed`/`ResolvedProvisional` rows.
+    #[default]
+    Full,
+    /// The plan is confirmed to CLEAR `cleared` (a proven subset of the queried
+    /// signature's symptoms) but is not known to fully resolve the ticket —
+    /// backed by `ResolvedPartial` rows. Offered as a confidence-weighted partial
+    /// step: "known to clear {cleared} at this config class; may not resolve
+    /// everything." `cleared` is the exact proven benefit these confirmations
+    /// attest to, so the count means "this plan cleared THIS set in N independent
+    /// runs," never a looser aggregate.
+    Partial {
+        /// The de-identified symptoms this partial mapping is proven to clear.
+        cleared: Vec<StoredSymptom>,
+    },
+}
+
+impl MappingKind {
+    /// Whether this mapping fully resolves the signature (vs. a partial clear).
+    pub fn is_full(&self) -> bool {
+        matches!(self, MappingKind::Full)
+    }
+}
+
 /// A fault-signature → plan mapping retrieved from the corpus.
 ///
 /// Carries STORED (de-identified) payload types — the served plan is a
@@ -110,8 +144,13 @@ pub struct FixMapping {
     pub signature: StoredSignature,
     /// The de-identified plan known to resolve it.
     pub plan: StoredPlan,
-    /// How many confirmed outcomes back this mapping.
+    /// How many independent confirmed outcomes back this mapping.
     pub confirmations: u32,
+    /// Whether the plan fully resolves the signature or clears a proven subset.
+    /// **Additive** (`#[serde(default)]`): a mapping serialized before partial
+    /// resolution — with no `kind` field — deserializes as [`MappingKind::Full`].
+    #[serde(default)]
+    pub kind: MappingKind,
 }
 
 /// The result of executing a plan against a fault — the **in-flight** triple a

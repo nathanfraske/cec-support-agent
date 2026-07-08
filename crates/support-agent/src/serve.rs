@@ -365,14 +365,11 @@ async fn handle_diagnose(
         .iter()
         .map(|mapping| {
             // Rehydrate the served (de-identified) StoredPlan into an in-flight
-            // plan for the judge/consent/execute pipeline.
+            // plan for the judge/consent/execute pipeline. Partial precedents are
+            // labeled honestly (see `mapping_rationale`) — identical to the CLI path.
             Candidate::new(
                 mapping.plan.to_plan(),
-                format!(
-                    "Corpus precedent: resolved this signature at this config class \
-                     ({} confirmation(s))",
-                    mapping.confirmations
-                ),
+                crate::mapping_rationale(mapping),
                 CandidateSource::CorpusPrimed,
             )
         })

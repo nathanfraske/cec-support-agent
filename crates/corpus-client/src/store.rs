@@ -7,10 +7,10 @@ use thiserror::Error;
 
 use crate::gate::{ensure_attested, ensure_evidence_integrity, GateError};
 use crate::schema::{
-    attestation_message, chain_hash, de_identify_plan, Contribution, FixMapping, OutcomeLabel,
-    RowIntegrity,
+    attestation_message, chain_hash, de_identify_plan, Contribution, FixMapping, MappingKind,
+    OutcomeLabel, RowIntegrity,
 };
-use crate::stored::{StoredPlan, StoredSignature};
+use crate::stored::{StoredPlan, StoredSignature, StoredSymptom};
 
 /// Run the full admission gate for a store: the evidence-integrity checks
 /// always, plus the sign-off **attestation** check when an authority is
@@ -79,13 +79,25 @@ fn content_hash(row: &Contribution) -> String {
 }
 
 /// Derive the fix mappings for a signature at a config class from a set of
-/// corpus rows. Only resolved rows back a mapping (other hard negatives stay in
-/// the rows but never offer a fix); rows confirming the same plan aggregate into
-/// one mapping whose confirmation count is the number of INDEPENDENT
-/// confirmations ([`confirmation_key`]), **net of `Reopened` events** — a fix
-/// that recurred inside its monitoring horizon is demoted (EI-06 / T-104). A
-/// plan whose id is in `revoked` (an owner-only retraction list) is never
-/// offered, and a plan with no net independent confirmation is not offered.
+/// corpus rows. Only BENEFICIAL rows back a mapping (other hard negatives stay
+/// in the rows but never offer a fix); rows confirming the same plan aggregate
+/// into one mapping whose confirmation count is the number of INDEPENDENT
+/// confirmations ([`confirmation_key`]).
+///
+/// Two mapping kinds are produced (see [`MappingKind`]):
+/// - **Full** — from `ResolvedConfirmed`/`ResolvedProvisional` rows (the plan
+///   resolved the whole signature), keyed per plan, **net of `Reopened` events**
+///   (a fix that recurred inside its monitoring horizon is demoted — EI-06 /
+///   T-104).
+/// - **Partial** — from `ResolvedPartial` rows (the plan cleared a proven SUBSET
+///   of the signature), keyed per (plan, cleared-set) so the count means "this
+///   plan cleared THIS exact set in N independent runs." `Reopened` interaction
+///   for partials is deferred (a reopen of the whole ticket does not cleanly
+///   negate a narrower per-symptom clear); see FOLLOWUPS.
+///
+/// A plan whose id is in `revoked` (an owner-only retraction list — the seed of
+/// gated retirement) is never offered in EITHER kind, and a mapping with no net
+/// independent confirmation is not offered.
 fn fix_mappings(
     rows: &[Contribution],
     signature: &FaultSignature,
@@ -95,15 +107,27 @@ fn fix_mappings(
     use std::collections::HashMap;
 
     struct Acc {
+        plan_id: String,
         signature: StoredSignature,
         plan: StoredPlan,
+        kind: MappingKind,
         contributors: HashSet<String>,
         // Reopens are deduplicated by the SAME independence key as confirmations
         // (a set, not a counter), so a single reopen run replayed N times cancels
         // one confirmation, not N. Counting raw reopen rows was asymmetric with
         // the run-deduped confirmation count and let a duplicated `Reopened` line
-        // bury a multiply-confirmed fix out of retrieval.
+        // bury a multiply-confirmed fix out of retrieval. (Full mappings only.)
         reopens: HashSet<String>,
+    }
+
+    // A partial row's cleared set, sorted, joined into a stable key component so
+    // (plan, cleared-set) identifies a partial mapping. Sorting makes the key
+    // order-independent; the `\x1f` unit separator cannot appear in a de-id
+    // symptom token, so distinct sets cannot collide into one key.
+    fn cleared_key(cleared: &[StoredSymptom]) -> String {
+        let mut toks: Vec<&str> = cleared.iter().map(StoredSymptom::as_str).collect();
+        toks.sort_unstable();
+        toks.join("\x1f")
     }
 
     let mut order: Vec<String> = Vec::new();
@@ -115,17 +139,56 @@ fn fix_mappings(
         {
             continue;
         }
-        let resolved = row.outcome.label.is_resolved();
-        let reopened = matches!(row.outcome.label, OutcomeLabel::Reopened);
-        if !resolved && !reopened {
-            continue; // a plain hard negative affects no mapping
-        }
         let plan_id = row.outcome.plan.id().to_string();
-        let acc = accs.entry(plan_id.clone()).or_insert_with(|| {
-            order.push(plan_id.clone());
+
+        // Classify the row into the accumulator bucket it feeds.
+        enum Feed {
+            FullConfirm,
+            FullReopen,
+            Partial(Vec<StoredSymptom>),
+        }
+        let feed = match &row.outcome.label {
+            l if l.is_resolved() => Feed::FullConfirm,
+            OutcomeLabel::Reopened => Feed::FullReopen,
+            OutcomeLabel::ResolvedPartial => {
+                // A partial mapping needs the proven cleared set from the verdict.
+                // A ResolvedPartial that reached here cleared the gate, so it
+                // carries a PartialPass verification with a non-empty cleared set;
+                // guard defensively and skip anything malformed rather than offer
+                // an empty-benefit partial.
+                match row.outcome.verification() {
+                    Some(v)
+                        if v.result == common::VerificationResult::PartialPass
+                            && !v.cleared.is_empty() =>
+                    {
+                        Feed::Partial(v.cleared.iter().map(StoredSymptom::from_symptom).collect())
+                    }
+                    _ => continue,
+                }
+            }
+            _ => continue, // a plain hard negative affects no mapping
+        };
+
+        // Full mappings key on plan id; partial mappings on (plan id, cleared set),
+        // so a plan can offer BOTH a full mapping and one or more partial mappings
+        // for the same queried signature.
+        let (map_key, kind) = match &feed {
+            Feed::FullConfirm | Feed::FullReopen => (format!("full:{plan_id}"), MappingKind::Full),
+            Feed::Partial(cleared) => (
+                format!("partial:{plan_id}:{}", cleared_key(cleared)),
+                MappingKind::Partial {
+                    cleared: cleared.clone(),
+                },
+            ),
+        };
+
+        let acc = accs.entry(map_key.clone()).or_insert_with(|| {
+            order.push(map_key.clone());
             Acc {
+                plan_id: plan_id.clone(),
                 signature: row.outcome.signature.clone(),
                 plan: row.outcome.plan.clone(),
+                kind,
                 contributors: HashSet::new(),
                 reopens: HashSet::new(),
             }
@@ -135,21 +198,24 @@ fn fix_mappings(
         // contributes to neither — symmetric, so a reopen can never out-weigh a
         // confirmation through replay alone.
         if let Some(key) = confirmation_key(row, &plan_id) {
-            if resolved {
-                acc.contributors.insert(key);
-            } else {
-                acc.reopens.insert(key);
+            match feed {
+                Feed::FullConfirm | Feed::Partial(_) => {
+                    acc.contributors.insert(key);
+                }
+                Feed::FullReopen => {
+                    acc.reopens.insert(key);
+                }
             }
         }
     }
 
     order
         .iter()
-        .filter_map(|plan_id| {
-            if revoked.contains(plan_id) {
-                return None; // owner-revoked: never offered as a fix
+        .filter_map(|map_key| {
+            let acc = &accs[map_key];
+            if revoked.contains(&acc.plan_id) {
+                return None; // owner-revoked: never offered as a fix (full or partial)
             }
-            let acc = &accs[plan_id];
             // Each DISTINCT reopen run cancels one independent confirmation;
             // circular (self-primed) rows never counted on either side.
             let confirmations =
@@ -158,6 +224,7 @@ fn fix_mappings(
                 signature: acc.signature.clone(),
                 plan: acc.plan.clone(),
                 confirmations,
+                kind: acc.kind.clone(),
             })
         })
         .collect()
@@ -660,6 +727,137 @@ mod tests {
             CorpusError::Gate(GateError::PartialWithoutBenefit)
         ));
         assert!(corpus.is_empty());
+    }
+
+    // --- Retrieval-as-partial: a ResolvedPartial row offers a partial mapping ---
+
+    fn two_symptom_signature() -> FaultSignature {
+        FaultSignature::from_symptoms(vec![Symptom("event_41".into()), Symptom("0x1234".into())])
+    }
+
+    /// A `ResolvedPartial` row for `plan_id` clearing `0x1234` of the two-symptom
+    /// signature, under a distinct `run_id` so it is an INDEPENDENT confirmation.
+    fn partial_contribution(plan_id: &str, run_id: &str) -> Contribution {
+        Contribution::new(
+            Outcome {
+                signature: two_symptom_signature(),
+                plan: Plan::new(plan_id, "restart service"),
+                label: OutcomeLabel::ResolvedPartial,
+                verification: Some(Verification::partial(
+                    vec![Symptom("0x1234".into())],   // cleared — the proven benefit
+                    vec![Symptom("event_41".into())], // remaining
+                )),
+            },
+            config_class(),
+            SignOff::VerifierConfirmed,
+        )
+        .expect("de-identifies")
+        .with_provenance(provenance(run_id, false, &[]))
+    }
+
+    #[tokio::test]
+    async fn a_partial_resolution_is_retrieved_as_a_partial_mapping() {
+        // Red-on-revert: before retrieval-as-partial, a ResolvedPartial backed NO
+        // mapping (fix_mappings counted only is_resolved). Now it offers a Partial
+        // mapping carrying the exact proven cleared set.
+        let corpus = LocalCorpus::new();
+        corpus
+            .submit(&partial_contribution("p1", "run-a"))
+            .await
+            .expect("partial admitted");
+        let hits = corpus
+            .query(&two_symptom_signature(), &config_class())
+            .await
+            .expect("query");
+        assert_eq!(hits.len(), 1, "the partial is now retrievable");
+        assert_eq!(hits[0].confirmations, 1);
+        match &hits[0].kind {
+            MappingKind::Partial { cleared } => {
+                assert_eq!(cleared.len(), 1);
+                assert_eq!(cleared[0].as_str(), "0x1234", "the proven benefit");
+            }
+            MappingKind::Full => panic!("expected a Partial mapping, got Full"),
+        }
+    }
+
+    #[tokio::test]
+    async fn independent_partial_confirmations_aggregate() {
+        // Two INDEPENDENT runs of the same plan clearing the same set → ONE
+        // Partial mapping with two confirmations (same independence rule as full);
+        // a replay of one run would collapse to one.
+        let corpus = LocalCorpus::new();
+        corpus
+            .submit(&partial_contribution("p1", "run-a"))
+            .await
+            .unwrap();
+        corpus
+            .submit(&partial_contribution("p1", "run-b"))
+            .await
+            .unwrap();
+        let hits = corpus
+            .query(&two_symptom_signature(), &config_class())
+            .await
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].confirmations, 2, "two independent partial runs");
+        assert!(matches!(hits[0].kind, MappingKind::Partial { .. }));
+    }
+
+    #[tokio::test]
+    async fn full_and_partial_mappings_for_one_plan_coexist() {
+        // The same plan fully resolves the signature in one independent run and
+        // partially clears it in another → TWO distinct mappings (a Full and a
+        // Partial), each with its own confirmation count. A partial never
+        // masquerades as a full resolution.
+        let corpus = LocalCorpus::new();
+        let full = Contribution::new(
+            Outcome {
+                signature: two_symptom_signature(),
+                plan: Plan::new("p1", "restart service"),
+                label: OutcomeLabel::ResolvedConfirmed,
+                verification: Some(Verification::pass()),
+            },
+            config_class(),
+            SignOff::HumanConfirmed,
+        )
+        .expect("de-identifies")
+        .with_provenance(provenance("run-full", false, &[]));
+        corpus.submit(&full).await.unwrap();
+        corpus
+            .submit(&partial_contribution("p1", "run-partial"))
+            .await
+            .unwrap();
+        let hits = corpus
+            .query(&two_symptom_signature(), &config_class())
+            .await
+            .unwrap();
+        assert_eq!(hits.len(), 2, "a Full and a Partial mapping for one plan");
+        let full_hit = hits
+            .iter()
+            .find(|m| m.kind.is_full())
+            .expect("a full mapping");
+        let partial_hit = hits
+            .iter()
+            .find(|m| !m.kind.is_full())
+            .expect("a partial mapping");
+        assert_eq!(full_hit.confirmations, 1);
+        assert_eq!(partial_hit.confirmations, 1);
+    }
+
+    #[tokio::test]
+    async fn a_revoked_plan_is_offered_in_neither_full_nor_partial() {
+        // Revocation (the seed of gated retirement) filters a plan from BOTH
+        // mapping kinds, not just the full one.
+        let corpus = LocalCorpus::new().with_revoked(["p1".to_string()]);
+        corpus
+            .submit(&partial_contribution("p1", "run-a"))
+            .await
+            .unwrap();
+        let hits = corpus
+            .query(&two_symptom_signature(), &config_class())
+            .await
+            .unwrap();
+        assert!(hits.is_empty(), "a revoked plan offers no partial mapping");
     }
 
     #[tokio::test]
@@ -1810,6 +2008,7 @@ mod tests {
             ])),
             plan,
             confirmations: 3,
+            kind: MappingKind::Full,
         };
         let base = serve_one_json(serde_json::to_string(&vec![mapping]).expect("serialize"));
         let corpus = HttpCorpus::new(base);
@@ -1848,6 +2047,7 @@ mod tests {
             ])),
             plan,
             confirmations: 3,
+            kind: MappingKind::Full,
         };
         let base = serve_one_json(serde_json::to_string(&vec![mapping]).expect("serialize"));
         let corpus = HttpCorpus::new(base);
@@ -1891,6 +2091,7 @@ mod tests {
                 signature,
                 plan: clean_plan.clone(),
                 confirmations: 5,
+                kind: MappingKind::Full,
             };
             let base = serve_one_json(serde_json::to_string(&vec![mapping]).expect("serialize"));
             let corpus = HttpCorpus::new(base);
@@ -1925,6 +2126,7 @@ mod tests {
             ])),
             plan: clean.clone(),
             confirmations: 1,
+            kind: MappingKind::Full,
         };
         let base = serve_one_json(serde_json::to_string(&vec![mapping]).expect("serialize"));
         let corpus = HttpCorpus::new(base);

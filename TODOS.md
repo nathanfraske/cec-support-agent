@@ -453,3 +453,19 @@ _(completed items stay above, in place, with their `· done` tombstone)_
   green: check ubuntu/macos/windows, secrets, audit, boundary) → squash-merged, **`main` @ `081ad3d`**.
   Branch reset locally to new main; remote-branch reset needs a force-with-lease (auto-mode declined —
   awaiting owner go-ahead or it lands naturally on the next push).
+
+### Session 2026-07-08 — corpus lifecycle & retrieval (5-feature arc; owner asked all)
+
+- [x] [added 2026-07-08 05:30 UTC · done 2026-07-08 05:30 UTC] Scope all 5 (corpus service, retrieval-as-partial,
+  config-transition, workflow retirement, formatting/intent page) → `docs/corpus-lifecycle-design.md`; two
+  owner decisions flagged (retirement gating posture; the "page" surface).
+- [x] [added 2026-07-08 05:30 UTC · done 2026-07-08 05:40 UTC] **Retrieval-as-partial** — `MappingKind::{Full,
+  Partial{cleared}}` (additive, serde-default Full); `fix_mappings` accumulates partial mappings keyed by
+  (plan, cleared-set) with the same independence rule; revocation filters both kinds; consumers label
+  partials honestly (`mapping_rationale`). 264 tests green (+4), clippy clean, red-on-revert proven.
+- [ ] [added 2026-07-08 05:40 UTC] **Config-transition primitive** — structured categorized inventory +
+  `ConfigTransition::between` emitting a de-id transition trigger token. (building next)
+- [ ] [added 2026-07-08 05:40 UTC] Ask owner: retirement gating posture (Q-retire) + formatting page surface (Q-page).
+- [ ] [added 2026-07-08 05:40 UTC] **Workflow retirement** (pending Q-retire; §7 blind audit — new corpus-mutation gate).
+- [ ] [added 2026-07-08 05:40 UTC] **Corpus query service** (separate authenticated read API; §7 blind audit — new egress).
+- [ ] [added 2026-07-08 05:40 UTC] **Formatting/intent page** (pending Q-page).

@@ -28,8 +28,8 @@ use common::{
     InventoryProvider, Plan, PlanStep, Risk, Severity,
 };
 use corpus_client::{
-    Contribution, CorpusStore, FileCorpus, LocalCorpus, Outcome, OutcomeLabel, RowProvenance,
-    SignOff,
+    Contribution, CorpusStore, FileCorpus, FixMapping, LocalCorpus, MappingKind, Outcome,
+    OutcomeLabel, RowProvenance, SignOff,
 };
 use inference::{ChatCompletionRequest, ChatMessage, Completer, Endpoint, OpenAiClient};
 use intake::{
@@ -501,14 +501,12 @@ async fn run(args: Args) -> anyhow::Result<()> {
         .iter()
         .map(|mapping| {
             // Rehydrate the served (de-identified) StoredPlan into an in-flight
-            // plan for the judge/consent/execute pipeline.
+            // plan for the judge/consent/execute pipeline. A partial mapping is
+            // labeled honestly as a partial step (known to clear a subset), so the
+            // judge and the operator see it is not a full-resolution precedent.
             Candidate::new(
                 mapping.plan.to_plan(),
-                format!(
-                    "Corpus precedent: resolved this signature at this config class \
-                     ({} confirmation(s))",
-                    mapping.confirmations
-                ),
+                mapping_rationale(mapping),
                 CandidateSource::CorpusPrimed,
             )
         })
@@ -1424,6 +1422,29 @@ fn parse_env_authority() -> anyhow::Result<Option<corpus_client::SignOffAuthorit
         Ok(hex) => corpus_client::SignOffAuthority::from_seed_hex(hex.trim())
             .map(Some)
             .ok_or_else(|| anyhow::anyhow!("CEC_SIGNOFF_SEED is not a valid 32-byte seed (hex)")),
+    }
+}
+
+/// The operator/judge-facing rationale for a retrieved corpus precedent. A full
+/// mapping reads as a resolution precedent; a PARTIAL mapping is labeled as a
+/// partial step — "known to clear {cleared}, may not fully resolve" — so neither
+/// the judge nor the operator mistakes a proven-subset benefit for a full fix.
+fn mapping_rationale(mapping: &FixMapping) -> String {
+    match &mapping.kind {
+        MappingKind::Full => format!(
+            "Corpus precedent: resolved this signature at this config class \
+             ({} confirmation(s))",
+            mapping.confirmations
+        ),
+        MappingKind::Partial { cleared } => {
+            let cleared: Vec<&str> = cleared.iter().map(|s| s.as_str()).collect();
+            format!(
+                "Corpus PARTIAL precedent: known to clear {} at this config class \
+                 ({} confirmation(s)); may not fully resolve the ticket",
+                cleared.join(", "),
+                mapping.confirmations
+            )
+        }
     }
 }
 
