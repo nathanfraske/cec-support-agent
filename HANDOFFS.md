@@ -907,6 +907,15 @@ See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementati
 
 ## Handoff log (reverse-chronological)
 
+- **2026-07-08 04:10 UTC** — **Authored the shop workflow authoring format (`docs/workflow-authoring-guide.md`).**
+  The ground-truth capture template for shop staff — two kinds (fix + diagnostic), grounded in the real
+  engine model (fault shape/symptoms → ordered steps mapped to ACTION_VOCABULARY → verification
+  type/test → escalation), with the owner's DDU example fully worked. Key insight surfaced: authoring maps
+  each step to a tool action or flags NEEDS-TOOL, so proven workflows double as the prioritized
+  tool-vocabulary backlog — the DDU flow alone needs `ddu`/`restart`/`driver_install` (filed to FOLLOWUPS;
+  cec-autosetep has the install half). Boundary-scan clean (synthetic content). No engine code. Offered
+  the user a shareable Artifact / fillable rendering as a follow-up.
+
 - **2026-07-08 03:18 UTC** — **BUILD: F4 autonomous-learning seam + repertoire tier + EULA gate (3 commits, PR next).**
   The engine-side half of the self-learning capability the owner greenlit. F4: `recollect_post_signature`
   is now a `PostFixCollector` seam (NullCollector default; `post_fix_collector` is the single Windows swap

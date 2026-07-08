@@ -509,3 +509,15 @@ recommends that are NOT yet built, each attributed to the threat doc's §3 contr
   exist. Consider binding independence to real signals (distinct time windows, distinct observed post-state,
   rate limits). — why deferred: pre-existing design item; broader than the F4 seam. Resume:
   `corpus-client/src/store.rs` confirmation counting; `docs/corpus-cartography-threat.md`.
+
+- [ ] [added 2026-07-08 04:10 UTC] **[tool-vocabulary backlog surfaced by shop workflow authoring (owner 2026-07-08)]** The
+  workflow authoring format (`docs/workflow-authoring-guide.md`) maps each proven shop step to an
+  ACTION_VOCABULARY member or flags `NEEDS-TOOL`. The DDU example alone surfaces three missing actions:
+  `ddu` (clean display-driver wipe), `restart`, `driver_install` (cec-autosetep already has the pnputil
+  install machinery — wire it as this action). Other likely gaps named in the guide: `sfc`/`dism` repair,
+  `uninstall_program`, `winget_install`. As shop authors submit workflows, tally the NEEDS-TOOL flags and
+  prioritize the vocabulary additions by frequency — each new action = a registered `Tool` in
+  `crates/tools-windows` + a member added to the frozen `deid::ACTION_VOCABULARY` (sorted; the drift test
+  pins it) + a risk class. — why deferred: driven by the shop's submitted workflows; Windows-side tool
+  builds. Resume: `crates/deid/src/lib.rs` ACTION_VOCABULARY; `crates/tools-windows`; cec-autosetep
+  `src/Install-Engine.psm1` for the driver_install half; the authoring guide's NEEDS-TOOL tallies.
