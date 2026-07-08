@@ -669,6 +669,12 @@ async fn run(args: Args) -> anyhow::Result<()> {
             }
         }
         Some(sign_off) => {
+            // The F4 post-fix re-collection seam. The CLI/bootstrap wires the
+            // no-op collector (→ Unverified → escalate); a Windows build swaps
+            // `post_fix_collector` for the real one and the same code path below
+            // verifies autonomously and records a resolved row with no human.
+            let collector = post_fix_collector();
+
             // Run-provenance for every row this run records: a fresh run id, the
             // retrieval-first lane, and which precedents primed the slate — so the
             // corpus counts only independent confirmations (EI-03/A5).
@@ -853,7 +859,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
                 // observed the machine afterwards escalates instead of being
                 // recorded as resolved (NR-1).
                 let class = verification_class_for(&route, case.reproducibility);
-                let post = recollect_post_signature();
+                let post = recollect_post_signature(collector.as_ref());
                 if post.is_none() {
                     human!(
                         "  verification: no live re-collection available — the outcome cannot be \
@@ -1132,26 +1138,60 @@ async fn sandbox_validated_for(
     }
 }
 
-/// Re-collect the post-execution signature from the LIVE machine, for the
-/// verification diff. A genuine re-collection re-runs the diagnostic tools
-/// (event log, WER/WHEA, CIM) against the host and builds a fresh signature with
-/// the same instrument that established the fault. The bootstrap has no live
-/// collector, so this returns `None` — and a `None` post is treated as
-/// [`Verdict::Unverified`], not a pass: re-reading the request text is not an
-/// observation of the post-fix state, so a run that never re-observed the
-/// machine escalates instead of being recorded as resolved (NR-1). A Windows
-/// build wires the real re-collection (via `tools-windows`) here.
-fn recollect_post_signature() -> Option<FaultSignature> {
-    None
+/// The F4 re-collection seam: re-observe the live machine AFTER a fix so the
+/// verifier can diff the post-state against the original fault signature.
+///
+/// This is the one seam the whole autonomous-learning loop turns on. A genuine
+/// collector re-runs the diagnostic tools (event log, WER/WHEA, CIM) on the
+/// host and yields fresh [`DiagnosticEvent`]s; [`recollect_post_signature`]
+/// turns them into the post-fix signature with the SAME extractor that built
+/// the original, so "fixed" is judged by the same instrument that established
+/// "broken". `recollect` returns `None` when no live re-collection was possible
+/// (the bootstrap / a non-Windows build) — and a `None` post yields
+/// [`Verdict::Unverified`], never a pass, so a run that never re-observed the
+/// machine escalates instead of claiming a resolution (NR-1).
+///
+/// **Windows drop-in (see `docs/f4-windows-collector-playbook.md`):** the only
+/// thing left to make the loop autonomous on real hardware is one impl of this
+/// trait in `tools-windows` that re-runs the collectors, plus swapping
+/// [`post_fix_collector`] to return it. Everything downstream — the verdict, the
+/// autonomous `VerifierConfirmed` sign-off, the `ResolvedProvisional` parole —
+/// is already wired and proven against a mock collector.
+trait PostFixCollector {
+    /// Re-observe the machine after a fix. `None` = no live re-collection
+    /// (bootstrap) → the outcome is Unverified, never a pass.
+    fn recollect(&self) -> Option<Vec<DiagnosticEvent>>;
+}
+
+/// The no-op collector: no live tools, so no post-fix observation. This is the
+/// CLI/bootstrap default and the non-Windows build — it keeps every outcome
+/// `Unverified` (escalate), exactly the pre-seam behavior.
+struct NullCollector;
+
+impl PostFixCollector for NullCollector {
+    fn recollect(&self) -> Option<Vec<DiagnosticEvent>> {
+        None
+    }
+}
+
+/// The single swap point for the F4 Windows drop-in: return a real collector
+/// (from `tools-windows`) here and the autonomous-learning loop runs on live
+/// hardware with no other change. Today it is [`NullCollector`].
+fn post_fix_collector() -> Box<dyn PostFixCollector> {
+    Box::new(NullCollector)
+}
+
+/// Turn a collector's re-observation into the post-fix signature for the
+/// verification diff. `None` collector output stays `None` (→ Unverified).
+fn recollect_post_signature(collector: &dyn PostFixCollector) -> Option<FaultSignature> {
+    collector.recollect().map(|events| signature_of(&events))
 }
 
 /// Build the fault signature from the structured symptoms of every event.
 /// Free text never reaches the signature: extraction keeps only vocabulary
 /// terms, hex codes, prefixed ids, and module names. This is the builder a live
 /// re-collection (`recollect_post_signature` on a Windows build) uses to turn
-/// re-collected events into the post-fix signature; it is exercised by the
-/// tests today.
-#[allow(dead_code)] // wired in by the real (Windows) re-collection; used by tests
+/// re-collected events into the post-fix signature.
 fn signature_of(events: &[DiagnosticEvent]) -> FaultSignature {
     let mut symptoms: Vec<common::Symptom> = events
         .iter()
@@ -2002,12 +2042,12 @@ mod tests {
         );
 
         // ...but it does NOT feed the corpus verdict. With no live re-collection
-        // (`recollect_post_signature()` is `None`), the verdict is `Unverified`
+        // (the `NullCollector` returns `None`), the verdict is `Unverified`
         // no matter how cleanly the plan applied in the sandbox.
         let signature = signature_of(&collect_diagnostics("x"));
         let verdict = verify_outcome(
             &signature,
-            recollect_post_signature().as_ref(),
+            recollect_post_signature(&NullCollector).as_ref(),
             VerificationClass::Deterministic,
         );
         assert_eq!(
@@ -2089,6 +2129,142 @@ mod tests {
         assert!(
             !line.contains("jsmith"),
             "no raw user in the audit line: {line}"
+        );
+    }
+
+    // --- F4: the autonomous-learning loop, proven with a mock collector ------
+    //
+    // The whole "expand its own knowledge without a human" capability turns on
+    // the re-collection seam. A collector that observes the fault GONE must
+    // drive a resolved outcome recorded under a VERIFIER (no-human) sign-off and
+    // admitted to a corpus that ENFORCES attestation; a collector that still
+    // sees the fault must escalate. The mock stands in for the Windows collector
+    // that is the only remaining piece (docs/f4-windows-collector-playbook.md).
+
+    /// A collector that replays a fixed post-fix event set — the test stand-in
+    /// for the live Windows re-collection.
+    struct MockCollector {
+        events: Vec<DiagnosticEvent>,
+    }
+
+    impl PostFixCollector for MockCollector {
+        fn recollect(&self) -> Option<Vec<DiagnosticEvent>> {
+            Some(self.events.clone())
+        }
+    }
+
+    #[tokio::test]
+    async fn a_verified_clean_recollection_earns_a_resolved_row_with_no_human() {
+        // The autonomous flywheel end to end: original fault → a collector that
+        // re-observes the machine and finds the fault gone → Pass →
+        // ResolvedConfirmed → recorded under a VERIFIER-held attestation into a
+        // corpus that ENFORCES attestation → the machine authored a resolved
+        // precedent with no human in the loop.
+        let verifier = provenance::SignOffAuthority::generate();
+        let corpus = LocalCorpus::new().with_authority(verifier.public_key());
+        let config_class = CoarseHostInventory.config_class();
+
+        let original = FaultSignature::from_symptoms(extract_symptoms("bsod 0x1234"));
+        // The post-fix re-collection: a clean boot log — none of the original
+        // symptom vocabulary recurs.
+        let post_events = vec![DiagnosticEvent::new(
+            EventKind::Log,
+            "post-fix",
+            "system nominal; boot completed",
+            Severity::Info,
+            0,
+        )];
+        let collector = MockCollector {
+            events: post_events,
+        };
+
+        let post = recollect_post_signature(&collector);
+        assert!(post.is_some(), "the mock collector re-observed the machine");
+        let verdict = verify_outcome(&original, post.as_ref(), VerificationClass::Deterministic);
+        assert_eq!(verdict, Verdict::Pass, "a clean re-collection is a pass");
+
+        let mut execution = ExecutionResult::new("repertoire-fix");
+        execution.completed = true;
+        let route = Route::SoftwareState;
+        let label = label_for(&route, &execution, &verdict);
+        assert_eq!(label, OutcomeLabel::ResolvedConfirmed);
+
+        // Record under a VERIFIER sign-off (no human) with the verifier's
+        // attestation, into the attestation-enforcing corpus.
+        record_outcome(
+            &corpus,
+            &original,
+            &Plan::new("repertoire-fix", "reset the display driver"),
+            label,
+            &config_class,
+            SignOff::VerifierConfirmed,
+            Some(verdict.to_verification(VerificationClass::Deterministic)),
+            Some(RowProvenance {
+                run_id: "run-auto-1".into(),
+                retrieval_first: false,
+                primed_from: vec![],
+            }),
+            Some(&verifier),
+            false,
+            &audit::NullSink,
+        )
+        .await;
+
+        // The machine's own resolved precedent is now retrievable — no human
+        // ever signed off.
+        let hits = corpus.query(&original, &config_class).await.expect("query");
+        assert_eq!(
+            hits.len(),
+            1,
+            "a machine-verified fix becomes a retrievable precedent autonomously"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_recollection_that_still_sees_the_fault_escalates_not_resolves() {
+        // The safety half: if the collector still observes the original
+        // symptom, the verdict is Fail → EscalatedHumanUnresolved (a hard
+        // negative), never a resolved row — the machine cannot mint truth for a
+        // fix that did not hold.
+        let original = FaultSignature::from_symptoms(extract_symptoms("bsod 0x1234"));
+        let still_broken = vec![DiagnosticEvent::new(
+            EventKind::Log,
+            "post-fix",
+            "bsod 0x1234 recurred after reboot",
+            Severity::Error,
+            0,
+        )];
+        let collector = MockCollector {
+            events: still_broken,
+        };
+        let post = recollect_post_signature(&collector);
+        let verdict = verify_outcome(&original, post.as_ref(), VerificationClass::Deterministic);
+        assert!(
+            matches!(verdict, Verdict::Fail { .. }),
+            "a recurring symptom is a Fail, got {verdict:?}"
+        );
+
+        let mut execution = ExecutionResult::new("repertoire-fix");
+        execution.completed = true;
+        let label = label_for(&Route::SoftwareState, &execution, &verdict);
+        assert_eq!(
+            label,
+            OutcomeLabel::EscalatedHumanUnresolved,
+            "a fix that did not hold escalates, it never resolves autonomously"
+        );
+    }
+
+    #[test]
+    fn the_null_collector_keeps_every_outcome_unverified() {
+        // The pre-seam invariant, now a property of NullCollector: no live
+        // re-collection ⇒ Unverified ⇒ escalate. This is what a non-Windows /
+        // bootstrap deployment sees until the real collector drops in.
+        let original = FaultSignature::from_symptoms(extract_symptoms("event_41"));
+        let post = recollect_post_signature(&NullCollector);
+        assert!(post.is_none());
+        assert_eq!(
+            verify_outcome(&original, post.as_ref(), VerificationClass::Deterministic),
+            Verdict::Unverified
         );
     }
 

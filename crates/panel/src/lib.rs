@@ -245,10 +245,16 @@ impl Judge for HeuristicJudge {
         let likelihood = if candidate.plan.steps.is_empty() {
             0.0
         } else {
-            // Fix likelihood under corpus priors: a plan retrieved from
-            // confirmed precedent outranks a cold guess of the same shape.
+            // Fix likelihood under provenance priors: a plan retrieved from
+            // confirmed precedent (0.8) outranks one reasoned from the knowledge
+            // repertoire (0.7), which outranks a cold guess of the same shape
+            // (0.6). The repertoire tier is grounded in real knowledge but not
+            // corpus-confirmed here, so it fills the gap when no precedent exists
+            // yet a precedent still wins. The prior only RANKS — it never lifts a
+            // plan past an escalation gate (see `required_escalation`).
             match candidate.source {
                 common::CandidateSource::CorpusPrimed => 0.8,
+                common::CandidateSource::Repertoire => 0.7,
                 _ => 0.6,
             }
         };
@@ -365,6 +371,31 @@ mod tests {
         let candidates = vec![cold, primed];
         let (index, _, _) = best_of_n(&judge, &candidates).expect("non-empty");
         assert_eq!(index, 1, "precedent wins under corpus priors");
+    }
+
+    #[test]
+    fn the_provenance_priors_rank_precedent_over_repertoire_over_cold_guess() {
+        // The three tiers of the same reversible shape must strictly order:
+        // CorpusPrimed (0.8) > Repertoire (0.7) > ColdModel (0.6). The
+        // repertoire fills the gap but never outranks a confirmed precedent.
+        let judge = HeuristicJudge;
+        let mut cold = candidate_with(Risk::Reversible);
+        cold.source = CandidateSource::ColdModel;
+        let mut repertoire = candidate_with(Risk::Reversible);
+        repertoire.source = CandidateSource::Repertoire;
+        let mut primed = candidate_with(Risk::Reversible);
+        primed.source = CandidateSource::CorpusPrimed;
+        assert!(
+            judge.score(&repertoire).total() > judge.score(&cold).total(),
+            "repertoire (grounded) must outrank a cold guess"
+        );
+        assert!(
+            judge.score(&primed).total() > judge.score(&repertoire).total(),
+            "a confirmed precedent must outrank the repertoire"
+        );
+        // And in a mixed slate the precedent still wins.
+        let (index, _, _) = best_of_n(&judge, &[cold, repertoire, primed]).expect("non-empty");
+        assert_eq!(index, 2, "precedent wins over repertoire and cold guess");
     }
 
     #[test]

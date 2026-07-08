@@ -613,7 +613,9 @@ async fn handle_execute(
         })?;
 
     let class = verification_class_for(&session.route, session.reproducibility);
-    let post = crate::recollect_post_signature();
+    // Same F4 seam as the CLI: the no-op collector today (→ Unverified), a real
+    // Windows collector as a drop-in makes the served path verify autonomously.
+    let post = crate::recollect_post_signature(crate::post_fix_collector().as_ref());
     let verdict = verify_outcome(&session.signature, post.as_ref(), class);
     let label = label_for(&session.route, &execution, &verdict);
 
