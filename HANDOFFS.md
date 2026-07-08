@@ -15,6 +15,16 @@ Below "Pick up here", keep a reverse-chronological **handoff log** of dated entr
 
 ## Current state
 
+**As of 2026-07-08 03:22 UTC.** **PR #20 MERGED — `main` @ `194f881`.** Branch restarted clean from main. The F4
+autonomous-learning seam, the `Repertoire` candidate tier, and the EULA on-screen-acceptance gate are all
+on main; 255 tests. The engine-side autonomous-learning loop is complete and proven with a mock collector
+(the §7 blind panel caught + I fixed a real empty-observation fabrication vector). **The remaining F4 piece
+is the real Windows collector** — a one-trait drop-in per `docs/f4-windows-collector-playbook.md` (Windows
+box required; left for another agent per owner). EULA target-side presentation likewise a drop-in
+(`docs/eula-acceptance-playbook.md`).
+
+--- previous ---
+
 **As of 2026-07-04 ~23:20 UTC.** **PRs #17, #18, AND #19 all MERGED** — `main` @ `0c54578`. Branch
 restarted clean from that main. On main: the full v2 migration (chain-v2, fingerprint-v2 with salt +
 domains), attestation-v4 (provenance commitment — Q6 wrinkle RESOLVED, blind-panel clean 2/2), leak
