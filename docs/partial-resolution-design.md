@@ -2,6 +2,18 @@
 
 # Partial resolution — design
 
+> **STATUS 2026-07-08: partial resolution BUILT and merged (the autonomous path).**
+> `verify_outcome` emits `PartialPass{cleared, remaining}`; a `ResolvedPartial` row is
+> gated (needs a `PartialPass` verdict with a non-empty cleared benefit) and admitted as
+> beneficial truth (`is_beneficial`, not `is_resolved`); the cleared/introduced deltas are
+> bound additively into the attestation + chain (pre-change rows stay byte-identical, no
+> migration). **DEFERRED (see FOLLOWUPS):** (a) autonomous regression DETECTION — the naive
+> post-symptom diff cannot tell a caused regression from benign post-fix log noise, so
+> `verify_outcome` does NOT emit `Regressed`; it stays a recordable outcome (label + verdict
+> + gate) for a future fault-aware collector or human. (b) RETRIEVAL offering a
+> `ResolvedPartial` as a partial-fix step (today it is recorded but `fix_mappings` only
+> counts `is_resolved`). (c) the retry loop carrying `remaining` forward as progress.
+
 **Owner ask (2026-07-08):** make "the fix improved things but did not fully
 resolve them" a first-class outcome, *because an improvement is an improvement —
 especially when we can prove the improvement happened because of the fix that was

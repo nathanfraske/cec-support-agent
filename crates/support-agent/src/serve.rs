@@ -151,6 +151,8 @@ pub(crate) fn wire_label(label: &OutcomeLabel) -> String {
     match label {
         OutcomeLabel::ResolvedConfirmed => "resolved_confirmed".into(),
         OutcomeLabel::ResolvedProvisional => "resolved_provisional".into(),
+        OutcomeLabel::ResolvedPartial => "resolved_partial".into(),
+        OutcomeLabel::Regressed => "regressed".into(),
         OutcomeLabel::Reopened => "reopened".into(),
         OutcomeLabel::EscalatedHardware { part_class } => {
             format!("escalated_hardware:{part_class}")
@@ -165,6 +167,8 @@ fn wire_verdict(verdict: &Verdict) -> &'static str {
     match verdict {
         Verdict::Pass => "pass",
         Verdict::ProvisionalPass => "provisional_pass",
+        Verdict::PartialPass { .. } => "partial_pass",
+        Verdict::Regressed { .. } => "regressed",
         Verdict::Fail { .. } => "fail",
         Verdict::Unverified => "unverified",
         Verdict::OffMachine => "off_machine",

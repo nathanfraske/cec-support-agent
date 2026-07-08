@@ -36,6 +36,15 @@ pub enum VerificationResult {
     /// The signature is gone but the class is intermittent: a provisional pass
     /// under a monitoring horizon with auto-reopen.
     ProvisionalPass,
+    /// Some — but not all — of the original symptoms cleared, and the fix
+    /// introduced no new ones: a beneficial-but-incomplete outcome (partial
+    /// resolution). The `cleared` set is the proven benefit; `recurring` is what
+    /// is left. Backs a `ResolvedPartial` label — an improvement, not a fix.
+    PartialPass,
+    /// The fix INTRODUCED symptoms that were not present before (it may also
+    /// have cleared some). Trading one problem for another is never autonomous
+    /// credit: this escalates to a human. `introduced` names the new symptoms.
+    Regressed,
     /// The original signature (or part of it) recurred after execution.
     Fail,
     /// Hardware class: the verdict belongs to the bench or RMA, not a
@@ -49,13 +58,21 @@ pub enum VerificationResult {
 }
 
 impl VerificationResult {
-    /// Whether this verdict counts as a passing verification (the only verdicts
-    /// that may back a resolved outcome).
+    /// Whether this verdict counts as a FULL passing verification (the only
+    /// verdicts that may back a fully-resolved outcome). A `PartialPass` is a
+    /// beneficial improvement but NOT a full pass.
     pub fn is_pass(self) -> bool {
         matches!(
             self,
             VerificationResult::Pass | VerificationResult::ProvisionalPass
         )
+    }
+
+    /// Whether this verdict recorded a proven benefit — some original symptoms
+    /// cleared, attributable to the fix. A full pass and a partial pass are both
+    /// beneficial; a partial pass is beneficial without being a full pass.
+    pub fn is_beneficial(self) -> bool {
+        self.is_pass() || matches!(self, VerificationResult::PartialPass)
     }
 }
 
@@ -68,20 +85,35 @@ pub struct Verification {
     /// visibly an intermittent parole, not a deterministic confirmation).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub class: Option<VerificationClass>,
-    /// Original symptoms still present after execution — the post-state diff.
-    /// Empty unless `result` is `Fail`. Symptoms are vocabulary terms, so this
-    /// carries evidence, never identity.
+    /// Original symptoms still present after execution — what is left. Empty on
+    /// a full `Pass`. On a `PartialPass` these are the symptoms the fix did not
+    /// clear; on a `Fail` they are all the originals that recurred. Symptoms are
+    /// vocabulary terms, so this carries evidence, never identity.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub recurring: Vec<Symptom>,
+    /// Original symptoms that CLEARED after execution — the fix's proven
+    /// benefit, attributable to this single signed plan (the pre/post signatures
+    /// bracket only this plan). Non-empty on a `PartialPass`; also populated on a
+    /// full `Pass` where it equals the whole original set. Vocabulary terms only.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cleared: Vec<Symptom>,
+    /// Symptoms present AFTER execution that were NOT present before — a
+    /// regression the fix introduced. Non-empty only on a `Regressed` verdict;
+    /// its presence is why that outcome escalates instead of earning credit.
+    /// Vocabulary terms only.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub introduced: Vec<Symptom>,
 }
 
 impl Verification {
-    /// A passing verdict with no recurring symptoms and no recorded class.
+    /// A full passing verdict: the whole original set cleared, nothing left.
     pub fn pass() -> Self {
         Self {
             result: VerificationResult::Pass,
             class: None,
             recurring: Vec::new(),
+            cleared: Vec::new(),
+            introduced: Vec::new(),
         }
     }
 
@@ -91,6 +123,32 @@ impl Verification {
             result: VerificationResult::ProvisionalPass,
             class: None,
             recurring: Vec::new(),
+            cleared: Vec::new(),
+            introduced: Vec::new(),
+        }
+    }
+
+    /// A partial-resolution verdict: `cleared` is the proven benefit, `recurring`
+    /// is what is left. Both non-empty for a real partial.
+    pub fn partial(cleared: Vec<Symptom>, recurring: Vec<Symptom>) -> Self {
+        Self {
+            result: VerificationResult::PartialPass,
+            class: None,
+            recurring,
+            cleared,
+            introduced: Vec::new(),
+        }
+    }
+
+    /// A regression verdict: the fix introduced `introduced` symptoms (and may
+    /// have cleared some). Escalates — never autonomous credit.
+    pub fn regressed(cleared: Vec<Symptom>, introduced: Vec<Symptom>) -> Self {
+        Self {
+            result: VerificationResult::Regressed,
+            class: None,
+            recurring: Vec::new(),
+            cleared,
+            introduced,
         }
     }
 }

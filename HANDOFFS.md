@@ -15,6 +15,21 @@ Below "Pick up here", keep a reverse-chronological **handoff log** of dated entr
 
 ## Current state
 
+**As of 2026-07-08 04:56 UTC.** **Partial resolution BUILT** on branch `claude/workflow-model-optimization-e1y1sx`
+(off `main` @ `194f881`), 259 tests green, clippy clean, blind-audit panel running. A fix that clears
+SOME original symptoms is now a first-class `ResolvedPartial` outcome: `verify_outcome` emits
+`PartialPass{cleared,remaining}`; the gate requires a `PartialPass` verdict with a non-empty cleared
+benefit (else `PartialWithoutBenefit`) and admits it as beneficial (`is_beneficial`, not `is_resolved` —
+recorded, doesn't back a fix mapping yet); the cleared/introduced deltas bind ADDITIVELY into the
+attestation + chain so pre-change rows stay byte-identical (no migration — the canned fixture test
+confirms). Regression is a recordable outcome (label/verdict/gate wired) but NOT autonomously detected
+(naive post-diff flags benign log noise). Red-on-revert proven for the partial-benefit gate. 3 follow-ons
+filed (regression auto-detection needs the fault-aware collector; retrieval-as-partial; retry
+progress-carry). Owner decisions honored: label `ResolvedPartial`, autonomous partial credit under the
+same rules as full resolution, destructive partial needs human (gate extended to is_beneficial).
+
+--- previous ---
+
 **As of 2026-07-08 03:22 UTC.** **PR #20 MERGED — `main` @ `194f881`.** Branch restarted clean from main. The F4
 autonomous-learning seam, the `Repertoire` candidate tier, and the EULA on-screen-acceptance gate are all
 on main; 255 tests. The engine-side autonomous-learning loop is complete and proven with a mock collector

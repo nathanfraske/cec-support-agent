@@ -996,6 +996,16 @@ fn explain_label(label: &OutcomeLabel) -> &'static str {
              and went, one clean check is not enough to call it gone — it will be \
              watched, and the case reopens automatically if it comes back."
         }
+        OutcomeLabel::ResolvedPartial => {
+            "The fix helped — some of the original problems are gone — but not all of \
+             them. That improvement is real and was kept; the remaining issues will be \
+             worked next, either with another step or by a person."
+        }
+        OutcomeLabel::Regressed => {
+            "The step that ran cleared some of the original problem but introduced a new \
+             issue, so this is being handed to a person rather than continued \
+             automatically. A change that trades one problem for another needs judgment."
+        }
         OutcomeLabel::Reopened => {
             "The problem came back after a fix had looked good, so the case is open \
              again and will be looked at further."
@@ -1467,9 +1477,16 @@ fn label_for(route: &Route, execution: &ExecutionResult, verdict: &Verdict) -> O
     match verdict {
         Verdict::Pass => OutcomeLabel::ResolvedConfirmed,
         Verdict::ProvisionalPass => OutcomeLabel::ResolvedProvisional,
-        // Fail (the fix did not hold), OffMachine (hardware belongs to the
-        // bench), and Unverified (no live re-collection observed the outcome)
-        // all escalate to a human rather than claim a resolution.
+        // Some symptoms cleared, some remain: a beneficial-but-incomplete
+        // outcome. Not resolved (the ticket keeps going), but recorded as a
+        // real improvement, not a failure.
+        Verdict::PartialPass { .. } => OutcomeLabel::ResolvedPartial,
+        // The fix introduced new symptoms: a regression that escalates to a
+        // human, recorded visibly rather than hidden inside a plain failure.
+        Verdict::Regressed { .. } => OutcomeLabel::Regressed,
+        // Fail (nothing cleared), OffMachine (hardware belongs to the bench),
+        // and Unverified (no live re-collection observed the outcome) all
+        // escalate to a human rather than claim any benefit.
         Verdict::Fail { .. } | Verdict::OffMachine | Verdict::Unverified => {
             OutcomeLabel::EscalatedHumanUnresolved
         }

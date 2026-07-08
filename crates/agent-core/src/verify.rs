@@ -15,9 +15,29 @@ pub enum Verdict {
     /// The signature is gone but the class is intermittent: monitored over a
     /// horizon, auto-reopened on recurrence.
     ProvisionalPass,
-    /// The original signature (or part of it) recurred. The recurring
-    /// symptoms are the post-state diff — they enter the retry context as a
-    /// hard negative, because a retry that does not know what failed is a
+    /// SOME original symptoms cleared, some remain, and the fix introduced no
+    /// new ones — a beneficial-but-incomplete outcome (partial resolution).
+    /// `cleared` is the proven benefit (attributable to this single signed
+    /// plan); `remaining` is what is left and enters the retry context as
+    /// PROGRESS — the next attempt works on the remainder, not from scratch.
+    PartialPass {
+        /// Original symptoms that cleared — the fix's proven benefit.
+        cleared: Vec<Symptom>,
+        /// Original symptoms still present — the remainder to keep working.
+        remaining: Vec<Symptom>,
+    },
+    /// The fix INTRODUCED symptoms that were not present before (it may also
+    /// have cleared some). Trading one problem for another is never autonomous
+    /// credit — this escalates to a human.
+    Regressed {
+        /// Original symptoms that cleared (if any) — recorded, not credited.
+        cleared: Vec<Symptom>,
+        /// Symptoms present after that were not before — the regression.
+        introduced: Vec<Symptom>,
+    },
+    /// The original signature (or part of it) recurred with nothing cleared. The
+    /// recurring symptoms are the post-state diff — they enter the retry context
+    /// as a hard negative, because a retry that does not know what failed is a
     /// coin flip.
     Fail {
         /// The original symptoms still present after execution.
@@ -41,17 +61,35 @@ impl Verdict {
     /// this carries evidence, never identity.
     pub fn to_verification(&self, class: VerificationClass) -> common::Verification {
         use common::VerificationResult as R;
-        let (result, recurring) = match self {
-            Verdict::Pass => (R::Pass, Vec::new()),
-            Verdict::ProvisionalPass => (R::ProvisionalPass, Vec::new()),
-            Verdict::Fail { recurring } => (R::Fail, recurring.clone()),
-            Verdict::OffMachine => (R::OffMachine, Vec::new()),
-            Verdict::Unverified => (R::Unverified, Vec::new()),
+        // (result, recurring, cleared, introduced)
+        let (result, recurring, cleared, introduced) = match self {
+            Verdict::Pass => (R::Pass, Vec::new(), Vec::new(), Vec::new()),
+            Verdict::ProvisionalPass => (R::ProvisionalPass, Vec::new(), Vec::new(), Vec::new()),
+            Verdict::PartialPass { cleared, remaining } => (
+                R::PartialPass,
+                remaining.clone(),
+                cleared.clone(),
+                Vec::new(),
+            ),
+            Verdict::Regressed {
+                cleared,
+                introduced,
+            } => (
+                R::Regressed,
+                Vec::new(),
+                cleared.clone(),
+                introduced.clone(),
+            ),
+            Verdict::Fail { recurring } => (R::Fail, recurring.clone(), Vec::new(), Vec::new()),
+            Verdict::OffMachine => (R::OffMachine, Vec::new(), Vec::new(), Vec::new()),
+            Verdict::Unverified => (R::Unverified, Vec::new(), Vec::new(), Vec::new()),
         };
         common::Verification {
             result,
             class: Some(class),
             recurring,
+            cleared,
+            introduced,
         }
     }
 }
@@ -79,9 +117,29 @@ pub fn verify_outcome(
     let Some(post) = post else {
         return Verdict::Unverified;
     };
-    let recurring = original.recurring_in(post);
-    if !recurring.is_empty() {
-        return Verdict::Fail { recurring };
+    // Reason ONLY about the original fault's symptoms — did they clear? Post-fix
+    // re-collections routinely surface benign, incidental vocabulary (a `reboot`
+    // log, a `boot` entry) that has nothing to do with the fault; treating any
+    // post-only symptom as a regression would fire false alarms on ordinary
+    // noise. Detecting a genuine regression (a NEW fault the fix caused, not log
+    // noise) needs a fault-vs-noise signal the naive diff does not have — that is
+    // the collector's job and is deferred (see `OutcomeLabel::Regressed`, a
+    // recordable outcome, and FOLLOWUPS). So this autonomous verifier partitions
+    // the ORIGINAL symptoms into cleared and remaining, and nothing more.
+    let remaining = original.recurring_in(post); // originals still there
+    let cleared = original.cleared_in(post); // originals now gone (the benefit)
+
+    if !remaining.is_empty() {
+        // Some originals remain. If NONE cleared, nothing improved → a full
+        // Fail (the hard negative). If SOME cleared, it is a partial
+        // resolution: a proven benefit plus a remainder to keep working.
+        return if cleared.is_empty() {
+            Verdict::Fail {
+                recurring: remaining,
+            }
+        } else {
+            Verdict::PartialPass { cleared, remaining }
+        };
     }
     match class {
         VerificationClass::Deterministic => Verdict::Pass,
@@ -119,14 +177,52 @@ mod tests {
     }
 
     #[test]
-    fn recurrence_fails_and_names_the_recurring_symptoms() {
+    fn recurrence_with_nothing_cleared_is_a_full_fail() {
+        // All originals recur and nothing cleared → a plain Fail (hard
+        // negative), naming the recurring symptoms for the retry context.
         let original = signature(&["crash", "event_41"]);
-        let post = signature(&["event_41", "reboot"]);
+        let post = signature(&["crash", "event_41"]);
         match verify_outcome(&original, Some(&post), VerificationClass::Deterministic) {
             Verdict::Fail { recurring } => {
-                assert_eq!(recurring, vec![Symptom("event_41".into())]);
+                assert_eq!(
+                    recurring,
+                    vec![Symptom("crash".into()), Symptom("event_41".into())]
+                );
             }
             other => panic!("expected Fail, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn some_cleared_some_remaining_is_a_partial_pass() {
+        // `crash` cleared, `event_41` remains, nothing new → a partial
+        // resolution: a proven benefit (cleared) plus a remainder to keep working.
+        let original = signature(&["crash", "event_41"]);
+        let post = signature(&["event_41"]);
+        match verify_outcome(&original, Some(&post), VerificationClass::Deterministic) {
+            Verdict::PartialPass { cleared, remaining } => {
+                assert_eq!(cleared, vec![Symptom("crash".into())], "the proven benefit");
+                assert_eq!(remaining, vec![Symptom("event_41".into())], "the remainder");
+            }
+            other => panic!("expected PartialPass, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_post_only_symptom_is_ignored_not_treated_as_a_regression() {
+        // A post-fix re-collection carrying a symptom that was NOT in the
+        // original fault (`whea` here — could equally be a benign `reboot` log)
+        // must NOT be flagged as a regression by the naive diff: the autonomous
+        // verifier judges only the ORIGINAL symptoms. Here `crash` cleared and
+        // `event_41` remains → a partial pass; the post-only `whea` is ignored.
+        let original = signature(&["crash", "event_41"]);
+        let post = signature(&["event_41", "whea"]);
+        match verify_outcome(&original, Some(&post), VerificationClass::Deterministic) {
+            Verdict::PartialPass { cleared, remaining } => {
+                assert_eq!(cleared, vec![Symptom("crash".into())]);
+                assert_eq!(remaining, vec![Symptom("event_41".into())]);
+            }
+            other => panic!("expected PartialPass (post-only symptom ignored), got {other:?}"),
         }
     }
 

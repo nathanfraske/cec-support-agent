@@ -68,4 +68,26 @@ impl FaultSignature {
             .cloned()
             .collect()
     }
+
+    /// The original symptoms that CLEARED in `post` (present here, absent there)
+    /// — the fix's proven benefit. The other half of [`recurring_in`]: together
+    /// they partition this signature's symptoms into "still there" and "gone".
+    pub fn cleared_in(&self, post: &FaultSignature) -> Vec<Symptom> {
+        self.symptoms
+            .iter()
+            .filter(|symptom| !post.symptoms.contains(symptom))
+            .cloned()
+            .collect()
+    }
+
+    /// The symptoms INTRODUCED in `post` (present there, absent here) — new
+    /// problems that were not part of the original fault. A non-empty result is
+    /// a regression the fix may have caused.
+    pub fn introduced_in(&self, post: &FaultSignature) -> Vec<Symptom> {
+        post.symptoms
+            .iter()
+            .filter(|symptom| !self.symptoms.contains(symptom))
+            .cloned()
+            .collect()
+    }
 }

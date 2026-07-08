@@ -66,6 +66,15 @@ pub enum GateError {
     /// write gate bounds it; the read path additionally refuses it at deserialize.
     #[error("refused: a run-provenance run_id is not a bounded opaque token")]
     RunIdNotDeIdentified,
+    /// A `ResolvedPartial` label carries no `PartialPass` verdict with a real
+    /// cleared benefit — a "partial resolution" with no proven improvement
+    /// behind it is unauditable and must not earn a beneficial precedent.
+    #[error("refused: a partial-resolution outcome must carry a partial-pass verdict with cleared evidence")]
+    PartialWithoutBenefit,
+    /// A `Regressed` label without a `Regressed` verdict (or vice versa) — the
+    /// regression claim and the evidence disagree.
+    #[error("refused: the regression label does not match the verification verdict")]
+    RegressionLabelMismatch,
 }
 
 /// The evidence-integrity gate: the single checkpoint that admits a row into the
@@ -120,7 +129,15 @@ pub fn ensure_evidence_integrity(contribution: &Contribution) -> Result<(), Gate
         }
     }
     if let Some(verification) = outcome.verification() {
-        for symptom in &verification.recurring {
+        // Every symptom the verdict carries — remaining, cleared, and introduced
+        // — is bound onto the row and rides the attestation/chain, so each must
+        // be a de-id grammar member, not just the recurring set.
+        let deltas = verification
+            .recurring
+            .iter()
+            .chain(&verification.cleared)
+            .chain(&verification.introduced);
+        for symptom in deltas {
             if !common::is_symptom_token(&symptom.0) {
                 return Err(GateError::SymptomNotDeIdentified);
             }
@@ -151,13 +168,34 @@ pub fn ensure_evidence_integrity(contribution: &Contribution) -> Result<(), Gate
             // Missing, or a non-passing (Fail / OffMachine) verdict.
             _ => return Err(GateError::ResolvedWithoutPass),
         }
+    }
 
-        // (3) A resolved destructive fix requires human sign-off.
-        if matches!(outcome.plan.risk(), Risk::Destructive)
-            && contribution.sign_off != SignOff::HumanConfirmed
-        {
-            return Err(GateError::DestructiveFixNeedsHuman);
-        }
+    // (2b) The partial-resolution outcomes are backed the same way: a
+    // `ResolvedPartial` needs a `PartialPass` verdict carrying a real cleared
+    // benefit (a partial with no proven improvement is not a partial), and a
+    // `Regressed` label needs a `Regressed` verdict. A partial/regressed claim
+    // with no matching evidence cannot become a beneficial precedent.
+    match &outcome.label {
+        OutcomeLabel::ResolvedPartial => match outcome.verification.as_ref() {
+            Some(v) if v.result == VerificationResult::PartialPass && !v.cleared.is_empty() => {}
+            _ => return Err(GateError::PartialWithoutBenefit),
+        },
+        OutcomeLabel::Regressed => match outcome.verification.as_ref().map(|v| v.result) {
+            Some(VerificationResult::Regressed) => {}
+            _ => return Err(GateError::RegressionLabelMismatch),
+        },
+        _ => {}
+    }
+
+    // (3) A BENEFICIAL destructive fix — fully resolved OR partially — requires
+    // human sign-off: a verifier may autonomously credit a reversible
+    // improvement, but a destructive change that claims benefit needs a human,
+    // enforced here so an embedder cannot mint one with a verifier sign-off.
+    if outcome.label.is_beneficial()
+        && matches!(outcome.plan.risk(), Risk::Destructive)
+        && contribution.sign_off != SignOff::HumanConfirmed
+    {
+        return Err(GateError::DestructiveFixNeedsHuman);
     }
 
     Ok(())
@@ -267,6 +305,8 @@ mod tests {
                 result: VerificationResult::Fail,
                 class: None,
                 recurring: vec![Symptom("event_41".into())],
+                cleared: Vec::new(),
+                introduced: Vec::new(),
             }),
         );
         assert_eq!(
@@ -364,6 +404,8 @@ mod tests {
                     result,
                     class: None,
                     recurring: Vec::new(),
+                    cleared: Vec::new(),
+                    introduced: Vec::new(),
                 }),
             );
             assert_eq!(
@@ -576,6 +618,8 @@ mod tests {
                     result: VerificationResult::Fail,
                     class: None,
                     recurring: vec![Symptom("nathan@cec.direct".into())],
+                    cleared: Vec::new(),
+                    introduced: Vec::new(),
                 }),
             },
             config_class(),
