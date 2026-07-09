@@ -565,3 +565,21 @@ recommends that are NOT yet built, each attributed to the threat doc's §3 contr
 
 - [ ] [added 2026-07-08 06:30 UTC] Retrieval should PREFER a named successor on a `SupersededBy` retirement — today an enacted retirement filters the retired plan but retrieval does not yet surface/rank the successor plan; wire the supersession link into `fix_mappings`/ranking. — why deferred: needs a ranking decision; resume in `corpus-client/store.rs` fix_mappings + `docs/corpus-lifecycle-design.md` §4.
 - [ ] [added 2026-07-08 06:30 UTC] Richer retirement-candidate heuristics — `compute_retirement_candidates` flags only "was a confirmed fix, now net-zero after reopens"; consider recency windows, partial-mapping decay, and cross-signature signals. — why deferred: v1 keeps the clearest signal; resume in `corpus-client/store.rs`.
+
+#### Hardware telemetry evidence layer — anomaly fingerprinting taxonomy (2026-07-09 10:10 UTC)
+
+- [ ] [added 2026-07-09 10:10 UTC] **Build the hardware anomaly fingerprinting taxonomy** — a verified,
+  consistent, per-rail (EPS / PCIe / 24-pin) categorical fault vocabulary for the Hub/power-monitor layer
+  (candidate classes: voltage droop/sag, sustained UV/OV, ripple/noise-over-spec, oscillation; overcurrent,
+  inrush, phase-current imbalance; thermal excursion / connector overtemp incl. 12VHPWR·12V-2x6 contact-
+  resistance rise; sequencing / brown-out; fast dI/dt & load-release transients). This is the analog of
+  `STOP_CODE_NAMES` for telemetry: it lands as a FROZEN hardware-symptom vocabulary wired into the de-id
+  grammar so a Hub freeze-bundle anomaly enters a `FaultSignature` alongside the OS stop code (cross-
+  correlated fingerprint, e.g. `{video_tdr_failure, nvlddmkm.sys, pcie_12v_droop}`). De-id posture:
+  categorical label crosses the boundary by default; RAW V/I/T waveform stays on the PC, pulled only when
+  authorized (per-incident) or opt-in for CEC golden-sample building — a NEW accepted-risk egress gate
+  mirroring `--allow-remote-inference`. DISTINCT from the Hub's internal fingerprint DB (reference waveforms),
+  which is NOT yet scoped. Blocked on owner scoping: per-rail spec source-of-truth (ATX 3.x/ATX12VO, PCIe CEM,
+  Intel VR loadline, 12V-2x6), rail-scoped vs shared labels, the non-V/I/T "odds and ends", taxonomy
+  granularity. Resume: run the vetted-source research panel (like the tooling-primitive research) once scope
+  is confirmed. Context: owner brief 2026-07-09 on the Access Pro KVM + Hub/power-monitor CAN-freeze pipeline.
