@@ -672,18 +672,61 @@ mod tests {
 
     #[test]
     fn dictionaries_are_sorted_for_binary_search() {
-        let mut stop = STOP_CODE_NAMES.to_vec();
-        stop.sort_unstable();
-        assert_eq!(STOP_CODE_NAMES, stop.as_slice(), "STOP_CODE_NAMES unsorted");
-        let mut modules = MODULE_NAMES.to_vec();
-        modules.sort_unstable();
-        assert_eq!(MODULE_NAMES, modules.as_slice(), "MODULE_NAMES unsorted");
+        // Strictly ascending, not merely `sort()`-stable: `<` also rejects a
+        // DUPLICATE entry, which a `sort()`-then-equal check silently accepts
+        // (and which the set-based drift test cannot see either, since a set
+        // dedupes). A dup is harmless to `binary_search` but is dead weight and
+        // masks a copy-paste error — reject it here (blind-audit F3, 2026-07-09).
+        assert!(
+            STOP_CODE_NAMES.windows(2).all(|w| w[0] < w[1]),
+            "STOP_CODE_NAMES must be strictly ascending (sorted + no duplicates)"
+        );
+        assert!(
+            MODULE_NAMES.windows(2).all(|w| w[0] < w[1]),
+            "MODULE_NAMES must be strictly ascending (sorted + no duplicates)"
+        );
         // The module allowlist is lowercase; the stop-code dictionary uppercase.
         for m in MODULE_NAMES {
             assert_eq!(*m, m.to_lowercase(), "module {m:?} must be lowercase");
         }
         for s in STOP_CODE_NAMES {
             assert_eq!(*s, s.to_uppercase(), "stop code {s:?} must be uppercase");
+        }
+    }
+
+    /// Defense-in-depth against a FUTURE over-admission (blind-audit F1,
+    /// 2026-07-09). The stop-code table (`stop_codes::STOP_CODES`) is a data
+    /// catalog; the drift test only proves this de-id allowlist *mirrors* it, not
+    /// that any given name is SAFE to admit as a symptom. Without an independent
+    /// gate, a later edit adding a generic/vendor name to the table (a bare
+    /// `PRINTNIGHTMARE`, an OEM `ACME_FLEET_WATCHDOG`) would silently widen the
+    /// PII boundary with a still-green drift test. Every real Microsoft bug-check
+    /// name is a long `SNAKE_CASE` kernel identifier — at least two `[A-Z0-9]+`
+    /// segments joined by underscores. This asserts that shape, so a short or
+    /// single-word admission fails the build regardless of the table.
+    #[test]
+    fn stop_code_names_have_microsoft_bugcheck_shape() {
+        for name in STOP_CODE_NAMES {
+            assert!(name.len() >= 8, "stop-code name {name:?} implausibly short");
+            let segments: Vec<&str> = name.split('_').collect();
+            assert!(
+                segments.len() >= 2,
+                "stop-code name {name:?} must be underscore-separated SNAKE_CASE, \
+                 not a single generic word"
+            );
+            assert!(
+                name.starts_with(|c: char| c.is_ascii_uppercase()),
+                "stop-code name {name:?} must start with an uppercase letter"
+            );
+            for seg in segments {
+                assert!(
+                    !seg.is_empty()
+                        && seg
+                            .bytes()
+                            .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit()),
+                    "stop-code name {name:?} has an empty or non-[A-Z0-9] segment {seg:?}"
+                );
+            }
         }
     }
 

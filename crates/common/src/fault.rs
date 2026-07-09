@@ -158,4 +158,25 @@ mod tests {
         assert_eq!(codes[0].code, 0x0000_000A);
         assert!(!codes[0].meaning.trim().is_empty());
     }
+
+    /// The plain-English `meaning` is authored free text outside the de-id
+    /// grammar; it must never ride a signature onto the wire or a corpus row.
+    /// `StopCode` is not `Serialize`, and a `FaultSignature` carries only its
+    /// fingerprint and symptom tokens — so serializing a signature that names a
+    /// stop code emits the (de-identified) symptom but NOT the meaning behind it.
+    /// Regression guard for blind-audit F2 (2026-07-09).
+    #[test]
+    fn serializing_a_signature_never_leaks_stop_code_meaning() {
+        let sig = FaultSignature::from_symptoms(vec![Symptom("0x0000000a".into())]);
+        let meaning = sig.stop_codes()[0].meaning; // "A driver tried to access memory…"
+        let json = serde_json::to_string(&sig).expect("signature serializes");
+        assert!(
+            json.contains("0x0000000a"),
+            "the de-identified symptom token is expected on the wire"
+        );
+        assert!(
+            !json.contains(meaning) && !json.contains("driver tried"),
+            "authored stop-code meaning must not appear in a serialized signature: {json}"
+        );
+    }
 }

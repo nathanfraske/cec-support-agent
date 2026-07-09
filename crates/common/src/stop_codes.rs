@@ -19,6 +19,14 @@
 
 /// One Windows bug-check (stop) code: its numeric value, Microsoft symbolic
 /// name, and a plain-English meaning.
+///
+/// Deliberately NOT `Serialize` (blind-audit F2, 2026-07-09). `meaning` is
+/// authored free text that is not part of the de-id symptom grammar; if
+/// `StopCode` could serialize, a "helpful" caller could fold `meaning` into the
+/// `--json` envelope, a corpus row, or a model prompt — pushing un-grammared
+/// text onto an egress channel. Withholding `Serialize` closes that path at the
+/// type level, the same way `agent_core::ToolOutcome` drops `Serialize` to seal
+/// its raw `data`. Consumers read `meaning` for a LOCAL human trace only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StopCode {
     /// The numeric bug-check code (e.g. `0x0000000A`).

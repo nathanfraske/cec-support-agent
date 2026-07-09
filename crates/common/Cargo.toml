@@ -14,3 +14,8 @@ serde = { workspace = true }
 # dictionary-reversible.
 hmac = { workspace = true }
 sha2 = { workspace = true }
+
+[dev-dependencies]
+# Test-only: prove a serialized FaultSignature never carries authored stop-code
+# `meaning` text (blind-audit F2). The crate itself has no JSON dependency.
+serde_json = { workspace = true }
