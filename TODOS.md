@@ -511,8 +511,15 @@ _(completed items stay above, in place, with their `· done` tombstone)_
   pushed to `claude/workflow-model-optimization-e1y1sx`.
 
 ### Session 2026-07-09 — stop-code mapping into the tooling
-- [ ] [added 2026-07-09 09:20 UTC] **Stop-code mapping in code.** Generate `common/src/stop_codes.rs`
-  authoritative `StopCode{code,name,meaning}` table (379, from the reviewed doc) + `by_code`/`by_name`/
-  `describe` lookups. Reconcile de-id: grow `extract.rs::STOP_CODE_NAMES` to full 379 + drift test tying
-  it to the table (single source of truth, mirrors ACTION_VOCABULARY↔registry pattern). §7 blind audit on
-  the frozen-constant growth. Wire a lookup surface the agent/tooling can call.
+- [x] [added 2026-07-09 09:20 UTC · done 2026-07-09 09:55 UTC] **Stop-code mapping in code.** Generated
+  `common/src/stop_codes.rs` authoritative `StopCode{code,name,meaning}` table (379, from the reviewed doc)
+  + `by_code`/`by_name`/`describe` lookups. Reconciled de-id: grew `extract.rs::STOP_CODE_NAMES` to full 379
+  + drift test tying it to the table (single source of truth, mirrors ACTION_VOCABULARY↔registry pattern).
+  Domain accessors `Symptom::stop_code()` / `FaultSignature::stop_codes()` (deduped); `diagnose` prints the
+  mapping in the LOCAL human trace (verified live: 0x0000000A → IRQL_NOT_LESS_OR_EQUAL + meaning). Committed
+  `ff71a2e`, pushed. **§7 blind audit ran** (packet-only, no repo/test access): 379 names safe as data +
+  `describe` panic-clean confirmed; 3 structural gaps closed in `9a9b364` — F1 independent SNAKE_CASE
+  shape gate on the allowlist (blocks a future generic admission the drift test would miss), F2 `StopCode`
+  deliberately non-`Serialize` + regression test that a serialized signature never carries `meaning`, F3
+  allowlist sorted-test tightened to strictly-ascending (rejects dups). F4–F7 already covered / safe.
+  common: 44 tests green, workspace green, clippy clean.
