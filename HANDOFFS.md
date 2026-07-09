@@ -15,10 +15,11 @@ Below "Pick up here", keep a reverse-chronological **handoff log** of dated entr
 
 ## Current state
 
-**As of 2026-07-08 08:50 UTC.** **PR #21 (partial resolution) is MERGED to `main` @ `081ad3d`.** Since then a
-FIVE-feature arc + a safe-core tool catalog are BUILT + PUSHED on branch `claude/workflow-model-optimization-e1y1sx`
-(HEAD `6275f10`, off `main` @ `081ad3d`) but **NOT yet PR'd** (owner said implement, hasn't asked to merge).
-All committed work is pushed — nothing uncommitted. 287 tests green, clippy clean throughout.
+**As of 2026-07-09 09:55 UTC.** **PR #21 (partial resolution) is MERGED to `main` @ `081ad3d`.** Since then a
+FIVE-feature arc + a safe-core tool catalog + the Windows stop-code knowledge layer are BUILT + PUSHED on
+branch `claude/workflow-model-optimization-e1y1sx` (HEAD `9a9b364`, off `main` @ `081ad3d`) but **NOT yet
+PR'd** (owner said implement, hasn't asked to merge). All committed work is pushed — nothing uncommitted.
+Workspace green, clippy clean throughout (`common` now 44 tests).
 
 On the branch, in order:
 - **retrieval-as-partial** (`d39d392`) — `MappingKind::{Full,Partial{cleared}}`; `fix_mappings` offers a
@@ -34,6 +35,15 @@ On the branch, in order:
   data-driven `CatalogTool`) registered; `ACTION_VOCABULARY`→58 (drift test in lockstep). `DESTRUCTIVE_OPS`
   (13) = separate DIFFERENTIATED list, NOT registered/not in vocab, human-gated. Windows command execution
   for arg-taking + destructive ops = documented drop-in (`docs/safe-core-windows-execution-playbook.md`).
+- **stop-code knowledge layer** (`ff71a2e` + hardened `9a9b364`) — `common::stop_codes`: authoritative
+  `StopCode{code,name,meaning}` table for all 379 Windows bug-checks (generated from the reviewed
+  `docs/research/windows-stop-codes.md`) + `by_code`/`by_name`/`describe` lookups. De-id reconciled: frozen
+  `extract::STOP_CODE_NAMES` grew 42→379, welded to the table by a bidirectional drift test
+  (`stop_code_names_mirror_the_stop_code_table`) — single source of truth. `Symptom::stop_code()` /
+  `FaultSignature::stop_codes()` (deduped); `diagnose` prints the mapping in the LOCAL human trace only.
+  §7 blind-audited (packet-only): 379 names safe + `describe` panic-clean; 3 gaps closed — independent
+  SNAKE_CASE shape gate (F1), `StopCode` non-`Serialize` + no-`meaning`-egress test (F2), strict-ascending
+  allowlist test (F3).
 
 **Research (multi-agent panels, cost-tiered Haiku→Sonnet→Opus-bias-audit):** tool/primitive space researched,
 corrected (v1 panels were flawed — Opus caught an inversion + my own netsh slip), and BANKED durably in
@@ -699,6 +709,17 @@ See `docs/evidence-integrity-and-research-checklist.md` §9 for the implementati
 
 ## Lessons learned (append-only)
 
+- **(2026-07-09) Code generated from a script (a big `static` table, a grown allowlist) fails the rustfmt
+  pre-commit hook on long lines — the commit aborts and prints the rustfmt diff, leaving files staged but
+  uncommitted (HEAD unmoved).** Run `cargo fmt -p <crate>` immediately after writing generated `.rs`, before
+  `git add`/commit. Emit reasonably-wrapped lines in the generator too, but fmt is the authority.
+- **(2026-07-09) A packet-only §7 blind auditor reasons WITHOUT your repo, so it will (correctly) flag gaps
+  it can't confirm are already closed.** It raised "sortedness not tested" and "dup codes" that existing
+  tests already covered — those are non-actions, not misses. Triage every finding against the real code:
+  the audit's value was the ONE structural gap tests couldn't encode (an allowlist auto-mirrored from a data
+  table has no independent safety gate → add a SNAKE_CASE shape test so a future generic admission fails the
+  build even though the drift test stays green). Keep the auditor blind (don't hand it the tests) — that is
+  what surfaced the gap a test-aware reviewer would have rationalized away.
 - **(2026-07-08) Auto-mode denies `git push --force-with-lease` even for an already-merged branch, and it
   denies a COMPOUND command WHOLESALE when any sub-action is blocked.** The branch-restart one-liner
   `git fetch && git checkout -B <b> origin/main && git push --force-with-lease` was rejected entirely — the
