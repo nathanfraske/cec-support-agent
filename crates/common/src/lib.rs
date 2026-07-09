@@ -20,6 +20,7 @@ mod hash;
 mod inventory;
 mod plan;
 mod prose;
+mod stop_codes;
 mod verification;
 
 pub use candidate::{Candidate, CandidateSource};
@@ -37,6 +38,7 @@ pub use hash::{
 pub use inventory::{CoarseHostInventory, ExternalInventory, InventoryProvider};
 pub use plan::{Plan, PlanStep, Risk};
 pub use prose::Prose;
+pub use stop_codes::{by_code, by_name, describe, StopCode, STOP_CODES};
 pub use verification::{Verification, VerificationClass, VerificationResult};
 
 #[cfg(test)]

@@ -21,6 +21,19 @@ impl From<&str> for Symptom {
     }
 }
 
+impl Symptom {
+    /// If this symptom names a Windows bug-check (stop) code — either the
+    /// symbolic name (`irql_not_less_or_equal`) or the hex value (`0x0000000a`)
+    /// — resolve it to the [`StopCode`](crate::StopCode) so a report or the
+    /// diagnostic brain can show the operator what it means. Symptoms are stored
+    /// lowercase; [`crate::describe`] matches names and hex case-insensitively.
+    /// Returns `None` for symptoms that are not stop codes (`explorer.exe`,
+    /// `event_41`, `crashes`).
+    pub fn stop_code(&self) -> Option<&'static crate::StopCode> {
+        crate::describe(&self.0)
+    }
+}
+
 impl TryFrom<String> for Symptom {
     type Error = String;
 
@@ -57,6 +70,23 @@ impl FaultSignature {
         }
     }
 
+    /// Every Windows bug-check (stop) code named among this signature's symptoms,
+    /// in symptom order, de-duplicated by code (so `0x0000000a` and
+    /// `irql_not_less_or_equal` in the same fault resolve to one entry). The
+    /// diagnostic brain and operator-facing reports use this to attach a
+    /// plain-English meaning to each stop code without re-parsing free text.
+    pub fn stop_codes(&self) -> Vec<&'static crate::StopCode> {
+        let mut out: Vec<&'static crate::StopCode> = Vec::new();
+        for symptom in &self.symptoms {
+            if let Some(sc) = symptom.stop_code() {
+                if !out.iter().any(|e| e.code == sc.code) {
+                    out.push(sc);
+                }
+            }
+        }
+        out
+    }
+
     /// Whether any of this signature's symptoms recur in `post`. Verification
     /// diffs a re-collected signature against the original failure signature
     /// with this: the claim "fixed" is only valid against the same instrument
@@ -89,5 +119,43 @@ impl FaultSignature {
             .filter(|symptom| !self.symptoms.contains(symptom))
             .cloned()
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn symptom_resolves_stop_codes_by_name_and_hex() {
+        assert_eq!(
+            Symptom("irql_not_less_or_equal".into())
+                .stop_code()
+                .map(|s| s.code),
+            Some(0x0000_000A)
+        );
+        assert_eq!(
+            Symptom("0x0000000a".into()).stop_code().map(|s| s.name),
+            Some("IRQL_NOT_LESS_OR_EQUAL")
+        );
+        // Non-stop-code symptoms resolve to nothing.
+        assert!(Symptom("explorer.exe".into()).stop_code().is_none());
+        assert!(Symptom("crashes".into()).stop_code().is_none());
+        assert!(Symptom("event_41".into()).stop_code().is_none());
+    }
+
+    #[test]
+    fn signature_collects_stop_codes_deduped_by_code() {
+        // Same stop code named twice — once by hex, once by symbolic name —
+        // plus a non-stop-code symptom, resolves to a single explained entry.
+        let sig = FaultSignature::from_symptoms(vec![
+            Symptom("0x0000000a".into()),
+            Symptom("explorer.exe".into()),
+            Symptom("irql_not_less_or_equal".into()),
+        ]);
+        let codes = sig.stop_codes();
+        assert_eq!(codes.len(), 1, "0xA named twice must dedupe to one");
+        assert_eq!(codes[0].code, 0x0000_000A);
+        assert!(!codes[0].meaning.trim().is_empty());
     }
 }

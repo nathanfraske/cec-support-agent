@@ -243,9 +243,11 @@ bug — a missing cargo **subcommand** (`cargo deny` absent) exits non-127, so i
 - **HANDOFFS** keeps its Current state / Pick up here / Lessons learned / dated handoff log
   shape.
 - **The frozen security constants stay parseable and sorted** where the code requires it:
-  `deid::ACTION_VOCABULARY` (8 tokens, sorted for `binary_search`), `leakguard::POISON` (9),
-  `STOP_CODE_NAMES` (42, sorted), `MODULE_NAMES` (68, sorted). A drift test already ties
-  `ACTION_VOCABULARY` to the dispatcher registry; keep it.
+  `deid::ACTION_VOCABULARY` (58 tokens, sorted for `binary_search`), `leakguard::POISON` (9),
+  `STOP_CODE_NAMES` (379, sorted — the full Microsoft Bug Check Code Reference, mirrored from the
+  `common::stop_codes::STOP_CODES` table), `MODULE_NAMES` (68, sorted). Two drift tests tie the
+  allowlists to their sources: `ACTION_VOCABULARY` to the dispatcher registry, and `STOP_CODE_NAMES`
+  to the stop-code table (`stop_code_names_mirror_the_stop_code_table`); keep both.
 - **The wire grammar and the `GateError` variants** are the stable vocabulary the egress-sink
   checklist and the panels reference; a new one is an additive, pinned change.
 

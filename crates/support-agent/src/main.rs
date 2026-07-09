@@ -370,6 +370,17 @@ async fn run(args: Args) -> anyhow::Result<()> {
         signature.fingerprint,
         signature.symptoms.len()
     );
+    // Map any bug-check (stop) code among the symptoms to its meaning for the
+    // operator. Pure local knowledge (`common::stop_codes`) — no wire field, no
+    // egress; the human trace only.
+    for stop in signature.stop_codes() {
+        human!(
+            "    stop code 0x{:08X} {} — {}",
+            stop.code,
+            stop.name,
+            stop.meaning
+        );
+    }
 
     // 2. The config class scopes every corpus row and query to like configs:
     //    the BOM revision on a CEC build, a derived inventory hash otherwise.
