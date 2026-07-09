@@ -501,3 +501,11 @@ _(completed items stay above, in place, with their `· done` tombstone)_
   287 tests green (+5), clippy clean, drift test in lockstep.
 - [ ] [added 2026-07-08 08:45 UTC] Priority A–H research panel launched (w10g0ycy7): C1/A1/A2/B1/D1/D2/D3/E1,
   legal-grade 2-source for D, Opus bias-check. Deliver briefs + audit on completion.
+
+### Session 2026-07-09 — stop-code plain-English gloss
+- [x] [added 2026-07-09 09:05 UTC · done 2026-07-09 09:10 UTC] **Stop-code reference — plain-English column.**
+  Added a 3rd "Plain-English meaning" column to `docs/research/windows-stop-codes.md` for all 379 bug-check
+  codes (65 hand-glossed common codes incl. 0x0000000A IRQL_NOT_LESS_OR_EQUAL; 314 rule-expanded from the
+  symbolic name). Code+name stay verbatim from the official MS Bug Check Code Reference; header flags the
+  gloss column as a paraphrase, not lifted per-code — per-code MS Learn page authoritative. Committed 4f295d2,
+  pushed to `claude/workflow-model-optimization-e1y1sx`.
