@@ -509,3 +509,10 @@ _(completed items stay above, in place, with their `· done` tombstone)_
   symbolic name). Code+name stay verbatim from the official MS Bug Check Code Reference; header flags the
   gloss column as a paraphrase, not lifted per-code — per-code MS Learn page authoritative. Committed 4f295d2,
   pushed to `claude/workflow-model-optimization-e1y1sx`.
+
+### Session 2026-07-09 — stop-code mapping into the tooling
+- [ ] [added 2026-07-09 09:20 UTC] **Stop-code mapping in code.** Generate `common/src/stop_codes.rs`
+  authoritative `StopCode{code,name,meaning}` table (379, from the reviewed doc) + `by_code`/`by_name`/
+  `describe` lookups. Reconcile de-id: grow `extract.rs::STOP_CODE_NAMES` to full 379 + drift test tying
+  it to the table (single source of truth, mirrors ACTION_VOCABULARY↔registry pattern). §7 blind audit on
+  the frozen-constant growth. Wire a lookup surface the agent/tooling can call.
